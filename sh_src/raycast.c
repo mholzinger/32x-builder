@@ -548,19 +548,19 @@ void raycast_render(void) {
             fx_t worldY = player.y + FX_MUL(rowDist, leftDirY);
             fx_t stepX  = FX_MUL(rowDist, rightDirX - leftDirX) / SCREEN_W;
             fx_t stepY  = FX_MUL(rowDist, rightDirY - leftDirY) / SCREEN_W;
-            /* 8x step — every 8th column gets a noise sample. Half the
-             * per-frame cost vs every-4th; threshold bumped to keep the
-             * effective stain density roughly the same on screen. */
-            fx_t stepX8 = stepX << 3;
-            fx_t stepY8 = stepY << 3;
+            /* Every 4th column gets a sample (back to original cost ~3ms)
+             * but threshold bumped to <6 (37.5% pass) for denser stains
+             * than the original <4 — "dial up the carpet feel". */
+            fx_t stepX4 = stepX << 2;
+            fx_t stepY4 = stepY << 2;
             uint8_t dark_c = (uint8_t)(FLOOR_BASE + base_shade + 2);
-            for (int x = 0; x < SCREEN_W; x += 8) {
+            for (int x = 0; x < SCREEN_W; x += 4) {
                 int wx = (int)(worldX >> 13) & 0xFF;
                 int wy = (int)(worldY >> 13) & 0xFF;
                 int hash = (wx * 73 + wy * 31) & 0xF;
                 if (hash < 6) fb[y * SCREEN_W + x] = dark_c;
-                worldX += stepX8;
-                worldY += stepY8;
+                worldX += stepX4;
+                worldY += stepY4;
             }
         }
     }

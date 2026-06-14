@@ -322,16 +322,20 @@ static void draw_standups(volatile uint8_t *fb,
         int screenX = (SCREEN_W >> 1)
                     + (int)(((int32_t)(SCREEN_W >> 1) * ratio) >> FX_SHIFT);
 
-        /* 1 world unit tall, 0.5 wide -> 1:2 aspect. Centering on horizon
-         * makes feet land on floor-distance row automatically (camera
-         * height = 0.5 in our raycaster). */
-        int spriteHeight = (int)(((int32_t)SCREEN_H << FX_SHIFT) / transformY);
+        /* 1/3 world unit tall, 1:2 aspect. Floor-anchored: bottom (feet)
+         * lands on the floor row at this distance; top (head) is
+         * spriteHeight pixels above. Also benefits texture quality —
+         * a smaller apparent sprite avoids upscaling the 64-row texture. */
+        int spriteHeight = (int)(((int32_t)SCREEN_H << FX_SHIFT) / (transformY * 3));
         int spriteWidth  = spriteHeight >> 1;
         if (spriteWidth < 1) spriteWidth = 1;
         if (spriteHeight < 1) continue;
 
-        int drawStartY_u = (SCREEN_H >> 1) - (spriteHeight >> 1);
-        int drawEndY_u   = (SCREEN_H >> 1) + (spriteHeight >> 1);
+        /* Floor row at this distance: SCREEN_H/2 + (SCREEN_H/2)/transformY. */
+        int floor_y = (SCREEN_H >> 1)
+                    + (int)(((int32_t)(SCREEN_H >> 1) << FX_SHIFT) / transformY);
+        int drawEndY_u   = floor_y;
+        int drawStartY_u = floor_y - spriteHeight;
         int drawStartX_u = screenX - (spriteWidth >> 1);
         int drawEndX_u   = screenX + (spriteWidth >> 1);
         int drawStartY = drawStartY_u < 0 ? 0 : drawStartY_u;

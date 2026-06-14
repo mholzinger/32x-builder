@@ -358,31 +358,7 @@ static void draw_standups(uint8_t *fb,
          * far past 1:1 at close range. */
         int spriteHeight = (int)((((int32_t)SCREEN_H * 2) << FX_SHIFT) / (transformY * 3));
         int spriteWidth  = spriteHeight >> 1;
-
-        /* Flat-cardboard width scaling. The standup has a fixed facing
-         * direction in world space, NOT camera-tracking like a Doom
-         * billboard. Width shrinks to zero when viewed edge-on:
-         *
-         *   cos^2(angle) = dot(camera->standup, standup_normal)^2 / |s-p|^2
-         *
-         * Scale spriteWidth by this factor. Player can now walk around the
-         * cardboard and the cardboard stays oriented in the world — see
-         * narrower silhouette from the side, full broadside from the front
-         * or back. cos^2 (not cos) is a fast approximation that avoids
-         * sqrt; the foreshortening is slightly steeper than physical but
-         * reads correct. */
-        fx_t fwdX_s = COS_FX(standups[i].facing_angle);
-        fx_t fwdY_s = SIN_FX(standups[i].facing_angle);
-        fx_t dot_n  = FX_MUL(sx, fwdX_s) + FX_MUL(sy, fwdY_s);
-        fx_t s_to_p_sq = FX_MUL(sx, sx) + FX_MUL(sy, sy);
-        fx_t cos_sq = FX_ONE;
-        if (s_to_p_sq > 0) {
-            cos_sq = (FX_MUL(dot_n, dot_n) << FX_SHIFT) / s_to_p_sq;
-            if (cos_sq > FX_ONE) cos_sq = FX_ONE;
-        }
-        spriteWidth = (spriteWidth * cos_sq) >> FX_SHIFT;
-
-        if (spriteWidth < 1) continue;             /* edge-on, invisible */
+        if (spriteWidth < 1) spriteWidth = 1;
         if (spriteHeight < 1) continue;
 
         /* Floor row at this distance: SCREEN_H/2 + (SCREEN_H/2)/transformY. */
@@ -556,6 +532,15 @@ void raycast_render(void) {
         fx_t rightDirY = dirY + planeY;
         int mid = SCREEN_H / 2;
         for (int y = mid + 1; y < SCREEN_H; y++) {
+            uint8_t base_c = row_color[y];
+            /* Skip rows whose base shade is already in the "too dark for any
+             * stain to read as darker" zone. Without this guard, adding 2 to
+             * a max-shade floor index overflowed into the ceiling palette
+             * range and the stains appeared as BRIGHTER particles against
+             * the black far-distance — exactly the wrong way around. */
+            int base_shade = base_c - FLOOR_BASE;
+            if (base_shade >= SHADE_LEVELS - 2) continue;
+
             int p = y - mid;
             fx_t rowDist = ((fx_t)mid << FX_SHIFT) / p;
             fx_t worldX = player.x + FX_MUL(rowDist, leftDirX);
@@ -565,10 +550,7 @@ void raycast_render(void) {
             /* 4x step covers 4 pixels per noise sample. */
             fx_t stepX4 = stepX << 2;
             fx_t stepY4 = stepY << 2;
-            uint8_t base_c = row_color[y];
-            /* Darken by 2 shade slots; clamp to the same row's base family. */
-            uint8_t dark_c = base_c + 2;
-            if ((dark_c & 0xF) < (base_c & 0xF)) dark_c = base_c;  /* wrap-safe */
+            uint8_t dark_c = (uint8_t)(FLOOR_BASE + base_shade + 2);
             for (int x = 0; x < SCREEN_W; x += 4) {
                 int wx = (int)(worldX >> 13) & 0xFF;
                 int wy = (int)(worldY >> 13) & 0xFF;

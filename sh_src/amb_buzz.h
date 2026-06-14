@@ -4,9 +4,9 @@
 #define AMB_BUZZ_H
 #include <stdint.h>
 
-#define AMB_BUZZ_SAMPLE_COUNT 16538
+#define AMB_BUZZ_SAMPLE_COUNT 307049
 #define AMB_BUZZ_SAMPLE_RATE  11025
 
-extern const uint16_t amb_buzz_samples[16538];
+extern const uint16_t amb_buzz_samples[307049];
 
 #endif

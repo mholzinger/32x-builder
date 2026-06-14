@@ -1,4 +1,5 @@
 #include "mars.h"
+#include "menu.h"
 #include "raycast.h"
 
 static uint32_t lastTick = 0;
@@ -31,8 +32,18 @@ int m_main(void) {
     raycast_init();
 
     for (;;) {
-        player_update();
+        /* Read the joypad up-front so the menu can both react to
+         * START and tell player_update to skip movement when open. */
+        HwMdReadPad(0);
+        uint16_t pad = MARS_SYS_COMM8;
+
+        menu_update(pad);
+
+        if (!menu_is_active()) {
+            player_update();
+        }
         raycast_render();
+        menu_render((uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200));
         raycast_debug_overlay();    /* SH-2 step-0 sanity check */
         swapBuffers();
     }

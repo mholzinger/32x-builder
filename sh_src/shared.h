@@ -51,7 +51,24 @@ typedef struct {
      * (stored in MARS_SYS_COMM6). Either CPU acquires this lock via
      * sh2_spin_tas before reading-and-incrementing the counter. */
     volatile uint8_t wall_lock;
-    uint8_t _pad[3];
+    /* Runtime audio gain. The slave's amb_pump reads this on every
+     * buffer refill and multiplies samples by (amb_volume / 128.0):
+     *   0   = mute
+     *   128 = unity (play ROM samples as-baked)
+     *   255 = ~2× (will clip if the ROM was baked hot already)
+     * Master can write this freely; cache-through alias keeps the
+     * slave's reads coherent without explicit flushes. */
+    volatile uint8_t amb_volume;
+    /* Set by the master each frame to 1 when the player is moving,
+     * 0 when stationary. Slave's pump uses this to gate the carpet
+     * footstep audio — advances and mixes the step sample when set,
+     * silent otherwise. */
+    volatile uint8_t is_walking;
+    /* Carpet footstep volume — separate knob from amb_volume so the
+     * player can mix the footsteps independently in the settings
+     * menu. 0..255, 128 = current half-amp baseline, 256 would be
+     * full but capped at 255. Applied as a >> 8 scale in the pump. */
+    volatile uint8_t step_volume;
 } shared_t;
 
 extern shared_t shared;

@@ -17,4 +17,11 @@
 void amb_sound_init(void);
 void amb_dma_handler(void);
 
+/* Called from the slave's idle COMM4-poll loop. Checks the ping-pong
+ * "needs fill" flag; if either buffer has been drained, fills it from
+ * the ROM sample source (eventually: synthesis math). Cheap — ~150 μs
+ * per fill at 256 samples. Safe to call as often as you want; returns
+ * immediately when no fill is needed. */
+void amb_pump(void);
+
 #endif

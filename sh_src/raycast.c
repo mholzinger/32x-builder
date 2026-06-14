@@ -921,6 +921,7 @@ void raycast_render(void) {
     SHARED_UC->player.x     = player.x;
     SHARED_UC->player.y     = player.y;
     SHARED_UC->player.angle = player.angle;
+    SHARED_UC->is_walking   = is_walking;   /* gates carpet footsteps in pump */
     MARS_SYS_COMM4 = MARS_CMD_CEILING;
 
     /* Sync point: wait for the slave to finish the ceiling grid pass

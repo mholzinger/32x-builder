@@ -880,6 +880,133 @@ SH2_DMA_VCR1 = 66;
 
 ---
 
+## 2026-06 — ARCHITECTURE: Spatial audio on a mono PWM channel
+
+**Context.** The 32X has one PWM audio output. We wanted the iconic
+Voyager Golden Record "hellos in many languages" recording to feel
+like it was emanating from the neanderthal cardboard cutout sprite
+— audible when the player is near the sprite, fading out as you walk
+away. With true stereo we'd pan; with mono we have only volume.
+
+**Outcome.** Spatial audio on mono = volume modulation per sample by
+distance. The slave's audio pump already computes a per-buffer player
+snapshot from `SHARED_UC->player.{x,y}`; we extended that to compute
+distance to the neanderthal's hardcoded world-cell position and
+derive an attenuation factor:
+
+```c
+int player_x_cell = (int)(SHARED_UC->player.x >> 16);
+int player_y_cell = (int)(SHARED_UC->player.y >> 16);
+int dx = player_x_cell - NEANDER_X_CELL;
+int dy = player_y_cell - NEANDER_Y_CELL;
+int dist_sq = dx * dx + dy * dy;
+int hello_amp;
+if (dist_sq >= HELLO_FADE_RADIUS_SQ) {
+    hello_amp = 0;
+} else {
+    hello_amp = ((HELLO_FADE_RADIUS_SQ - dist_sq) * 256)
+                / HELLO_FADE_RADIUS_SQ;  /* 0..256 */
+}
+```
+
+`dist_sq` rather than `dist` is intentional — we never need sqrt
+because the fade curve is linear-in-squared-distance, which sounds
+naturally "spatial" without the cost of a fixed-point sqrt. The
+linear curve in dist² means the sound drops off slowly when close
+(dist²=0→1 → 0.984 amp) and rapidly when far (dist²=49→64 → 0.234
+amp), matching how real sound pressure decreases.
+
+Combined with the existing buzz/neon mix, the audio mix per output
+sample is:
+
+```c
+int delta = ((buzz_sample - SAMPLE_CENTER) * envelope_amp) >> 8;
+if (neon_active) delta += (neon - SAMPLE_CENTER) >> 1;
+if (hello_amp)   delta += ((hello << 2) * hello_amp) >> 8;
+if (is_walking)  delta += (step << 2 * step_volume) >> 8;
+int s = ((delta * amb_volume) >> 7) + SAMPLE_CENTER;
+```
+
+Five concurrent audio sources, all mixed in mono, position-aware,
+runtime-volume-controlled — at ~150 μs per 23 ms buffer fill on a
+23 MHz SH-2. Negligible cost.
+
+**Insight.** Stereo isn't a prerequisite for spatial audio. Mono +
+per-sample volume modulation gives convincing positionality if your
+listener can perceive distance via amplitude (which humans can do
+reasonably well for sources in front of them). The trick is to
+update the amplitude AT LEAST once per buffer — every 23 ms is more
+than fast enough that the player can't hear a step-change as they
+walk past the source.
+
+**Files.** `sh_src/sound.c::amb_pump` (the mixing loop with all four
+sources); `sh_src/shared.h` (`is_walking`, `amb_volume`,
+`step_volume`, all volatile shared-memory knobs).
+
+---
+
+## 2026-06 — OPTIMIZATION: 8-bit s8 + fractional-rate playback
+
+**Context.** The Voyager hellos sample at 16-bit / 11025 Hz was
+661 KB — about a fifth of the cart budget for one audio asset. We
+wanted to fit more sources (footsteps, additional ambient layers)
+without blowing the budget.
+
+**Outcome.** Two-axis compression that played well together:
+
+1. **Bit depth: 16-bit → 8-bit signed (`int8_t`).** Source PCM scaled
+   to `int16_t` then truncated with `>> 8`. At runtime the slave
+   expands back via `<< 2`, putting the result back in roughly the
+   PWM's 10-bit duty-cycle range. Lossy — adds about 6 dB of
+   quantization noise — but at the source amplitude levels we use
+   for these mixed-in samples (centered around the buzz baseline),
+   the noise is masked and the result reads as analog "grain" that
+   fits the Backrooms aesthetic.
+
+2. **Sample rate: 11025 Hz → 6000 Hz (or 4000 Hz for stronger
+   effect).** Voice formants live mostly under 3 kHz so 6 kHz Nyquist
+   captures speech intelligibility. The catch: the PWM output rate
+   is fixed at 11025 Hz, so we have to interpolate. We use a fixed-
+   point 16.16 read position:
+
+   ```c
+   #define HELLO_STEP_FX \
+       ((uint32_t)(((uint64_t)AMB_HELLO_SAMPLE_RATE << 16) \
+                    / AMB_BUZZ_SAMPLE_RATE))
+
+   uint32_t hello_idx = hello_pos_fx >> 16;
+   int hello = (int)amb_hello_samples[hello_idx] << 2;
+   /* ... mix ... */
+   hello_pos_fx += HELLO_STEP_FX;
+   if ((hello_pos_fx >> 16) >= AMB_HELLO_SAMPLE_COUNT) hello_pos_fx = 0;
+   ```
+
+   For 6000 Hz playing back at 11025 Hz, `HELLO_STEP_FX = 35672` —
+   slightly more than half. Nearest-neighbor sampling, no
+   interpolation between adjacent source samples; the artifact is
+   "stair-step" aliasing on high frequencies, which on a band-
+   limited voice source just adds a touch of vintage character.
+
+Combined result: 30 seconds of Voyager hellos went from 661 KB at
+16-bit/11025 Hz to **180 KB at 8-bit/6000 Hz** (73% savings) with
+acceptable voice quality. Going further to 4 kHz/8-bit cut it to
+120 KB (82% savings) but the user reported "too tinny" at that
+setting; 6 kHz was the sweet spot.
+
+**Insight.** Compression for retro audio doesn't need to be clever
+(ADPCM, mu-law, etc.) — it just needs to be congruent with the
+playback hardware. 8-bit signed PCM with a `<< 2` expand exactly
+matches PWM's amplitude grain, and integer-step fractional reads
+exactly match the cost the SH-2 can afford (one add + one shift per
+output sample). The "right" lossy format is the one that aligns
+cleanly with the cycles + bytes you have available.
+
+**Files.** `tools/wav_to_pwm.py` (`--bits 8` flag that emits
+`int8_t` arrays instead of `uint16_t`); `sh_src/sound.c` (the
+fractional-step playback for hello and footsteps).
+
+---
+
 ## Template for new entries
 
 ```

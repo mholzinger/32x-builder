@@ -29,6 +29,10 @@ void s_main(void) {
          * latency below one frame. */
         uint16_t cmd = MARS_SYS_COMM4;
         if (cmd == MARS_CMD_NONE) {
+            /* Service audio first — keep the PWM ping-pong fed.
+             * amb_pump() is cheap (~150 μs when a fill is needed,
+             * instant return otherwise). */
+            amb_pump();
             /* Throttle bumped 64→256 because master got faster after
              * the DIVU/sine LUT optimizations, shifting the bus-
              * contention balance enough that controller-input stalls

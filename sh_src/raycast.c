@@ -319,7 +319,7 @@ void player_update(void) {
 
     /* Track walking state and advance bob phase. */
     is_walking = (dx != 0 || dy != 0);
-    if (is_walking) bob_phase += 8;          /* ~2 steps per second at 60fps */
+    if (is_walking) bob_phase += 6;          /* ~1.5 Hz, deliberate Backrooms pace */
 }
 
 /* Render each cardboard standup as a textured Wolf3D-style billboard.
@@ -496,22 +496,27 @@ static void draw_lights(uint8_t *fb,
 void raycast_render(void) {
     uint8_t *fb = fb_pixels();
 
-    /* Head bob: when walking, apply a tiny perpendicular position sway
-     * derived from sin(bob_phase). The bob saved/restored around the
-     * actual render so collision and DDA see the swayed position but the
-     * stored player position stays clean. Amplitude ~FX(0.03) = a couple
-     * of inches in world space, which projects to ~1-2 px of camera
-     * sway — exactly the subtle "walking through a hallway" feel. */
+    /* Head bob: when walking, displace the camera by two summed components,
+     * both derived from bob_phase. The bob is saved/restored around the
+     * render so collision and AI see the clean position.
+     *
+     *   sway   — perpendicular to forward, sin(phase),     amp FX(0.08)
+     *   stride — along forward direction,  sin(2*phase),   amp FX(0.05)
+     *
+     * The stride at 2x frequency produces a forward-back rocking pulse
+     * (each footfall = one rock), composing with the side-to-side sway
+     * to feel like real walking motion in a hallway. */
     fx_t saved_px = player.x;
     fx_t saved_py = player.y;
     if (is_walking) {
-        fx_t bob_sin = SIN_FX(bob_phase);                   /* -FX_ONE..+FX_ONE */
-        fx_t bob_amt = FX_MUL(bob_sin, FX(0.03));
-        /* Perpendicular to facing direction. */
-        fx_t perpX = -SIN_FX(player.angle);
-        fx_t perpY =  COS_FX(player.angle);
-        player.x += FX_MUL(perpX, bob_amt);
-        player.y += FX_MUL(perpY, bob_amt);
+        fx_t sway   = FX_MUL(SIN_FX(bob_phase),     FX(0.08));
+        fx_t stride = FX_MUL(SIN_FX(bob_phase << 1), FX(0.05));
+        fx_t fwdX  = COS_FX(player.angle);
+        fx_t fwdY  = SIN_FX(player.angle);
+        fx_t perpX = -fwdY;
+        fx_t perpY =  fwdX;
+        player.x += FX_MUL(perpX, sway) + FX_MUL(fwdX, stride);
+        player.y += FX_MUL(perpY, sway) + FX_MUL(fwdY, stride);
     }
 
     /* Camera basis: forward = (cos a, sin a); camera plane perpendicular,

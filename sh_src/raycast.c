@@ -97,19 +97,19 @@ static const standup_t standups[] = {
 };
 #define NUM_STANDUPS (int)(sizeof(standups) / sizeof(standups[0]))
 
-/* Ceiling fluorescent tube positions in world coords. Each one renders
- * as a small horizontal bright bar at its world position, sized by
- * distance, flickering pseudo-randomly. */
+/* Illuminated drop-ceiling panels (the Backrooms iconic recessed
+ * fluorescent panels). Positions are scattered across the map rather
+ * than placed at every cell — that scattered "some tiles are lit,
+ * most aren't" pattern is what makes the lobby reference photo read
+ * as actual drop-ceiling lighting rather than "lights everywhere". */
 typedef struct { fx_t x, y; } light_t;
 static const light_t lights[] = {
-    /* Main east-west spine, every 2 cells */
-    { FX(2.5),  FX(7.5)  }, { FX(4.5),  FX(7.5)  },
-    { FX(6.5),  FX(7.5)  }, { FX(8.5),  FX(7.5)  },
-    { FX(10.5), FX(7.5)  }, { FX(12.5), FX(7.5)  },
-    /* North-side branch alcoves */
-    { FX(2.5),  FX(3.5)  }, { FX(7.5),  FX(3.5)  }, { FX(13.5), FX(3.5)  },
-    /* South-side branch alcoves */
-    { FX(2.5),  FX(11.5) }, { FX(7.5),  FX(11.5) }, { FX(13.5), FX(11.5) },
+    { FX(4.5),  FX(11.5) },   /* close to spawn, draws the eye forward */
+    { FX(2.5),  FX(9.5)  },   /* mid spine west */
+    { FX(10.5), FX(9.5)  },   /* mid spine east */
+    { FX(8.5),  FX(7.5)  },   /* center spine */
+    { FX(12.5), FX(5.5)  },   /* far interior east */
+    { FX(1.5),  FX(5.5)  },   /* far N corridor west */
 };
 #define NUM_LIGHTS (int)(sizeof(lights) / sizeof(lights[0]))
 
@@ -455,13 +455,14 @@ static void draw_lights(uint8_t *fb,
 
         int dist_int = FX_INT(transformY);
         if (dist_int < 1) dist_int = 1;
-        /* Small recessed panels, ~2:1 aspect ratio. Matches the reference
-         * photo where multiple modest light panels sit in the drop-ceiling
-         * grid rather than long exposed tubes. */
-        int width  = (SCREEN_W >> 3) / dist_int;
-        int height = (SCREEN_H >> 4) / dist_int;
-        if (width  < 2) width  = 2;
-        if (height < 1) height = 1;
+        /* Big recessed drop-ceiling panels, 2:1 aspect ratio. Matched to
+         * the lobby reference photo where close panels span roughly 1/3
+         * of the screen width and read as iconic Backrooms fluorescent
+         * ceiling tiles rather than little tubes. */
+        int width  = (SCREEN_W * 5 / 16) / dist_int;
+        int height = width >> 1;
+        if (width  < 3) width  = 3;
+        if (height < 2) height = 2;
 
         int x0 = screenX - width  / 2;
         int x1 = screenX + width  / 2;

@@ -139,14 +139,14 @@ static void build_shading_tables(void) {
 
 static void build_palette(void) {
     Hw32xSetBGColor(0, 0, 0, 0);
-    /* Walls: yellow eggshell — bright cream with a clear yellow undertone.
-     * R and G stay close (eggshell), B drops noticeably below them
-     * (brings the yellow back). Reads as pale Backrooms wallpaper. */
+    /* Walls: stronger yellow eggshell. R bumped to 30, B dropped to 13
+     * (R-B gap 17) — wallpaper now clearly yellow while still bright
+     * cream rather than dingy mustard. */
     for (int i = 0; i < SHADE_LEVELS; i++) {
         Hw32xSetBGColor(WALL_BASE + i,
-                        MIX(29, FOG_R, i),
+                        MIX(30, FOG_R, i),
                         MIX(27, FOG_G, i),
-                        MIX(17, FOG_B, i));
+                        MIX(13, FOG_B, i));
     }
     /* Carpet: warm beige/tan brown — matched to reference. Drops out of
      * the yellow family into a true brown-beige (R > G > B with all three
@@ -157,12 +157,15 @@ static void build_palette(void) {
                         MIX(21, FOG_G, i),
                         MIX(16, FOG_B, i));
     }
-    /* Ceiling: neutral off-white. */
+    /* Ceiling: yellow eggshell tint, pulled into the wall's color family.
+     * Slightly less bright than walls (27 vs 30 R) so the wall/ceiling
+     * seam still reads, but shares the warm yellow undertone for a
+     * unified Backrooms atmosphere. */
     for (int i = 0; i < SHADE_LEVELS; i++) {
         Hw32xSetBGColor(CEIL_BASE + i,
-                        MIX(26, FOG_R, i),
+                        MIX(27, FOG_R, i),
                         MIX(26, FOG_G, i),
-                        MIX(26, FOG_B, i));
+                        MIX(18, FOG_B, i));
     }
     /* Fluorescent lights: 4 brightness states for flicker (full / 75 / 50 / 25%). */
     Hw32xSetBGColor(LIGHT_BASE + 0, 31, 31, 28);

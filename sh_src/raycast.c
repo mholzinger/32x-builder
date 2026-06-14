@@ -34,6 +34,11 @@ const uint8_t world_map[MAP_H][MAP_W] = {
 #define CEIL_BASE    33
 #define SHADE_LEVELS 16
 
+/* Procedural wallpaper texture size — no bitmap, the pattern is derived
+ * from (texX, texY) coordinates inline in the wall loop. */
+#define TEX_W 32
+#define TEX_H 32
+
 /* Precomputed pixel color per screen row for the base floor/ceiling layer.
  * Indexes [0..SCREEN_H/2-1] = ceiling, bright at top dim toward horizon;
  * [SCREEN_H/2..SCREEN_H-1] = floor, dim near horizon bright at bottom. */
@@ -92,13 +97,6 @@ static void build_palette(void) {
  * volatile is required — the VDP observes these writes, the compiler doesn't. */
 static inline volatile uint8_t *fb_pixels(void) {
     return (volatile uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
-}
-
-static void vline(int x, int top, int bot, uint8_t color) {
-    volatile uint8_t *p = fb_pixels() + x;
-    for (int y = top; y <= bot; y++) {
-        p[y * SCREEN_W] = color;
-    }
 }
 
 void raycast_init(void) {
@@ -229,16 +227,43 @@ void raycast_render(void) {
 
         /* Projected line height in pixels = SCREEN_H / perpDist. */
         int lineHeight = (int)(((int64_t)SCREEN_H << FX_SHIFT) / perpDist);
-        int drawStart = SCREEN_H / 2 - lineHeight / 2;
-        int drawEnd   = SCREEN_H / 2 + lineHeight / 2;
-        if (drawStart < 0) drawStart = 0;
-        if (drawEnd >= SCREEN_H) drawEnd = SCREEN_H - 1;
+        int wall_top  = SCREEN_H / 2 - lineHeight / 2;   /* may be < 0 */
+        int wall_bot  = SCREEN_H / 2 + lineHeight / 2;   /* may be >= H */
+        int drawStart = wall_top < 0 ? 0 : wall_top;
+        int drawEnd   = wall_bot >= SCREEN_H ? SCREEN_H - 1 : wall_bot;
 
-        int shade = FX_INT(perpDist);
-        if (side == 1) shade += 1;        /* horizontal hits dimmer */
-        if (shade < 0) shade = 0;
-        if (shade >= SHADE_LEVELS) shade = SHADE_LEVELS - 1;
+        int wall_shade = FX_INT(perpDist);
+        if (side == 1) wall_shade += 1;
+        if (wall_shade < 0) wall_shade = 0;
 
-        vline(col, drawStart, drawEnd, WALL_BASE + shade);
+        /* Where on the wall did the ray hit, fractional [0,1). */
+        fx_t wall_hit = (side == 0)
+            ? (player.y + FX_MUL(perpDist, rayDirY))
+            : (player.x + FX_MUL(perpDist, rayDirX));
+        wall_hit -= (fx_t)FX_INT(wall_hit) << FX_SHIFT;
+        int texX = (int)(((int64_t)wall_hit * TEX_W) >> FX_SHIFT);
+        if (texX < 0) texX = 0;
+        if (texX >= TEX_W) texX = TEX_W - 1;
+
+        /* Wallpaper "panel" seam every 8 texture columns -> +2 shade. */
+        int col_pattern = ((texX & 7) == 0) ? 2 : 0;
+
+        /* Texture Y walks from 0 at wall_top to TEX_H at wall_bot,
+         * sampled per screen pixel. Compute initial tex_pos in FX so the
+         * inner loop is one add + one shift. */
+        fx_t tex_step = ((fx_t)TEX_H << FX_SHIFT) / lineHeight;
+        fx_t tex_pos  = (fx_t)(drawStart - wall_top) * tex_step;
+
+        volatile uint8_t *p = fb + col;
+        for (int y = drawStart; y <= drawEnd; y++) {
+            int texY = tex_pos >> FX_SHIFT;
+            int pattern = col_pattern;
+            /* Top molding and baseboard: 2 rows at each end of the wall. */
+            if (texY < 2 || texY >= TEX_H - 2) pattern += 3;
+            int s = wall_shade + pattern;
+            if (s >= SHADE_LEVELS) s = SHADE_LEVELS - 1;
+            p[y * SCREEN_W] = WALL_BASE + s;
+            tex_pos += tex_step;
+        }
     }
 }

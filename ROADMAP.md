@@ -221,6 +221,46 @@ After ambient drone is in place. Slow swells, sub-bass, distant rumbles.
 
 ## Performance
 
+### Mine the Doom 32X Resurrection codebase for techniques
+**Status:** strategic resource — every perf push should check what
+d32xr already solved before reinventing it.
+
+[viciious/d32xr](https://github.com/viciious/d32xr) is years of
+optimization work to make Doom run smoothly on the actual 23 MHz
+SH-2s. We've already borrowed:
+- the `| 0x20000000` cache-through SDRAM alias for shared state
+- the COMM4 doorbell + COMM6 arg-word convention
+- the `MARS_SECCMD_*` command enum + slave polling dispatcher pattern
+
+What we haven't borrowed yet, in rough order of probable payoff:
+- **Hand-rolled SH-2 assembly for hot inner loops** — wall column
+  draw, texture sample, fixed-point mul. GCC for SH-2 (especially the
+  ancient sh-elf branch) leaves obvious wins on the table. d32xr has
+  hand-tuned column draws that beat our compiled ones easily.
+- **SH-2 internal DMA controller** for SDRAM-to-FB / texture
+  decompression. Free cycles while DMA runs. d32xr's `Mars_Secondary`
+  inits SH2_DMA_DMAOR etc. — we set none of those.
+- **Ring buffer between CPUs** (`mars_ringbuf.h`) for streaming work
+  units instead of single-command doorbell. When we want each CPU to
+  process N items independently (e.g. per-sprite work, per-zone
+  light), ring buffers give us continuous throughput vs. our current
+  signal-wait-ACK overhead.
+- **Cache-aware data layout** — align hot structs to 16-byte cache
+  lines, group fields that are written together. Our shared.h is
+  naïve about this.
+- **VDP overwrite-buffer tricks** (0x24020000) for sprite over-draw
+  without clearing first.
+- **PWM channel patterns** for audio — they have a full mixer working.
+- **Bank-switched ROM** for >2 MB cart contents, when we eventually
+  bundle music or extra maps.
+- **Interrupt-driven vsync** (VINT handler) instead of our COMM12
+  polling — frees the master to do useful work in vblank.
+- **Their level / palette / texture loading pipeline** as a template
+  if we ever want runtime-streaming assets.
+
+Whenever we hit a perf wall, the first move should be: search d32xr
+for how they solved that exact problem.
+
 ### Texture mipmaps for walls
 Multiple wallpaper texture resolutions per distance band. Close walls
 sample 32×32, mid-distance 16×16, far 8×8. Cuts cache pressure on the

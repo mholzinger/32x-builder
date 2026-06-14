@@ -20,6 +20,7 @@
  * proceeding past the sync point. */
 #define MARS_CMD_NONE     0
 #define MARS_CMD_CEILING  1
+#define MARS_CMD_WALLS    2   /* Slave draws wall columns 160..319 */
 
 /* Snapshot of the master's player state for the slave to render from.
  * Master writes this just before signaling CMD_CEILING; slave reads

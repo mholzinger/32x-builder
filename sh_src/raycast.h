@@ -32,5 +32,7 @@ void player_update(void);
 void raycast_shimmer(void);
 void raycast_debug_overlay(void);
 void raycast_draw_ceiling_grid(void);
+void raycast_draw_carpet(void);
+void raycast_draw_walls(int col_start, int col_end);
 
 #endif

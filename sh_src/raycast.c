@@ -111,8 +111,15 @@ const uint8_t world_map[MAP_H][MAP_W] = {
 #define CEIL_GRID_DENSITY 4
 
 /* Per-column z-buffer captured during wall draw so the light billboards
- * can z-test against walls. 0x7FFFFFFF = no wall hit (light wins). */
+ * can z-test against walls. 0x7FFFFFFF = no wall hit (light wins).
+ *
+ * Both CPUs write to this array (master cols 0-159, slave 160-319) and
+ * the master reads it back for the sprite z-test. ALL accesses must
+ * go through the WALL_DIST() macro below, which routes them via the
+ * | 0x20000000 cache-through alias so neither CPU sees stale cached
+ * values written by the other. */
 static fx_t wall_dist[SCREEN_W];
+#define WALL_DIST(i) (((volatile fx_t *)((uintptr_t)wall_dist | 0x20000000))[i])
 
 /* Floor-standing cardboard cutouts. Each standup has a world position
  * and a facing direction. silhouette=1 renders as flat dark outline only
@@ -348,8 +355,11 @@ void player_update(void) {
     HwMdReadPad(0);
     uint16_t pad = MARS_SYS_COMM8;
 
-    fx_t walk = (pad & SEGA_CTRL_C) ? FX(0.15) : FX(0.08);
-    uint8_t turn = 2;
+    /* Hold A to run — bumps walk speed and turn rate together so you can
+     * quickly reorient while sprinting. */
+    int sprinting = (pad & SEGA_CTRL_A) != 0;
+    fx_t walk = sprinting ? FX(0.15) : FX(0.08);
+    uint8_t turn = sprinting ? 8 : 4;
 
     /* B toggles left/right between turning and strafing. */
     int strafing = (pad & SEGA_CTRL_B) != 0;
@@ -458,7 +468,7 @@ static void draw_standups(uint8_t *fb,
         fx_t texY_start_v = (fx_t)(drawStartY - drawStartY_u) * texY_step;
 
         for (int stripe = drawStartX; stripe <= drawEndX; stripe++) {
-            if (transformY >= wall_dist[stripe]) continue;
+            if (transformY >= WALL_DIST(stripe)) continue;
 
             int texX = ((stripe - drawStartX_u) * NEANDER_TEX_WIDTH) / spriteWidth;
             if (texX < 0 || texX >= NEANDER_TEX_WIDTH) continue;
@@ -558,7 +568,7 @@ static void draw_lights(uint8_t *fb,
 
         /* Paint the bounding rectangle, z-tested against walls per column. */
         for (int x = min_x; x <= max_x; x++) {
-            if (centerY >= wall_dist[x]) continue;
+            if (centerY >= WALL_DIST(x)) continue;
             uint8_t *p = fb + min_y * SCREEN_W + x;
             for (int y = min_y; y <= max_y; y++) {
                 *p = color;
@@ -643,107 +653,80 @@ void raycast_draw_ceiling_grid(void) {
     }
 }
 
-void raycast_render(void) {
+/* Carpet wear pass — stamps dark "stains" across the floor (bottom
+ * half of screen) at world-position-hashed locations. Reads player
+ * from the shared snapshot so the slave can run it alongside the
+ * ceiling grid pass on the top half (disjoint framebuffer regions,
+ * no race). */
+void raycast_draw_carpet(void) {
+    fx_t px = SHARED_UC->player.x;
+    fx_t py = SHARED_UC->player.y;
+    uint8_t angle = (uint8_t)SHARED_UC->player.angle;
+
+    fx_t dirX   = COS_FX(angle);
+    fx_t dirY   = SIN_FX(angle);
+    fx_t planeX = FX_MUL(-dirY, FX(0.66));
+    fx_t planeY = FX_MUL( dirX, FX(0.66));
+    fx_t leftDirX  = dirX - planeX;
+    fx_t leftDirY  = dirY - planeY;
+    fx_t rightDirX = dirX + planeX;
+    fx_t rightDirY = dirY + planeY;
+
     uint8_t *fb = fb_pixels();
+    int mid = SCREEN_H / 2;
+    for (int y = mid + 1; y < SCREEN_H; y++) {
+        uint8_t base_c = row_color[y];
+        int base_shade = base_c - FLOOR_BASE;
+        if (base_shade >= SHADE_LEVELS - 2) continue;
 
-    /* Vertical head bob is applied below via the framebuffer line table —
-     * no position translation needed (lateral sway felt like drunk
-     * swagger, not walking). */
+        int p = y - mid;
+        fx_t rowDist = ((fx_t)mid << FX_SHIFT) / p;
+        fx_t worldX = px + FX_MUL(rowDist, leftDirX);
+        fx_t worldY = py + FX_MUL(rowDist, leftDirY);
+        fx_t stepX  = FX_MUL(rowDist, rightDirX - leftDirX) / SCREEN_W;
+        fx_t stepY  = FX_MUL(rowDist, rightDirY - leftDirY) / SCREEN_W;
+        fx_t stepX4 = stepX << 2;
+        fx_t stepY4 = stepY << 2;
+        uint8_t dark_c = (uint8_t)(FLOOR_BASE + base_shade + 2);
+        for (int x = 0; x < SCREEN_W; x += 4) {
+            int wx = (int)(worldX >> 13) & 0xFF;
+            int wy = (int)(worldY >> 13) & 0xFF;
+            int hash = (wx * 73 + wy * 31) & 0xF;
+            if (hash < 6) fb[y * SCREEN_W + x] = dark_c;
+            worldX += stepX4;
+            worldY += stepY4;
+        }
+    }
+}
 
-    /* Camera basis: forward = (cos a, sin a); camera plane perpendicular,
-     * length 0.66 -> ~66° horizontal FOV. */
-    fx_t dirX   = COS_FX(player.angle);
-    fx_t dirY   = SIN_FX(player.angle);
+/* Wall column pass — DDA, perspective-correct textured columns, fog
+ * cutoff, distance-based detail falloff. Caller-supplied half-open
+ * column range [col_start, col_end) lets the master and slave divide
+ * the screen — master does [0, SCREEN_W/2), slave does [SCREEN_W/2,
+ * SCREEN_W). Writes the per-column z-buffer (WALL_DIST) through the
+ * cache-through alias so the sprite passes on master see slave's
+ * writes after the COMM4 sync. Reads player from SHARED_UC. */
+void raycast_draw_walls(int col_start, int col_end) {
+    fx_t px = SHARED_UC->player.x;
+    fx_t py = SHARED_UC->player.y;
+    uint8_t angle = (uint8_t)SHARED_UC->player.angle;
+
+    fx_t dirX   = COS_FX(angle);
+    fx_t dirY   = SIN_FX(angle);
     fx_t planeX = FX_MUL(-dirY, FX(0.66));
     fx_t planeY = FX_MUL( dirX, FX(0.66));
 
-    /* Floor + ceiling: per-row solid color (32-bit aligned writes,
-     * 4 pixels per store). Fast clear. */
-    uint32_t *fb32 = (uint32_t *)fb;
-    for (int y = 0; y < SCREEN_H; y++) {
-        uint8_t  c   = row_color[y];
-        uint32_t c32 = ((uint32_t)c << 24) | ((uint32_t)c << 16)
-                     | ((uint32_t)c <<  8) |  (uint32_t)c;
-        uint32_t *row = fb32 + y * (SCREEN_W / 4);
-        for (int x = 0; x < SCREEN_W / 4; x++) row[x] = c32;
-    }
+    uint8_t *fb = fb_pixels();
 
-    /* Dispatch the drop-ceiling grid to the slave SH-2. Snapshot the
-     * player state into the cache-through-aliased shared struct first,
-     * then write the command code to COMM4. The slave's polling loop
-     * picks it up, calls raycast_draw_ceiling_grid(), and writes 0
-     * back to COMM4 when done. Master continues with the carpet pass
-     * in parallel — disjoint framebuffer halves, no race. */
-    SHARED_UC->player.x     = player.x;
-    SHARED_UC->player.y     = player.y;
-    SHARED_UC->player.angle = player.angle;
-    MARS_SYS_COMM4 = MARS_CMD_CEILING;
-
-    /* Carpet wear pass: stamp dark "stains" at world-position-hashed
-     * locations on the floor. For each floor row, compute world XY at the
-     * leftmost screen column, then step horizontally in world units; every
-     * 4th column gets a hash test that determines whether to darken that
-     * pixel. The hash is purely a function of world XY, so as the player
-     * moves the stains stay locked to the floor (slide toward you instead
-     * of moving with the camera). Cost ~2-3ms. */
-    {
-        fx_t leftDirX  = dirX - planeX;
-        fx_t leftDirY  = dirY - planeY;
-        fx_t rightDirX = dirX + planeX;
-        fx_t rightDirY = dirY + planeY;
-        int mid = SCREEN_H / 2;
-        for (int y = mid + 1; y < SCREEN_H; y++) {
-            uint8_t base_c = row_color[y];
-            /* Skip rows whose base shade is already in the "too dark for any
-             * stain to read as darker" zone. Without this guard, adding 2 to
-             * a max-shade floor index overflowed into the ceiling palette
-             * range and the stains appeared as BRIGHTER particles against
-             * the black far-distance — exactly the wrong way around. */
-            int base_shade = base_c - FLOOR_BASE;
-            if (base_shade >= SHADE_LEVELS - 2) continue;
-
-            int p = y - mid;
-            fx_t rowDist = ((fx_t)mid << FX_SHIFT) / p;
-            fx_t worldX = player.x + FX_MUL(rowDist, leftDirX);
-            fx_t worldY = player.y + FX_MUL(rowDist, leftDirY);
-            fx_t stepX  = FX_MUL(rowDist, rightDirX - leftDirX) / SCREEN_W;
-            fx_t stepY  = FX_MUL(rowDist, rightDirY - leftDirY) / SCREEN_W;
-            /* Every 4th column gets a sample (back to original cost ~3ms)
-             * but threshold bumped to <6 (37.5% pass) for denser stains
-             * than the original <4 — "dial up the carpet feel". */
-            fx_t stepX4 = stepX << 2;
-            fx_t stepY4 = stepY << 2;
-            uint8_t dark_c = (uint8_t)(FLOOR_BASE + base_shade + 2);
-            for (int x = 0; x < SCREEN_W; x += 4) {
-                int wx = (int)(worldX >> 13) & 0xFF;
-                int wy = (int)(worldY >> 13) & 0xFF;
-                int hash = (wx * 73 + wy * 31) & 0xF;
-                if (hash < 6) fb[y * SCREEN_W + x] = dark_c;
-                worldX += stepX4;
-                worldY += stepY4;
-            }
-        }
-    }
-
-    /* Sync point: wait for the slave to finish the ceiling grid before
-     * we start drawing walls. Walls write to both halves and may
-     * overlap the slave's top-half writes; matching the original
-     * sequential ordering (ceiling first, walls overwrite where they
-     * hit) keeps the visuals identical. */
-    while (MARS_SYS_COMM4 != MARS_CMD_NONE);
-
-    for (int col = 0; col < SCREEN_W; col++) {
-        /* Default z-buffer to "infinity" so missed-ray columns let lights
-         * render. Overwritten on a wall hit. */
-        wall_dist[col] = 0x7FFFFFFF;
+    for (int col = col_start; col < col_end; col++) {
+        WALL_DIST(col) = 0x7FFFFFFF;
         fx_t cameraX = cameraX_table[col];
         fx_t rayDirX = dirX + FX_MUL(planeX, cameraX);
         fx_t rayDirY = dirY + FX_MUL(planeY, cameraX);
 
-        int mapX = FX_INT(player.x);
-        int mapY = FX_INT(player.y);
+        int mapX = FX_INT(px);
+        int mapY = FX_INT(py);
 
-        /* Distance the ray covers per one-unit step on each axis. */
         fx_t deltaDistX = (rayDirX == 0) ? 0x7FFFFFFF
                                          : FX_DIV(FX_ONE, FX_ABS(rayDirX));
         fx_t deltaDistY = (rayDirY == 0) ? 0x7FFFFFFF
@@ -753,22 +736,19 @@ void raycast_render(void) {
         fx_t sideDistX, sideDistY;
         if (rayDirX < 0) {
             stepX = -1;
-            sideDistX = FX_MUL(player.x - ((fx_t)mapX << FX_SHIFT), deltaDistX);
+            sideDistX = FX_MUL(px - ((fx_t)mapX << FX_SHIFT), deltaDistX);
         } else {
             stepX = 1;
-            sideDistX = FX_MUL(((fx_t)(mapX + 1) << FX_SHIFT) - player.x, deltaDistX);
+            sideDistX = FX_MUL(((fx_t)(mapX + 1) << FX_SHIFT) - px, deltaDistX);
         }
         if (rayDirY < 0) {
             stepY = -1;
-            sideDistY = FX_MUL(player.y - ((fx_t)mapY << FX_SHIFT), deltaDistY);
+            sideDistY = FX_MUL(py - ((fx_t)mapY << FX_SHIFT), deltaDistY);
         } else {
             stepY = 1;
-            sideDistY = FX_MUL(((fx_t)(mapY + 1) << FX_SHIFT) - player.y, deltaDistY);
+            sideDistY = FX_MUL(((fx_t)(mapY + 1) << FX_SHIFT) - py, deltaDistY);
         }
 
-        /* DDA loop. Safety cap of 64 to keep ROM-side bugs from hanging.
-         * Early-exit when both sideDistances exceed MAX_VIEW_DIST — the ray
-         * has gone past the fog cutoff, no wall draw would happen anyway. */
         int side = 0;
         int hit = 0;
         for (int i = 0; i < 64 && !hit; i++) {
@@ -790,27 +770,15 @@ void raycast_render(void) {
         fx_t perpDist = (side == 0) ? (sideDistX - deltaDistX)
                                     : (sideDistY - deltaDistY);
         if (perpDist < FX(0.1)) perpDist = FX(0.1);
-        wall_dist[col] = perpDist;
-        /* Fog cutoff: wall is beyond view distance — skip the draw entirely,
-         * the column already has the floor/ceiling haze from the row clear. */
+        WALL_DIST(col) = perpDist;
         if (perpDist >= MAX_VIEW_DIST) continue;
 
-        /* Projected line height in pixels = SCREEN_H / perpDist.
-         * Values fit in int32 — drop the int64 to avoid soft-emul divide. */
         int lineHeight = (int)((SCREEN_H << FX_SHIFT) / perpDist);
-        int wall_top  = SCREEN_H / 2 - lineHeight / 2;   /* may be < 0 */
-        int wall_bot  = SCREEN_H / 2 + lineHeight / 2;   /* may be >= H */
+        int wall_top  = SCREEN_H / 2 - lineHeight / 2;
+        int wall_bot  = SCREEN_H / 2 + lineHeight / 2;
         int drawStart = wall_top < 0 ? 0 : wall_top;
         int drawEnd   = wall_bot >= SCREEN_H ? SCREEN_H - 1 : wall_bot;
 
-        /* Piecewise shade curve: walls stay bright while detail fades, then
-         * darken in the final zone. This separates the two effects in
-         * distance so the mid-range reads as "flat yellow" (the chevron
-         * has faded but darkening hasn't started yet) rather than the
-         * muddy avocado you get when both happen together.
-         *
-         *   0..3.5 cells: barely-darkening from shade 0 to 2 (still bright)
-         *   3.5..6:        rapid darken from shade 2 to 15 (the actual fog) */
         int wall_shade;
         if (perpDist < FX(3.5)) {
             wall_shade = (int)((perpDist * 2) / FX(3.5));
@@ -822,37 +790,16 @@ void raycast_render(void) {
         if (side == 1) wall_shade += 1;
         if (wall_shade < 0) wall_shade = 0;
 
-        /* Where on the wall did the ray hit, fractional [0,1). Multiply
-         * by TEX_W * WALL_TILE_X so the texture repeats WALL_TILE_X times
-         * across each map cell, then mask to [0, TEX_W). */
         fx_t wall_hit = (side == 0)
-            ? (player.y + FX_MUL(perpDist, rayDirY))
-            : (player.x + FX_MUL(perpDist, rayDirX));
+            ? (py + FX_MUL(perpDist, rayDirY))
+            : (px + FX_MUL(perpDist, rayDirX));
         wall_hit -= (fx_t)FX_INT(wall_hit) << FX_SHIFT;
         int texX = (int)(((int64_t)wall_hit * (TEX_W * WALL_TILE_X)) >> FX_SHIFT)
                    & TEX_W_MASK;
 
-        /* Texture Y steps so the tile repeats WALL_TILE_Y times across the
-         * full wall height. Mask in the loop wraps each repeat. */
         fx_t tex_step = ((fx_t)(TEX_H * WALL_TILE_Y) << FX_SHIFT) / lineHeight;
         fx_t tex_pos  = (fx_t)(drawStart - wall_top) * tex_step;
 
-        /* Per-column shade LUT: (wall_shade + scaled_pattern) clamped, mapped
-         * to a palette index. Since texX, wall_shade, and detail_factor are
-         * constant for this column, compute the 16-entry table once and let
-         * the inner loop reduce to one load + write per pixel.
-         *
-         * Distance-based detail falloff: close walls show the full chevron
-         * pattern; walls past ~3 cells start fading the pattern out while
-         * the wall outline stays raycaster-sharp. detail_factor in [0..16],
-         * with `>> 4` doing the divide-by-16 in the per-LUT-entry math.
-         *
-         * Pointer is non-volatile: the 32X framebuffer at 0x24000000 isn't SH-2
-         * cached, so writes go through directly. A compiler barrier at the end
-         * of raycast_render commits any reordered stores before swapBuffers. */
-        /* Detail falloff: chevron fades over 2..3.5 cells. By cell 3.5 the
-         * wallpaper is "just flat yellow" — this is the brief reveal-zone
-         * before the wall_shade curve takes over and darkens it. */
         int detail_factor;
         if (perpDist < FX(2)) {
             detail_factor = 16;
@@ -879,6 +826,57 @@ void raycast_render(void) {
             tex_pos += tex_step;
         }
     }
+}
+
+void raycast_render(void) {
+    uint8_t *fb = fb_pixels();
+
+    /* Vertical head bob is applied below via the framebuffer line table —
+     * no position translation needed (lateral sway felt like drunk
+     * swagger, not walking). */
+
+    /* Camera basis: forward = (cos a, sin a); camera plane perpendicular,
+     * length 0.66 -> ~66° horizontal FOV. */
+    fx_t dirX   = COS_FX(player.angle);
+    fx_t dirY   = SIN_FX(player.angle);
+    fx_t planeX = FX_MUL(-dirY, FX(0.66));
+    fx_t planeY = FX_MUL( dirX, FX(0.66));
+
+    /* Floor + ceiling: per-row solid color (32-bit aligned writes,
+     * 4 pixels per store). Fast clear. */
+    uint32_t *fb32 = (uint32_t *)fb;
+    for (int y = 0; y < SCREEN_H; y++) {
+        uint8_t  c   = row_color[y];
+        uint32_t c32 = ((uint32_t)c << 24) | ((uint32_t)c << 16)
+                     | ((uint32_t)c <<  8) |  (uint32_t)c;
+        uint32_t *row = fb32 + y * (SCREEN_W / 4);
+        for (int x = 0; x < SCREEN_W / 4; x++) row[x] = c32;
+    }
+
+    /* Dispatch the ceiling-grid + carpet pass to the slave. Slave reads
+     * player state from the cache-through shared snapshot we write
+     * just before raising COMM4. Both passes write into disjoint top
+     * and bottom halves of the framebuffer; while they run, master
+     * has no parallel work to do here so it goes straight to the
+     * COMM4 wait below before starting the wall split. */
+    SHARED_UC->player.x     = player.x;
+    SHARED_UC->player.y     = player.y;
+    SHARED_UC->player.angle = player.angle;
+    MARS_SYS_COMM4 = MARS_CMD_CEILING;
+
+    /* Sync point: wait for the slave to finish the ceiling grid pass
+     * before dispatching its wall half. */
+    while (MARS_SYS_COMM4 != MARS_CMD_NONE);
+
+    /* Dispatch the right half of the wall pass to the slave; master
+     * draws the left half in parallel. Both CPUs read player state
+     * from the snapshot we wrote earlier — it's still current. Wall
+     * columns are independent rays writing to disjoint screen columns
+     * (and disjoint WALL_DIST indices), so no race. */
+    MARS_SYS_COMM4 = MARS_CMD_WALLS;
+    raycast_draw_walls(0, SCREEN_W / 2);
+    while (MARS_SYS_COMM4 != MARS_CMD_NONE);
+
     /* Commit any reordered stores from the non-volatile draw loops before
      * the next swapBuffers() makes them visible via the VDP page flip. */
     __asm__ __volatile__("" ::: "memory");

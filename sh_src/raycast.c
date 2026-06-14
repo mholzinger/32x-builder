@@ -48,6 +48,13 @@ const uint8_t world_map[MAP_H][MAP_W] = {
 #define TEX_W WALL_TEX_WIDTH
 #define TEX_H WALL_TEX_HEIGHT
 
+/* Liminal fog: hard view-distance cap. Walls past this distance don't get
+ * rendered (column falls back to the floor/ceiling haze). Doubles as a
+ * Backrooms aesthetic (haze hides the geometry beyond) AND a perf knob
+ * (fewer wall pixels per frame on long sightlines). */
+#define MAX_VIEW_DIST     FX(6)
+#define MAX_VIEW_DIST_INT 6
+
 /* How many times the wallpaper tile repeats per 1-unit map cell.
  * TEX_W/H must be powers of 2 so the wrap can be a cheap bitmask. */
 #define WALL_TILE_X 16
@@ -118,6 +125,23 @@ static inline volatile uint8_t *fb_pixels(void) {
 void raycast_init(void) {
     build_palette();
     build_shading_tables();
+}
+
+/* Per-frame palette nudge on the brightest wall and ceiling entries —
+ * mimics a dying fluorescent's flicker. Must be called from inside
+ * vblank (after the COMM12 tick wait) to avoid mid-frame CRAM tearing. */
+void raycast_shimmer(void) {
+    static uint32_t frame_count = 0;
+    frame_count++;
+    /* LCG, top bits are the most uncorrelated. */
+    uint32_t r = frame_count * 1103515245u + 12345u;
+    int wall_f = (r >> 28) & 3;     /* 0..3 */
+    int ceil_f = (r >> 26) & 3;
+    /* Subtract from bright base. WALL_BASE base is (30,25,6); CEIL_BASE
+     * base is (26,26,26). Subtracting up to 3 units is barely visible
+     * per pixel but reads as flicker when it changes every frame. */
+    Hw32xSetBGColor(WALL_BASE, 30 - wall_f, 25 - wall_f, 6);
+    Hw32xSetBGColor(CEIL_BASE, 26 - ceil_f, 26 - ceil_f, 26 - ceil_f);
 }
 
 
@@ -240,6 +264,9 @@ void raycast_render(void) {
         fx_t perpDist = (side == 0) ? (sideDistX - deltaDistX)
                                     : (sideDistY - deltaDistY);
         if (perpDist < FX(0.1)) perpDist = FX(0.1);
+        /* Fog cutoff: wall is beyond view distance — skip the draw entirely,
+         * the column already has the floor/ceiling haze from the row clear. */
+        if (perpDist >= MAX_VIEW_DIST) continue;
 
         /* Projected line height in pixels = SCREEN_H / perpDist.
          * Values fit in int32 — drop the int64 to avoid soft-emul divide. */
@@ -249,7 +276,11 @@ void raycast_render(void) {
         int drawStart = wall_top < 0 ? 0 : wall_top;
         int drawEnd   = wall_bot >= SCREEN_H ? SCREEN_H - 1 : wall_bot;
 
-        int wall_shade = FX_INT(perpDist);
+        /* Shade scaled so walls reach max darkness at MAX_VIEW_DIST. Combined
+         * with the cutoff above, walls fade smoothly into the haze rather
+         * than popping out at the boundary. */
+        int wall_shade = (FX_INT(perpDist) * (SHADE_LEVELS - 1))
+                       / MAX_VIEW_DIST_INT;
         if (side == 1) wall_shade += 1;
         if (wall_shade < 0) wall_shade = 0;
 

@@ -6,6 +6,8 @@ static uint16_t currentFB = 0;
 
 static void swapBuffers(void) {
     while (lastTick == MARS_SYS_COMM12);
+    /* In vblank now — safe palette-write window. */
+    raycast_shimmer();
     MARS_VDP_FBCTL = currentFB ^ 1;
     while ((MARS_VDP_FBCTL & MARS_VDP_FS) == currentFB);
     currentFB ^= 1;

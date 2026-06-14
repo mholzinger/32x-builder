@@ -29,5 +29,6 @@ extern const uint8_t world_map[MAP_H][MAP_W];
 void raycast_init(void);
 void raycast_render(void);
 void player_update(void);
+void raycast_shimmer(void);
 
 #endif

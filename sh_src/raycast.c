@@ -105,6 +105,25 @@ static void build_shading_tables(void) {
         row_color[y] = (y <= mid) ? (CEIL_BASE + shade)
                                   : (FLOOR_BASE + shade);
     }
+
+    /* Drop-ceiling grid: darken one row at each integer world-distance
+     * boundary. Computed once into row_color so there's no runtime cost.
+     * Perspective-compressed naturally — grid lines bunch up near horizon.
+     * Provides visual context so the fluorescent tubes read as embedded
+     * fixtures, not floating exit signs. */
+    int prev_d = -1;
+    for (int y = 0; y < mid; y++) {
+        int p = mid - y;
+        int d = mid / p;
+        if (d != prev_d) {
+            /* This row is a grid line. Darken by 2 shades for visibility. */
+            int shade = row_color[y] - CEIL_BASE;
+            shade += 2;
+            if (shade >= SHADE_LEVELS) shade = SHADE_LEVELS - 1;
+            row_color[y] = CEIL_BASE + shade;
+        }
+        prev_d = d;
+    }
 }
 
 /* Fog target — what every surface fades toward at maximum distance.
@@ -261,10 +280,12 @@ static void draw_lights(volatile uint8_t *fb,
 
         int dist_int = FX_INT(transformY);
         if (dist_int < 1) dist_int = 1;
-        /* Fluorescent tube ~0.5 world units wide, very thin. */
-        int width  = (SCREEN_W >> 2) / dist_int;
-        int height = (SCREEN_H >> 4) / dist_int + 1;
-        if (width  < 1) width  = 1;
+        /* Wide and thin so it reads as a 4-foot fluorescent tube embedded
+         * in the ceiling, not a square exit sign. ~0.6 world units wide,
+         * 1-2 screen pixels tall most of the time. */
+        int width  = (SCREEN_W * 3 / 8) / dist_int;
+        int height = 1 + (SCREEN_H >> 6) / dist_int;
+        if (width  < 2) width  = 2;
 
         int x0 = screenX - width  / 2;
         int x1 = screenX + width  / 2;

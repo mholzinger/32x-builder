@@ -319,7 +319,7 @@ void player_update(void) {
 
     /* Track walking state and advance bob phase. */
     is_walking = (dx != 0 || dy != 0);
-    if (is_walking) bob_phase += 16;         /* ~3.7 Hz — tight footfall cadence */
+    if (is_walking) bob_phase += 20;         /* ~4.7 Hz — tight micro-bob cadence */
 }
 
 /* Render each cardboard standup as a textured Wolf3D-style billboard.
@@ -728,8 +728,8 @@ void raycast_render(void) {
      * invisible against the smooth ceiling/floor gradient. */
     int bob_y = 0;
     if (is_walking) {
-        /* sin in -FX_ONE..+FX_ONE, scaled to ±3 pixels. */
-        bob_y = (int)((SIN_FX(bob_phase) * 3) >> FX_SHIFT);
+        /* sin in -FX_ONE..+FX_ONE, scaled to ±2 pixels for a tight micro-bob. */
+        bob_y = (int)((SIN_FX(bob_phase) * 2) >> FX_SHIFT);
     }
     volatile uint16_t *line_table = &MARS_FRAMEBUFFER;
     for (int i = 0; i < SCREEN_H; i++) {

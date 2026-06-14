@@ -496,28 +496,9 @@ static void draw_lights(uint8_t *fb,
 void raycast_render(void) {
     uint8_t *fb = fb_pixels();
 
-    /* Head bob: when walking, displace the camera by two summed components,
-     * both derived from bob_phase. The bob is saved/restored around the
-     * render so collision and AI see the clean position.
-     *
-     *   sway   — perpendicular to forward, sin(phase),     amp FX(0.08)
-     *   stride — along forward direction,  sin(2*phase),   amp FX(0.05)
-     *
-     * The stride at 2x frequency produces a forward-back rocking pulse
-     * (each footfall = one rock), composing with the side-to-side sway
-     * to feel like real walking motion in a hallway. */
-    fx_t saved_px = player.x;
-    fx_t saved_py = player.y;
-    if (is_walking) {
-        fx_t sway   = FX_MUL(SIN_FX(bob_phase),     FX(0.08));
-        fx_t stride = FX_MUL(SIN_FX(bob_phase << 1), FX(0.05));
-        fx_t fwdX  = COS_FX(player.angle);
-        fx_t fwdY  = SIN_FX(player.angle);
-        fx_t perpX = -fwdY;
-        fx_t perpY =  fwdX;
-        player.x += FX_MUL(perpX, sway) + FX_MUL(fwdX, stride);
-        player.y += FX_MUL(perpY, sway) + FX_MUL(fwdY, stride);
-    }
+    /* Vertical head bob is applied below via the framebuffer line table —
+     * no position translation needed (lateral sway felt like drunk
+     * swagger, not walking). */
 
     /* Camera basis: forward = (cos a, sin a); camera plane perpendicular,
      * length 0.66 -> ~66° horizontal FOV. */
@@ -734,8 +715,27 @@ void raycast_render(void) {
     draw_standups(fb, dirX, dirY, planeX, planeY);
     draw_lights(fb, dirX, dirY, planeX, planeY);
 
-    /* Restore the player position so the bob doesn't accumulate across
-     * frames or corrupt collision/AI logic. */
-    player.x = saved_px;
-    player.y = saved_py;
+    /* Vertical head bob via framebuffer line table.
+     *
+     * The 32X displays pixel data through a 224-entry line table that
+     * maps screen row i to an arbitrary pixel-line offset. By rewriting
+     * the table each frame to map row i -> (i + bob_y), the entire
+     * displayed image shifts vertically by bob_y pixels without
+     * re-rendering anything. Cost is 224 word writes (~0.05ms).
+     *
+     * Source lines past the ends are clamped to the first/last visible
+     * line; the resulting 1-3 row duplication at the bob boundary is
+     * invisible against the smooth ceiling/floor gradient. */
+    int bob_y = 0;
+    if (is_walking) {
+        /* sin in -FX_ONE..+FX_ONE, scaled to ±3 pixels. */
+        bob_y = (int)((SIN_FX(bob_phase) * 3) >> FX_SHIFT);
+    }
+    volatile uint16_t *line_table = &MARS_FRAMEBUFFER;
+    for (int i = 0; i < SCREEN_H; i++) {
+        int src = i + bob_y;
+        if (src < 0)         src = 0;
+        if (src >= SCREEN_H) src = SCREEN_H - 1;
+        line_table[i] = (uint16_t)(src * 160 + 0x100);
+    }
 }

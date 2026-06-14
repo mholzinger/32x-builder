@@ -50,19 +50,20 @@ const uint8_t world_map[MAP_H][MAP_W] = {
 
 /* How many times the wallpaper tile repeats per 1-unit map cell.
  * TEX_W/H must be powers of 2 so the wrap can be a cheap bitmask. */
-#define WALL_TILE_X 8
-#define WALL_TILE_Y 8
+#define WALL_TILE_X 16
+#define WALL_TILE_Y 16
 #define TEX_W_MASK  (TEX_W - 1)
 #define TEX_H_MASK  (TEX_H - 1)
 
-/* Drop-ceiling panel grid (procedural). 32x32 tile, dark edge = grid line,
- * bright center = panel surface. CEIL_TILES tiles per 1-unit map cell. */
-#define CEIL_TEX_W  32
-#define CEIL_TEX_H  32
-#define CEIL_TILES  2
-/* Shift = FX_SHIFT - log2(CEIL_TEX_W * CEIL_TILES). With 32*2 = 64 = 2^6,
+/* Drop-ceiling panel grid (procedural). 16x16 tile (256 bytes, fits in
+ * cache) with CEIL_TILES=4 keeps the same effective scale as 32x32 @ 2x.
+ * Dark edge = grid line, bright center = panel surface. */
+#define CEIL_TEX_W  16
+#define CEIL_TEX_H  16
+#define CEIL_TILES  4
+/* Shift = FX_SHIFT - log2(CEIL_TEX_W * CEIL_TILES). With 16*4 = 64 = 2^6,
  * shift = 10. (worldX_fx >> CEIL_TEX_SHIFT) & mask gives the tex coord
- * with proper wrap for negative worldX. */
+ * with proper wrap for negative worldX (arithmetic shift + AND). */
 #define CEIL_TEX_SHIFT 10
 #define CEIL_TEX_W_MASK (CEIL_TEX_W - 1)
 #define CEIL_TEX_H_MASK (CEIL_TEX_H - 1)
@@ -128,14 +129,13 @@ static inline volatile uint8_t *fb_pixels(void) {
     return (volatile uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
 }
 
-/* Drop-ceiling pattern: 2-pixel-wide dark grid lines at panel edges, light
- * panel surface inside. Values are shade-addition (0..15) added to the
- * per-row ceiling base shade. */
+/* Drop-ceiling pattern: 1-pixel dark grid line at panel edges, light
+ * interior. At 16x16 a 1px edge is the right proportion. */
 static void build_ceil_tex(void) {
     for (int y = 0; y < CEIL_TEX_H; y++) {
         for (int x = 0; x < CEIL_TEX_W; x++) {
-            int edge = (x < 2) || (x >= CEIL_TEX_W - 2)
-                    || (y < 2) || (y >= CEIL_TEX_H - 2);
+            int edge = (x == 0) || (x == CEIL_TEX_W - 1)
+                    || (y == 0) || (y == CEIL_TEX_H - 1);
             ceil_tex[y][x] = edge ? 5 : 0;
         }
     }
@@ -213,35 +213,33 @@ void raycast_render(void) {
         for (int x = 0; x < SCREEN_W / 4; x++) row[x] = c32;
     }
 
-    /* Ceiling: per-pixel floorcast. For each ceiling row, compute the world
-     * position of the leftmost column then step horizontally in world units;
-     * sample the drop-ceiling grid pattern by world XY. */
+    /* Ceiling: floorcast at HALF horizontal resolution. Each sample paints
+     * two adjacent screen columns via one 16-bit store. Cuts ceiling cost
+     * roughly in half; the 1-pixel pairing is invisible at 320 wide. */
     fx_t leftRayDirX = dirX - planeX;
     fx_t leftRayDirY = dirY - planeY;
     for (int y = 0; y < SCREEN_H / 2; y++) {
-        int p = SCREEN_H / 2 - y;            /* pixels above the horizon */
-        /* rowDistance = (SCREEN_H/2) / p in world units (camera height 0.5). */
+        int p = SCREEN_H / 2 - y;
         fx_t rowDistance = ((fx_t)(SCREEN_H / 2) << FX_SHIFT) / p;
 
         fx_t worldX = player.x + FX_MUL(rowDistance, leftRayDirX);
         fx_t worldY = player.y + FX_MUL(rowDistance, leftRayDirY);
-        /* Step per column = rowDistance * (2*plane) / SCREEN_W. */
-        fx_t stepX = FX_MUL(rowDistance, planeX << 1) / SCREEN_W;
-        fx_t stepY = FX_MUL(rowDistance, planeY << 1) / SCREEN_W;
+        /* Step covers 2 screen pixels of world extent per sample. */
+        fx_t stepX = FX_MUL(rowDistance, planeX << 1) / (SCREEN_W / 2);
+        fx_t stepY = FX_MUL(rowDistance, planeY << 1) / (SCREEN_W / 2);
 
         int shade = (SCREEN_H / 2) / p - 1;
         if (shade < 0) shade = 0;
         if (shade > SHADE_LEVELS - 1) shade = SHADE_LEVELS - 1;
-        uint8_t base = CEIL_BASE + shade;
 
-        volatile uint8_t *row = fb + y * SCREEN_W;
-        for (int x = 0; x < SCREEN_W; x++) {
+        volatile uint16_t *row16 = (volatile uint16_t *)(fb + y * SCREEN_W);
+        for (int sample = 0; sample < SCREEN_W / 2; sample++) {
             int tx = (worldX >> CEIL_TEX_SHIFT) & CEIL_TEX_W_MASK;
             int ty = (worldY >> CEIL_TEX_SHIFT) & CEIL_TEX_H_MASK;
             int s  = shade + ceil_tex[ty][tx];
             if (s >= SHADE_LEVELS) s = SHADE_LEVELS - 1;
-            row[x] = CEIL_BASE + s;
-            (void)base;  /* placeholder so 'base' stays used if pattern is 0 */
+            uint16_t c = (uint16_t)(CEIL_BASE + s);
+            row16[sample] = (c << 8) | c;          /* paint both pixels */
             worldX += stepX;
             worldY += stepY;
         }
@@ -301,8 +299,9 @@ void raycast_render(void) {
                                     : (sideDistY - deltaDistY);
         if (perpDist < FX(0.1)) perpDist = FX(0.1);
 
-        /* Projected line height in pixels = SCREEN_H / perpDist. */
-        int lineHeight = (int)(((int64_t)SCREEN_H << FX_SHIFT) / perpDist);
+        /* Projected line height in pixels = SCREEN_H / perpDist.
+         * Values fit in int32 — drop the int64 to avoid soft-emul divide. */
+        int lineHeight = (int)((SCREEN_H << FX_SHIFT) / perpDist);
         int wall_top  = SCREEN_H / 2 - lineHeight / 2;   /* may be < 0 */
         int wall_bot  = SCREEN_H / 2 + lineHeight / 2;   /* may be >= H */
         int drawStart = wall_top < 0 ? 0 : wall_top;
@@ -327,12 +326,14 @@ void raycast_render(void) {
         fx_t tex_step = ((fx_t)(TEX_H * WALL_TILE_Y) << FX_SHIFT) / lineHeight;
         fx_t tex_pos  = (fx_t)(drawStart - wall_top) * tex_step;
 
-        volatile uint8_t *p = fb + col;
+        /* Stride pointer — avoids a multiply (y * SCREEN_W) per pixel. */
+        volatile uint8_t *p = fb + col + drawStart * SCREEN_W;
         for (int y = drawStart; y <= drawEnd; y++) {
             int texY = (tex_pos >> FX_SHIFT) & TEX_H_MASK;
             int s = wall_shade + wall_tex[texY][texX];
             if (s >= SHADE_LEVELS) s = SHADE_LEVELS - 1;
-            p[y * SCREEN_W] = WALL_BASE + s;
+            *p = WALL_BASE + s;
+            p += SCREEN_W;
             tex_pos += tex_step;
         }
     }

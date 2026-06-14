@@ -139,22 +139,24 @@ static void build_shading_tables(void) {
 
 static void build_palette(void) {
     Hw32xSetBGColor(0, 0, 0, 0);
-    /* Walls: eggshell — warm cream with a yellow undertone. R held high,
-     * G and B brought up so it reads as off-white wallpaper rather than
-     * the previous saturated mustard. */
+    /* Walls: eggshell cream — matched to the classic Backrooms reference
+     * photo. Much less saturated than the previous mustard; reads as
+     * "off-white wallpaper" rather than "yellow paint". The chevron
+     * texture pattern adds the visible accent on top. */
     for (int i = 0; i < SHADE_LEVELS; i++) {
         Hw32xSetBGColor(WALL_BASE + i,
-                        MIX(30, FOG_R, i),
+                        MIX(28, FOG_R, i),
                         MIX(27, FOG_G, i),
-                        MIX(14, FOG_B, i));
+                        MIX(22, FOG_B, i));
     }
-    /* Carpet: lighter yellow with a tinge of brown. Bumped brightness and
-     * lifted B so the yellow desaturates into a beige/tan direction. */
+    /* Carpet: warm beige/tan brown — matched to reference. Drops out of
+     * the yellow family into a true brown-beige (R > G > B with all three
+     * relatively close). */
     for (int i = 0; i < SHADE_LEVELS; i++) {
         Hw32xSetBGColor(FLOOR_BASE + i,
-                        MIX(28, FOG_R, i),
-                        MIX(24, FOG_G, i),
-                        MIX(11, FOG_B, i));
+                        MIX(24, FOG_R, i),
+                        MIX(21, FOG_G, i),
+                        MIX(16, FOG_B, i));
     }
     /* Ceiling: neutral off-white. */
     for (int i = 0; i < SHADE_LEVELS; i++) {
@@ -280,12 +282,13 @@ static void draw_lights(volatile uint8_t *fb,
 
         int dist_int = FX_INT(transformY);
         if (dist_int < 1) dist_int = 1;
-        /* Wide and thin so it reads as a 4-foot fluorescent tube embedded
-         * in the ceiling, not a square exit sign. ~0.6 world units wide,
-         * 1-2 screen pixels tall most of the time. */
-        int width  = (SCREEN_W * 3 / 8) / dist_int;
-        int height = 1 + (SCREEN_H >> 6) / dist_int;
+        /* Small recessed panels, ~2:1 aspect ratio. Matches the reference
+         * photo where multiple modest light panels sit in the drop-ceiling
+         * grid rather than long exposed tubes. */
+        int width  = (SCREEN_W >> 3) / dist_int;
+        int height = (SCREEN_H >> 4) / dist_int;
         if (width  < 2) width  = 2;
+        if (height < 1) height = 1;
 
         int x0 = screenX - width  / 2;
         int x1 = screenX + width  / 2;

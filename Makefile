@@ -77,13 +77,22 @@ SHOBJS  = $(SHSS:.s=.o)
 SHOBJS += $(SHCS:.c=.o)
 SHOBJS += $(SHCPPS:.cpp=.o)
 
-.PHONY: all release debug
+.PHONY: all release debug deploy
+
+# Override on command line: make deploy MISTER=root@othermister.local
+MISTER     ?= root@mister.office.local
+MISTER_DIR ?= /media/usb0/games/S32X
 
 all: release
 
 release: MDEXTRA  = -O2 -fomit-frame-pointer -flto -fuse-linker-plugin
 release: SHEXTRA  = -Ofast -fomit-frame-pointer -flto -fuse-linker-plugin
 release: $(MDTARGET).bin $(MDTARGET).lst $(TARGET).32x $(TARGET).lst
+
+# Build + scp the .32x to the MiSTer's S32X folder.
+deploy: release
+	@echo "==> Copying $(TARGET).32x to $(MISTER):$(MISTER_DIR)/"
+	@scp $(TARGET).32x $(MISTER):$(MISTER_DIR)/backrooms.32x
 
 # Gens-KMod, BlastEm and UMDK support GDB tracing, enabled by this target
 debug: MDEXTRA = -g -Og -DDEBUG -DKDEBUG

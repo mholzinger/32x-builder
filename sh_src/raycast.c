@@ -687,17 +687,33 @@ void raycast_render(void) {
         fx_t tex_step = ((fx_t)(TEX_H * WALL_TILE_Y) << FX_SHIFT) / lineHeight;
         fx_t tex_pos  = (fx_t)(drawStart - wall_top) * tex_step;
 
-        /* Per-column shade LUT: (wall_shade + wall_tex[ty][texX]) clamped, mapped
-         * to a palette index. Since texX and wall_shade are constant for this
-         * column, compute the 16-entry table once and let the inner loop reduce
-         * to a single load + write per pixel.
+        /* Per-column shade LUT: (wall_shade + scaled_pattern) clamped, mapped
+         * to a palette index. Since texX, wall_shade, and detail_factor are
+         * constant for this column, compute the 16-entry table once and let
+         * the inner loop reduce to one load + write per pixel.
+         *
+         * Distance-based detail falloff: close walls show the full chevron
+         * pattern; walls past ~3 cells start fading the pattern out while
+         * the wall outline stays raycaster-sharp. detail_factor in [0..16],
+         * with `>> 4` doing the divide-by-16 in the per-LUT-entry math.
          *
          * Pointer is non-volatile: the 32X framebuffer at 0x24000000 isn't SH-2
          * cached, so writes go through directly. A compiler barrier at the end
          * of raycast_render commits any reordered stores before swapBuffers. */
+        int dist_int = FX_INT(perpDist);
+        int detail_factor;
+        if (dist_int < 3) {
+            detail_factor = 16;
+        } else {
+            /* Linear fade from 16 at distance 3 to 0 at MAX_VIEW_DIST. */
+            int span = MAX_VIEW_DIST_INT - 3;
+            detail_factor = 16 - ((dist_int - 3) * 16) / span;
+            if (detail_factor < 0) detail_factor = 0;
+        }
         uint8_t shade_lut[TEX_H];
         for (int ty = 0; ty < TEX_H; ty++) {
-            int s = wall_shade + wall_tex[ty][texX];
+            int pattern = (wall_tex[ty][texX] * detail_factor) >> 4;
+            int s = wall_shade + pattern;
             if (s >= SHADE_LEVELS) s = SHADE_LEVELS - 1;
             shade_lut[ty] = (uint8_t)(WALL_BASE + s);
         }

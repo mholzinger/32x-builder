@@ -65,6 +65,12 @@ const uint8_t world_map[MAP_H][MAP_W] = {
 #define MAX_VIEW_DIST     FX(6)
 #define MAX_VIEW_DIST_INT 6
 
+/* Drop-ceiling grid density — number of panel boundaries per 1-unit map
+ * cell. Higher = denser grid. The cost is identical at any density; we
+ * just scale world coordinates by this factor before integer-crossing
+ * detection so a boundary at every (1/CEIL_GRID_DENSITY) units triggers. */
+#define CEIL_GRID_DENSITY 4
+
 /* Per-column z-buffer captured during wall draw so the light billboards
  * can z-test against walls. 0x7FFFFFFF = no wall hit (light wins). */
 static fx_t wall_dist[SCREEN_W];
@@ -115,17 +121,17 @@ static void build_shading_tables(void) {
                                   : (FLOOR_BASE + shade);
     }
 
-    /* Drop-ceiling grid: darken one row at each integer world-distance
-     * boundary. Computed once into row_color so there's no runtime cost.
-     * Perspective-compressed naturally — grid lines bunch up near horizon.
-     * Provides visual context so the fluorescent tubes read as embedded
-     * fixtures, not floating exit signs. */
+    /* Drop-ceiling grid: darken one row at each CEIL_GRID_DENSITY-th of a
+     * world-distance unit. Multiplying mid by CEIL_GRID_DENSITY makes the
+     * integer-transition detection trigger CEIL_GRID_DENSITY times more
+     * often. Computed once into row_color so there's no runtime cost.
+     * Perspective compression is automatic — grid lines bunch up near
+     * horizon, sparse and large near you. */
     int prev_d = -1;
     for (int y = 0; y < mid; y++) {
         int p = mid - y;
-        int d = mid / p;
+        int d = (mid * CEIL_GRID_DENSITY) / p;
         if (d != prev_d) {
-            /* This row is a grid line. Darken by 2 shades for visibility. */
             int shade = row_color[y] - CEIL_BASE;
             shade += 2;
             if (shade >= SHADE_LEVELS) shade = SHADE_LEVELS - 1;
@@ -382,13 +388,20 @@ void raycast_render(void) {
             if (shade >= SHADE_LEVELS) shade = SHADE_LEVELS - 1;
             uint8_t grid_c = CEIL_BASE + shade;
 
-            /* World-X integer crossings. */
-            fx_t dX = wxR - wxL;
+            /* Scale world coords by CEIL_GRID_DENSITY so the integer-
+             * crossing detection triggers at every (1/density)-unit
+             * boundary instead of every whole unit. */
+            fx_t wxL_s = wxL * CEIL_GRID_DENSITY;
+            fx_t wxR_s = wxR * CEIL_GRID_DENSITY;
+            fx_t wyL_s = wyL * CEIL_GRID_DENSITY;
+            fx_t wyR_s = wyR * CEIL_GRID_DENSITY;
+            /* World-X grid crossings. */
+            fx_t dX = wxR_s - wxL_s;
             if (dX != 0) {
-                int lo = FX_INT(wxL), hi = FX_INT(wxR);
+                int lo = FX_INT(wxL_s), hi = FX_INT(wxR_s);
                 if (lo > hi) { int t = lo; lo = hi; hi = t; }
                 for (int target = lo + 1; target <= hi; target++) {
-                    fx_t num = ((fx_t)target << FX_SHIFT) - wxL;
+                    fx_t num = ((fx_t)target << FX_SHIFT) - wxL_s;
                     fx_t t   = FX_DIV(num, dX);
                     if (t < 0 || t >= FX_ONE) continue;
                     int col = (int)(((int32_t)t * SCREEN_W) >> FX_SHIFT);
@@ -397,13 +410,13 @@ void raycast_render(void) {
                     }
                 }
             }
-            /* World-Y integer crossings. */
-            fx_t dY = wyR - wyL;
+            /* World-Y grid crossings. */
+            fx_t dY = wyR_s - wyL_s;
             if (dY != 0) {
-                int lo = FX_INT(wyL), hi = FX_INT(wyR);
+                int lo = FX_INT(wyL_s), hi = FX_INT(wyR_s);
                 if (lo > hi) { int t = lo; lo = hi; hi = t; }
                 for (int target = lo + 1; target <= hi; target++) {
-                    fx_t num = ((fx_t)target << FX_SHIFT) - wyL;
+                    fx_t num = ((fx_t)target << FX_SHIFT) - wyL_s;
                     fx_t t   = FX_DIV(num, dY);
                     if (t < 0 || t >= FX_ONE) continue;
                     int col = (int)(((int32_t)t * SCREEN_W) >> FX_SHIFT);

@@ -36,29 +36,29 @@ static void build_palette(void) {
     /* Color 0 = bright magenta so we can spot anywhere the renderer
      * left the framebuffer untouched (a debug aid, removed later). */
     Hw32xSetBGColor(0, 31, 0, 31);
-    /* Wall: Backrooms mustard #C6B280 ~= (24, 22, 16) in 5:5:5 */
+    /* Wall: vivid Backrooms mustard. Needs big R-B gap to read as YELLOW
+     * (not drab tan) after distance shading + 5-bit quantization. */
     for (int i = 0; i < SHADE_LEVELS; i++) {
         int s = SHADE_LEVELS - i;
         Hw32xSetBGColor(WALL_BASE + i,
-                        24 * s / SHADE_LEVELS,
-                        22 * s / SHADE_LEVELS,
-                        16 * s / SHADE_LEVELS);
+                        30 * s / SHADE_LEVELS,
+                        25 * s / SHADE_LEVELS,
+                        6  * s / SHADE_LEVELS);
     }
-    /* Carpet: brown ~ (12, 6, 2) */
+    /* Carpet: warm brown */
     for (int i = 0; i < SHADE_LEVELS; i++) {
         int s = SHADE_LEVELS - i;
         Hw32xSetBGColor(FLOOR_BASE + i,
-                        12 * s / SHADE_LEVELS,
-                        6  * s / SHADE_LEVELS,
+                        14 * s / SHADE_LEVELS,
+                        7  * s / SHADE_LEVELS,
                         2  * s / SHADE_LEVELS);
     }
-    /* Ceiling: dingy off-white ~ (28, 28, 24) */
+    /* Ceiling: neutral light gray-white (balanced RGB) so it doesn't
+     * cross-read as yellow next to the wall. */
     for (int i = 0; i < SHADE_LEVELS; i++) {
         int s = SHADE_LEVELS - i;
-        Hw32xSetBGColor(CEIL_BASE + i,
-                        28 * s / SHADE_LEVELS,
-                        28 * s / SHADE_LEVELS,
-                        24 * s / SHADE_LEVELS);
+        int v = 26 * s / SHADE_LEVELS;
+        Hw32xSetBGColor(CEIL_BASE + i, v, v, v);
     }
 }
 

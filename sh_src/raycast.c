@@ -126,13 +126,16 @@ static void build_shading_tables(void) {
     }
 }
 
-/* Fog target — what every surface fades toward at maximum distance.
- * Neutral misty grey with the slightest cool cast so the far haze reads
- * as "somewhere" rather than as the black void. All three palette ramps
- * converge here, so the walls/floor/ceiling blend into one fog at depth. */
-#define FOG_R 10
-#define FOG_G 10
-#define FOG_B 11
+/* Fade target — what every surface fades toward at maximum distance.
+ * Pure black: misty grey was reading as "too bright" at depth, removing
+ * the contrast between near and far. Black gives the classic raycaster
+ * "darkness eats the corridor" look.
+ *
+ * Note: this isn't a perf knob — it's just palette base values at init.
+ * Changing these has zero runtime cost. */
+#define FOG_R 0
+#define FOG_G 0
+#define FOG_B 0
 
 /* Linear blend of bright base (weight: SHADE_LEVELS - i) toward fog (weight: i). */
 #define MIX(bright, fog, i) (((bright) * (SHADE_LEVELS - (i)) + (fog) * (i)) / SHADE_LEVELS)

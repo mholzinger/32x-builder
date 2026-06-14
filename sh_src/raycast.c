@@ -285,7 +285,7 @@ void player_update(void) {
     HwMdReadPad(0);
     uint16_t pad = MARS_SYS_COMM8;
 
-    fx_t walk = (pad & SEGA_CTRL_C) ? FX(0.10) : FX(0.05);
+    fx_t walk = (pad & SEGA_CTRL_C) ? FX(0.15) : FX(0.08);
     uint8_t turn = 2;
 
     /* B toggles left/right between turning and strafing. */
@@ -548,17 +548,19 @@ void raycast_render(void) {
             fx_t worldY = player.y + FX_MUL(rowDist, leftDirY);
             fx_t stepX  = FX_MUL(rowDist, rightDirX - leftDirX) / SCREEN_W;
             fx_t stepY  = FX_MUL(rowDist, rightDirY - leftDirY) / SCREEN_W;
-            /* 4x step covers 4 pixels per noise sample. */
-            fx_t stepX4 = stepX << 2;
-            fx_t stepY4 = stepY << 2;
+            /* 8x step — every 8th column gets a noise sample. Half the
+             * per-frame cost vs every-4th; threshold bumped to keep the
+             * effective stain density roughly the same on screen. */
+            fx_t stepX8 = stepX << 3;
+            fx_t stepY8 = stepY << 3;
             uint8_t dark_c = (uint8_t)(FLOOR_BASE + base_shade + 2);
-            for (int x = 0; x < SCREEN_W; x += 4) {
+            for (int x = 0; x < SCREEN_W; x += 8) {
                 int wx = (int)(worldX >> 13) & 0xFF;
                 int wy = (int)(worldY >> 13) & 0xFF;
                 int hash = (wx * 73 + wy * 31) & 0xF;
-                if (hash < 4) fb[y * SCREEN_W + x] = dark_c;
-                worldX += stepX4;
-                worldY += stepY4;
+                if (hash < 6) fb[y * SCREEN_W + x] = dark_c;
+                worldX += stepX8;
+                worldY += stepY8;
             }
         }
     }

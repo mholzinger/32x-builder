@@ -358,7 +358,31 @@ static void draw_standups(uint8_t *fb,
          * far past 1:1 at close range. */
         int spriteHeight = (int)((((int32_t)SCREEN_H * 2) << FX_SHIFT) / (transformY * 3));
         int spriteWidth  = spriteHeight >> 1;
-        if (spriteWidth < 1) spriteWidth = 1;
+
+        /* Flat-cardboard width scaling. The standup has a fixed facing
+         * direction in world space, NOT camera-tracking like a Doom
+         * billboard. Width shrinks to zero when viewed edge-on:
+         *
+         *   cos^2(angle) = dot(camera->standup, standup_normal)^2 / |s-p|^2
+         *
+         * Scale spriteWidth by this factor. Player can now walk around the
+         * cardboard and the cardboard stays oriented in the world — see
+         * narrower silhouette from the side, full broadside from the front
+         * or back. cos^2 (not cos) is a fast approximation that avoids
+         * sqrt; the foreshortening is slightly steeper than physical but
+         * reads correct. */
+        fx_t fwdX_s = COS_FX(standups[i].facing_angle);
+        fx_t fwdY_s = SIN_FX(standups[i].facing_angle);
+        fx_t dot_n  = FX_MUL(sx, fwdX_s) + FX_MUL(sy, fwdY_s);
+        fx_t s_to_p_sq = FX_MUL(sx, sx) + FX_MUL(sy, sy);
+        fx_t cos_sq = FX_ONE;
+        if (s_to_p_sq > 0) {
+            cos_sq = (FX_MUL(dot_n, dot_n) << FX_SHIFT) / s_to_p_sq;
+            if (cos_sq > FX_ONE) cos_sq = FX_ONE;
+        }
+        spriteWidth = (spriteWidth * cos_sq) >> FX_SHIFT;
+
+        if (spriteWidth < 1) continue;             /* edge-on, invisible */
         if (spriteHeight < 1) continue;
 
         /* Floor row at this distance: SCREEN_H/2 + (SCREEN_H/2)/transformY. */
@@ -516,6 +540,44 @@ void raycast_render(void) {
                      | ((uint32_t)c <<  8) |  (uint32_t)c;
         uint32_t *row = fb32 + y * (SCREEN_W / 4);
         for (int x = 0; x < SCREEN_W / 4; x++) row[x] = c32;
+    }
+
+    /* Carpet wear pass: stamp dark "stains" at world-position-hashed
+     * locations on the floor. For each floor row, compute world XY at the
+     * leftmost screen column, then step horizontally in world units; every
+     * 4th column gets a hash test that determines whether to darken that
+     * pixel. The hash is purely a function of world XY, so as the player
+     * moves the stains stay locked to the floor (slide toward you instead
+     * of moving with the camera). Cost ~2-3ms. */
+    {
+        fx_t leftDirX  = dirX - planeX;
+        fx_t leftDirY  = dirY - planeY;
+        fx_t rightDirX = dirX + planeX;
+        fx_t rightDirY = dirY + planeY;
+        int mid = SCREEN_H / 2;
+        for (int y = mid + 1; y < SCREEN_H; y++) {
+            int p = y - mid;
+            fx_t rowDist = ((fx_t)mid << FX_SHIFT) / p;
+            fx_t worldX = player.x + FX_MUL(rowDist, leftDirX);
+            fx_t worldY = player.y + FX_MUL(rowDist, leftDirY);
+            fx_t stepX  = FX_MUL(rowDist, rightDirX - leftDirX) / SCREEN_W;
+            fx_t stepY  = FX_MUL(rowDist, rightDirY - leftDirY) / SCREEN_W;
+            /* 4x step covers 4 pixels per noise sample. */
+            fx_t stepX4 = stepX << 2;
+            fx_t stepY4 = stepY << 2;
+            uint8_t base_c = row_color[y];
+            /* Darken by 2 shade slots; clamp to the same row's base family. */
+            uint8_t dark_c = base_c + 2;
+            if ((dark_c & 0xF) < (base_c & 0xF)) dark_c = base_c;  /* wrap-safe */
+            for (int x = 0; x < SCREEN_W; x += 4) {
+                int wx = (int)(worldX >> 13) & 0xFF;
+                int wy = (int)(worldY >> 13) & 0xFF;
+                int hash = (wx * 73 + wy * 31) & 0xF;
+                if (hash < 4) fb[y * SCREEN_W + x] = dark_c;
+                worldX += stepX4;
+                worldY += stepY4;
+            }
+        }
     }
 
     /* Drop-ceiling vertical grid lines. For each ceiling row, compute the

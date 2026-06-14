@@ -222,8 +222,8 @@ After ambient drone is in place. Slow swells, sub-bass, distant rumbles.
 ## Performance
 
 ### Mine the Doom 32X Resurrection codebase for techniques
-**Status:** strategic resource — every perf push should check what
-d32xr already solved before reinventing it.
+**Status:** strategic resource — deep-mine report landed; concrete
+adopt-list below in ranked-ROI order.
 
 [viciious/d32xr](https://github.com/viciious/d32xr) is years of
 optimization work to make Doom run smoothly on the actual 23 MHz
@@ -232,34 +232,112 @@ SH-2s. We've already borrowed:
 - the COMM4 doorbell + COMM6 arg-word convention
 - the `MARS_SECCMD_*` command enum + slave polling dispatcher pattern
 
-What we haven't borrowed yet, in rough order of probable payoff:
-- **Hand-rolled SH-2 assembly for hot inner loops** — wall column
-  draw, texture sample, fixed-point mul. GCC for SH-2 (especially the
-  ancient sh-elf branch) leaves obvious wins on the table. d32xr has
-  hand-tuned column draws that beat our compiled ones easily.
-- **SH-2 internal DMA controller** for SDRAM-to-FB / texture
-  decompression. Free cycles while DMA runs. d32xr's `Mars_Secondary`
-  inits SH2_DMA_DMAOR etc. — we set none of those.
-- **Ring buffer between CPUs** (`mars_ringbuf.h`) for streaming work
-  units instead of single-command doorbell. When we want each CPU to
-  process N items independently (e.g. per-sprite work, per-zone
-  light), ring buffers give us continuous throughput vs. our current
-  signal-wait-ACK overhead.
-- **Cache-aware data layout** — align hot structs to 16-byte cache
-  lines, group fields that are written together. Our shared.h is
-  naïve about this.
-- **VDP overwrite-buffer tricks** (0x24020000) for sprite over-draw
-  without clearing first.
-- **PWM channel patterns** for audio — they have a full mixer working.
-- **Bank-switched ROM** for >2 MB cart contents, when we eventually
-  bundle music or extra maps.
-- **Interrupt-driven vsync** (VINT handler) instead of our COMM12
-  polling — frees the master to do useful work in vblank.
-- **Their level / palette / texture loading pipeline** as a template
-  if we ever want runtime-streaming assets.
+#### Ranked adopt-list (from the deep-mine research agent)
 
-Whenever we hit a perf wall, the first move should be: search d32xr
-for how they solved that exact problem.
+**1. SH-2 hardware DIVU latency-hiding for `1/perpDist`.**
+The SH-2 has a hardware divider at `0xFFFFFF00`. Fire-and-forget the
+64/32 divide, do other work for 39 cycles, then read the quotient.
+At the top of every wall column we need `1/perpDist` for the texture
+step — start the DIVU, do all ~30 instructions of lighting / clip-
+bound / texture-offset setup during the divide, read the result at
+the end. Reference: d32xr `r_phase6.c:190-247`. Expected: ~0.5-1ms/
+frame savings on 320 columns.
+
+```c
+__asm volatile (
+   "mov #-128, %1\n\t"
+   "add %1, %1     /* %1 is now 0xFFFFFF00 */\n\t"
+   "mov.l %2, @(0, %1)   /* divisor */\n\t"
+   "mov #0, %0\n\t"
+   "mov.l %0, @(16, %1)  /* dividend high = 0 */\n\t"
+   "mov #-1, %0\n\t"
+   "mov.l %0, @(20, %1)  /* dividend low = 0xFFFFFFFF; starts divide */\n\t"
+   : "=&r" (t), "=&r" (divunit) : "r" (scalefrac));
+/* ...do column setup work here for 39+ cycles... */
+__asm volatile (
+    "mov #-128, %0\n\t"
+    "add %0, %0\n\t"
+    "mov.l @(20, %0), %0  /* read quotient */\n\t"
+    : "=r" (iscale));
+```
+
+**2. Hand-roll SH-2 asm wall column inner draw loop.**
+The single biggest win. d32xr's `sh2_draw.s:56-74` is ~8 cycles per
+pixel; our C compiles to ~15-20. For ~30K visible wall pixels per
+frame, the asm saves ~9ms — **this one change likely puts us under
+16.7ms (60 fps)**. Techniques inside the asm:
+- 2× unrolling with odd-count peel (so the loop body always
+  processes exactly 2 pixels)
+- `swap.w` extracts `frac >> 16` in 1 cycle (vs `shlr16` = 2)
+- `dt Rn` decrement-and-test sets the T-bit; `bf` consumes it →
+  one-instruction loop terminator
+- GBR-relative colormap fetch: `mov.l @(disp,gbr),r0` in 1
+  instruction with no literal pool
+
+**3. Work-stealing wall split via COMM6.**
+Replace our fixed col 0-159 / 160-319 split with a single atomic
+next-column counter in COMM6. Each CPU does
+`R_Lock(); int c = next_col++; R_Unlock(); if (c >= 320) break; draw(c);`.
+Naturally load-balances — eliminates the case where one half of the
+screen has more close walls and the other CPU sits idle. Reference:
+d32xr `R_GetNextPlane` / `R_LockPln`.
+
+**4. GBR thread-local-storage for per-CPU state.**
+SH-2 has a GBR register usable as a base pointer for 8-bit
+displacement loads. d32xr keeps a per-CPU `mars_tls_t` struct
+(colormap, fb, validcount, etc.) and sets GBR = `&mars_tls_pri` on
+master, `&mars_tls_sec` on slave at boot. Then hot paths fetch
+fields via single `mov.l @(disp,gbr),r0`. Eliminates stack-passed
+arguments in the column-draw inner loop. Reference: `marsnew.c:471,
+doomdef.h:1354-1370`.
+
+**5. Compact sine LUT.**
+Our 32-bit `sin_table.h` is 4KB and blows the entire 4KB L1 cache.
+d32xr uses a `uint16_t[256]` quarter-wave with quadrant folding:
+```c
+q = angle / (FINEANGLES / 4);
+if (q & 1) angle = ~angle;       /* reflect symmetric quadrants */
+res = quarter_table[angle & mask];
+return q >= 2 ? -res : res;
+```
+512 bytes total. Reference: d32xr `tables.c:2604-2619`.
+
+**6. Cache-line invalidate macro.**
+`*((volatile uintptr_t *)(addr | 0x40000000)) = 0` invalidates one
+cache line in ~2 cycles. Currently we sidestep cache entirely with
+the `| 0x20000000` alias, but cached + selective-invalidate is
+faster when we know reads dominate writes. Reference: d32xr
+`marshw.h:75`.
+
+**7. SH-2 DMA + completion-interrupt audio mixer.**
+Entire PWM audio blueprint is in `marssound.c` + `sh2_mixer.s`. Two
+SDRAM ping-pong buffers, slave mixes one while DMA1 drains the
+other into the PWM stereo register, completion IRQ swaps. ~1.5ms/
+frame for 8 channels at 22 kHz. When we add audio, copy this
+wholesale.
+
+**8. Other clever tricks worth piecemeal adoption:**
+- Materialize `0xFFFFFF00` in 2 instructions: `mov #-128, r1; add r1, r1`.
+  Avoids 4-byte literal pool entry + data fetch.
+- `muls.w` (1 cycle, 16×16→32) instead of `dmuls.l` (2 cycle, 32×32→64)
+  when 32-bit result precision is enough (e.g. BSP sign tests).
+- 4bpp textures with pre-swapped nibbles so the per-pixel
+  unpacking is one shift + mask, no conditional.
+- Sort drawables by texture identity to keep the 16-byte cache
+  line hot across consecutive draws.
+
+#### Critical correction from the research
+
+SH-2 cache is **write-through**, not write-back. So writes via the
+cache-through alias AND writes via the cached alias both reach
+memory immediately. The "explicit flush before another CPU reads"
+concern from our earlier work is unfounded for WRITES — flushes
+only matter when one CPU previously *read* a value into its cache
+and needs the next read to see the *other* CPU's update.
+
+This means we can be smarter: shared-write-only state can use the
+cached alias for speed, only the reader side needs occasional
+`Mars_ClearCacheLine` calls.
 
 ### Texture mipmaps for walls
 Multiple wallpaper texture resolutions per distance band. Close walls

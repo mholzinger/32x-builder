@@ -24,10 +24,20 @@
 
 /* Snapshot of the master's player state for the slave to render from.
  * Master writes this just before signaling CMD_CEILING; slave reads
- * it via cache-through. */
+ * it via cache-through.
+ *
+ * Fields are `volatile` to defeat -flto hoisting. When the slave's
+ * draw functions get inlined into the s_main dispatch loop, GCC can
+ * notice that no code visible to it writes to these fields and hoist
+ * the loads OUT of the for(;;) loop — caching the initial frame's
+ * values forever. That's what manifested as "ceiling grid rotates
+ * with the player's angle but doesn't translate when walking": the
+ * angle field was being re-read (likely due to the sin/cos lookup
+ * creating a downstream load dependency) but x/y were hoisted out
+ * once and never refreshed. */
 typedef struct {
-    int32_t  x, y;      /* FX 16.16 world position */
-    uint16_t angle;     /* 0..255 in low byte (matches player.angle) */
+    volatile int32_t  x, y;     /* FX 16.16 world position */
+    volatile uint16_t angle;    /* 0..255 in low byte */
     uint16_t _pad;
 } player_snap_t;
 
@@ -37,6 +47,11 @@ typedef struct {
     volatile uint32_t slave_heartbeat;
     /* Player snapshot for cross-CPU rendering. */
     player_snap_t player;
+    /* Test-and-set byte for the work-stealing wall-column counter
+     * (stored in MARS_SYS_COMM6). Either CPU acquires this lock via
+     * sh2_spin_tas before reading-and-incrementing the counter. */
+    volatile uint8_t wall_lock;
+    uint8_t _pad[3];
 } shared_t;
 
 extern shared_t shared;
@@ -46,5 +61,10 @@ extern shared_t shared;
 #define SHARED_UC ((shared_t *)((uintptr_t)&shared | 0x20000000))
 
 #define SLAVE_HEARTBEAT (SHARED_UC->slave_heartbeat)
+
+/* Pointer to the wall-column-counter lock byte, via the cache-through
+ * alias. Pass to sh2_spin_tas / sh2_release_tas. */
+#define WALL_LOCK_PTR \
+    ((volatile uint8_t *)((uintptr_t)&shared.wall_lock | 0x20000000))
 
 #endif

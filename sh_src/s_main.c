@@ -21,7 +21,11 @@ void s_main(void) {
          * latency below one frame. */
         uint16_t cmd = MARS_SYS_COMM4;
         if (cmd == MARS_CMD_NONE) {
-            for (volatile int i = 0; i < 64; i++);
+            /* Throttle bumped 64→256 because master got faster after
+             * the DIVU/sine LUT optimizations, shifting the bus-
+             * contention balance enough that controller-input stalls
+             * re-appeared. */
+            for (volatile int i = 0; i < 256; i++);
             continue;
         }
         switch (cmd) {

@@ -1,6 +1,7 @@
 #include "mars.h"
 #include "raycast.h"
 #include "shared.h"
+#include "sh2_asm.h"
 #include "sin_table.h"
 #include "wall_tex.h"
 #include "neander_tex.h"
@@ -110,6 +111,10 @@ const uint8_t world_map[MAP_H][MAP_W] = {
  * detection so a boundary at every (1/CEIL_GRID_DENSITY) units triggers. */
 #define CEIL_GRID_DENSITY 4
 
+/* Wallpaper chevron pattern strength at close range, 0-16. Reverted to
+ * the original 16 — the 10 attempt didn't read well on hardware. */
+#define WALL_PATTERN_MAX 16
+
 /* Per-column z-buffer captured during wall draw so the light billboards
  * can z-test against walls. 0x7FFFFFFF = no wall hit (light wins).
  *
@@ -132,11 +137,17 @@ typedef struct {
 } standup_t;
 
 static const standup_t standups[] = {
-    /* Neanderthal ~5 cells north of spawn in the col-16 spine corridor. */
+    /* Neanderthal ~5 cells north of spawn in the col-16 spine corridor.
+     * Solid, walkable-through, the "iconic Backrooms cardboard cutout"
+     * moment. */
     { FX(16.5), FX(23.5), 64,  0 },
-    /* Watcher far north end, just past the central band — visible only
-     * at distance, dissolves into haze when approached. */
-    { FX(16.5), FX(12.5), 64,  1 },
+    /* Watcher in the far east corner of the SE lounge — different zone
+     * so it isn't confused with the corridor neanderthal. Player has
+     * to take the east door off the spawn corridor (col 17, row 23)
+     * to find it. Silhouette fades when approached. Facing north
+     * (192) so it appears to be looking back at the player as they
+     * enter the lounge. */
+    { FX(28.5), FX(22.5), 192, 1 },
 };
 #define NUM_STANDUPS (int)(sizeof(standups) / sizeof(standups[0]))
 
@@ -195,24 +206,14 @@ static void build_shading_tables(void) {
                                   : (FLOOR_BASE + shade);
     }
 
-    /* Drop-ceiling grid: darken one row at each CEIL_GRID_DENSITY-th of a
-     * world-distance unit. Multiplying mid by CEIL_GRID_DENSITY makes the
-     * integer-transition detection trigger CEIL_GRID_DENSITY times more
-     * often. Computed once into row_color so there's no runtime cost.
-     * Perspective compression is automatic — grid lines bunch up near
-     * horizon, sparse and large near you. */
-    int prev_d = -1;
-    for (int y = 0; y < mid; y++) {
-        int p = mid - y;
-        int d = (mid * CEIL_GRID_DENSITY) / p;
-        if (d != prev_d) {
-            int shade = row_color[y] - CEIL_BASE;
-            shade += 2;
-            if (shade >= SHADE_LEVELS) shade = SHADE_LEVELS - 1;
-            row_color[y] = CEIL_BASE + shade;
-        }
-        prev_d = d;
-    }
+    /* The pre-rendered "distance ring" ceiling shading used to live
+     * here — darken every CEIL_GRID_DENSITY-th screen-distance row,
+     * computed once into row_color. It produced static horizontal
+     * bands tied to screen row (not world Y) that READ as a grid but
+     * didn't animate. Now that raycast_draw_ceiling_grid does per-row
+     * band fallback for world-Y crossings when facing cardinal, those
+     * dynamic bands collide with the pre-rendered ones and show as
+     * doubled horizontal lines. Pre-rendered version removed. */
 }
 
 /* Fade target — what every surface fades toward at maximum distance.
@@ -605,25 +606,43 @@ void raycast_draw_ceiling_grid(void) {
 
     uint8_t *fb = fb_pixels();
     int mid = SCREEN_H / 2;
+
+    /* For band detection when dX or dY is exactly 0 (facing cardinal):
+     * we track wxL_s / wyL_s across rows and emit a full-width band
+     * whenever the integer part crosses between adjacent rows. */
+    fx_t prev_wxL_s = 0;
+    fx_t prev_wyL_s = 0;
+    int  has_prev   = 0;
+
     for (int y = 0; y < mid; y++) {
         int p = mid - y;
-        fx_t rowDist = ((fx_t)mid << FX_SHIFT) / p;
+        /* rowDist always positive; DIVU is ~3× faster than software. */
+        fx_t rowDist = (fx_t)divu_u32((uint32_t)((fx_t)mid << FX_SHIFT),
+                                      (uint32_t)p);
         fx_t wxL = px + FX_MUL(rowDist, leftDirX);
         fx_t wxR = px + FX_MUL(rowDist, rightDirX);
         fx_t wyL = py + FX_MUL(rowDist, leftDirY);
         fx_t wyR = py + FX_MUL(rowDist, rightDirY);
 
-        int base_shade = row_color[y] - CEIL_BASE;
-        if (base_shade >= SHADE_LEVELS - 1) continue;
-        int shade = base_shade + 3;
-        if (shade >= SHADE_LEVELS) shade = SHADE_LEVELS - 1;
-        uint8_t grid_c = CEIL_BASE + shade;
-
         fx_t wxL_s = wxL * CEIL_GRID_DENSITY;
         fx_t wxR_s = wxR * CEIL_GRID_DENSITY;
         fx_t wyL_s = wyL * CEIL_GRID_DENSITY;
         fx_t wyR_s = wyR * CEIL_GRID_DENSITY;
+
+        int base_shade = row_color[y] - CEIL_BASE;
+        if (base_shade >= SHADE_LEVELS - 1) {
+            /* Skip drawing but keep prev_* coherent for next row's band test. */
+            prev_wxL_s = wxL_s; prev_wyL_s = wyL_s; has_prev = 1;
+            continue;
+        }
+        int shade = base_shade + 3;
+        if (shade >= SHADE_LEVELS) shade = SHADE_LEVELS - 1;
+        uint8_t grid_c = CEIL_BASE + shade;
+
         uint8_t *row_p = fb + y * SCREEN_W;
+
+        /* World-X grid lines: per-pixel crossings when there's spread,
+         * full-width band when facing exactly E/W (dX == 0). */
         fx_t dX = wxR_s - wxL_s;
         if (dX != 0) {
             int lo = FX_INT(wxL_s), hi = FX_INT(wxR_s);
@@ -636,7 +655,12 @@ void raycast_draw_ceiling_grid(void) {
                     if (col >= 0 && col < SCREEN_W) row_p[col] = grid_c;
                 }
             }
+        } else if (has_prev && FX_INT(wxL_s) != FX_INT(prev_wxL_s)) {
+            for (int col = 0; col < SCREEN_W; col++) row_p[col] = grid_c;
         }
+
+        /* World-Y grid lines: per-pixel crossings when there's spread,
+         * full-width band when facing exactly N/S (dY == 0). */
         fx_t dY = wyR_s - wyL_s;
         if (dY != 0) {
             int lo = FX_INT(wyL_s), hi = FX_INT(wyR_s);
@@ -649,7 +673,13 @@ void raycast_draw_ceiling_grid(void) {
                     if (col >= 0 && col < SCREEN_W) row_p[col] = grid_c;
                 }
             }
+        } else if (has_prev && FX_INT(wyL_s) != FX_INT(prev_wyL_s)) {
+            for (int col = 0; col < SCREEN_W; col++) row_p[col] = grid_c;
         }
+
+        prev_wxL_s = wxL_s;
+        prev_wyL_s = wyL_s;
+        has_prev   = 1;
     }
 }
 
@@ -680,7 +710,9 @@ void raycast_draw_carpet(void) {
         if (base_shade >= SHADE_LEVELS - 2) continue;
 
         int p = y - mid;
-        fx_t rowDist = ((fx_t)mid << FX_SHIFT) / p;
+        /* rowDist always positive (y > mid); DIVU. */
+        fx_t rowDist = (fx_t)divu_u32((uint32_t)((fx_t)mid << FX_SHIFT),
+                                      (uint32_t)p);
         fx_t worldX = px + FX_MUL(rowDist, leftDirX);
         fx_t worldY = py + FX_MUL(rowDist, leftDirY);
         fx_t stepX  = FX_MUL(rowDist, rightDirX - leftDirX) / SCREEN_W;
@@ -718,6 +750,14 @@ void raycast_draw_walls(int col_start, int col_end) {
 
     uint8_t *fb = fb_pixels();
 
+    /* Fixed col_start..col_end split — work-stealing via TAS + COMM6
+     * was attempted but the ~190K atomic bus ops/sec during the wall
+     * pass drowned the 68K→SH2 bridge that carries joypad reads back
+     * to MARS_SYS_COMM8, re-introducing the controller-drop stall.
+     * Sticking with the master 0..SCREEN_W/2 / slave SCREEN_W/2..
+     * SCREEN_W static split until we have a low-contention work-
+     * stealing pattern (e.g. master pre-chunking into 8-column
+     * batches and the slave just reading a written-once index). */
     for (int col = col_start; col < col_end; col++) {
         WALL_DIST(col) = 0x7FFFFFFF;
         fx_t cameraX = cameraX_table[col];
@@ -773,11 +813,12 @@ void raycast_draw_walls(int col_start, int col_end) {
         WALL_DIST(col) = perpDist;
         if (perpDist >= MAX_VIEW_DIST) continue;
 
-        int lineHeight = (int)((SCREEN_H << FX_SHIFT) / perpDist);
-        int wall_top  = SCREEN_H / 2 - lineHeight / 2;
-        int wall_bot  = SCREEN_H / 2 + lineHeight / 2;
-        int drawStart = wall_top < 0 ? 0 : wall_top;
-        int drawEnd   = wall_bot >= SCREEN_H ? SCREEN_H - 1 : wall_bot;
+        /* DIVU latency hide #1: start lineHeight = (SCREEN_H << 16) /
+         * perpDist, then do wall_shade + wall_hit + texX in parallel
+         * — none of those depend on lineHeight. 39 cycles of divide
+         * disappear under ~40 cycles of column setup. */
+        divu_start_u32((uint32_t)(SCREEN_H << FX_SHIFT),
+                       (uint32_t)perpDist);
 
         int wall_shade;
         if (perpDist < FX(3.5)) {
@@ -797,18 +838,29 @@ void raycast_draw_walls(int col_start, int col_end) {
         int texX = (int)(((int64_t)wall_hit * (TEX_W * WALL_TILE_X)) >> FX_SHIFT)
                    & TEX_W_MASK;
 
-        fx_t tex_step = ((fx_t)(TEX_H * WALL_TILE_Y) << FX_SHIFT) / lineHeight;
-        fx_t tex_pos  = (fx_t)(drawStart - wall_top) * tex_step;
+        int lineHeight = (int)divu_read();
+
+        int wall_top  = SCREEN_H / 2 - lineHeight / 2;
+        int wall_bot  = SCREEN_H / 2 + lineHeight / 2;
+        int drawStart = wall_top < 0 ? 0 : wall_top;
+        int drawEnd   = wall_bot >= SCREEN_H ? SCREEN_H - 1 : wall_bot;
+
+        /* DIVU latency hide #2: start tex_step = (TEX_H*WALL_TILE_Y
+         * << 16) / lineHeight, then do detail_factor + shade_lut in
+         * parallel. The shade_lut loop alone is ~256 cycles, far
+         * exceeding the 39-cycle DIVU latency. */
+        divu_start_u32((uint32_t)((TEX_H * WALL_TILE_Y) << FX_SHIFT),
+                       (uint32_t)lineHeight);
 
         int detail_factor;
         if (perpDist < FX(2)) {
-            detail_factor = 16;
+            detail_factor = WALL_PATTERN_MAX;
         } else if (perpDist < FX(3.5)) {
             fx_t remaining = FX(3.5) - perpDist;
             fx_t span      = FX(1.5);
-            detail_factor  = (int)((remaining * 16) / span);
-            if (detail_factor < 0)  detail_factor = 0;
-            if (detail_factor > 16) detail_factor = 16;
+            detail_factor  = (int)((remaining * WALL_PATTERN_MAX) / span);
+            if (detail_factor < 0)               detail_factor = 0;
+            if (detail_factor > WALL_PATTERN_MAX) detail_factor = WALL_PATTERN_MAX;
         } else {
             detail_factor = 0;
         }
@@ -819,6 +871,9 @@ void raycast_draw_walls(int col_start, int col_end) {
             if (s >= SHADE_LEVELS) s = SHADE_LEVELS - 1;
             shade_lut[ty] = (uint8_t)(WALL_BASE + s);
         }
+
+        fx_t tex_step = (fx_t)divu_read();
+        fx_t tex_pos  = (fx_t)(drawStart - wall_top) * tex_step;
         uint8_t *p = (uint8_t *)fb + col + drawStart * SCREEN_W;
         for (int y = drawStart; y <= drawEnd; y++) {
             *p = shade_lut[(tex_pos >> FX_SHIFT) & TEX_H_MASK];
@@ -827,6 +882,10 @@ void raycast_draw_walls(int col_start, int col_end) {
         }
     }
 }
+
+/* The other tex_pos reference in this file is in the old fixed-split
+ * placeholder. Compiler dead-code-eliminates it once raycast_render
+ * stops calling fixed-range walls. */
 
 void raycast_render(void) {
     uint8_t *fb = fb_pixels();
@@ -866,16 +925,36 @@ void raycast_render(void) {
 
     /* Sync point: wait for the slave to finish the ceiling grid pass
      * before dispatching its wall half. */
-    while (MARS_SYS_COMM4 != MARS_CMD_NONE);
+    while (MARS_SYS_COMM4 != MARS_CMD_NONE) {
+        /* Throttle the master-side ACK wait to reduce 68K-bridge
+         * pressure — bare-loop polling at ~5M reads/sec was lining
+         * up with the 68K's joypad-read window often enough to drop
+         * COMM8 updates. ~30 cycles of NOPs per loop iteration brings
+         * the master poll rate down to a friendlier ~700K/sec while
+         * keeping latency well under one frame. */
+        __asm__ __volatile__("nop\n\tnop\n\tnop\n\tnop\n\t"
+                             "nop\n\tnop\n\tnop\n\tnop\n\t"
+                             "nop\n\tnop\n\tnop\n\tnop\n\t"
+                             "nop\n\tnop\n\tnop\n\tnop");
+    }
 
-    /* Dispatch the right half of the wall pass to the slave; master
-     * draws the left half in parallel. Both CPUs read player state
-     * from the snapshot we wrote earlier — it's still current. Wall
-     * columns are independent rays writing to disjoint screen columns
-     * (and disjoint WALL_DIST indices), so no race. */
+    /* Fixed wall-split dispatch — master draws cols 0..SCREEN_W/2 in
+     * parallel with slave drawing SCREEN_W/2..SCREEN_W. (Work-stealing
+     * via TAS was attempted and reverted; see raycast_draw_walls.) */
     MARS_SYS_COMM4 = MARS_CMD_WALLS;
     raycast_draw_walls(0, SCREEN_W / 2);
-    while (MARS_SYS_COMM4 != MARS_CMD_NONE);
+    while (MARS_SYS_COMM4 != MARS_CMD_NONE) {
+        /* Throttle the master-side ACK wait to reduce 68K-bridge
+         * pressure — bare-loop polling at ~5M reads/sec was lining
+         * up with the 68K's joypad-read window often enough to drop
+         * COMM8 updates. ~30 cycles of NOPs per loop iteration brings
+         * the master poll rate down to a friendlier ~700K/sec while
+         * keeping latency well under one frame. */
+        __asm__ __volatile__("nop\n\tnop\n\tnop\n\tnop\n\t"
+                             "nop\n\tnop\n\tnop\n\tnop\n\t"
+                             "nop\n\tnop\n\tnop\n\tnop\n\t"
+                             "nop\n\tnop\n\tnop\n\tnop");
+    }
 
     /* Commit any reordered stores from the non-volatile draw loops before
      * the next swapBuffers() makes them visible via the VDP page flip. */

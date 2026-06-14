@@ -50,10 +50,24 @@ const uint8_t world_map[MAP_H][MAP_W] = {
 
 /* How many times the wallpaper tile repeats per 1-unit map cell.
  * TEX_W/H must be powers of 2 so the wrap can be a cheap bitmask. */
-#define WALL_TILE_X 4
-#define WALL_TILE_Y 4
+#define WALL_TILE_X 8
+#define WALL_TILE_Y 8
 #define TEX_W_MASK  (TEX_W - 1)
 #define TEX_H_MASK  (TEX_H - 1)
+
+/* Drop-ceiling panel grid (procedural). 32x32 tile, dark edge = grid line,
+ * bright center = panel surface. CEIL_TILES tiles per 1-unit map cell. */
+#define CEIL_TEX_W  32
+#define CEIL_TEX_H  32
+#define CEIL_TILES  2
+/* Shift = FX_SHIFT - log2(CEIL_TEX_W * CEIL_TILES). With 32*2 = 64 = 2^6,
+ * shift = 10. (worldX_fx >> CEIL_TEX_SHIFT) & mask gives the tex coord
+ * with proper wrap for negative worldX. */
+#define CEIL_TEX_SHIFT 10
+#define CEIL_TEX_W_MASK (CEIL_TEX_W - 1)
+#define CEIL_TEX_H_MASK (CEIL_TEX_H - 1)
+
+static uint8_t ceil_tex[CEIL_TEX_H][CEIL_TEX_W];
 
 /* Precomputed pixel color per screen row for the base floor/ceiling layer.
  * Indexes [0..SCREEN_H/2-1] = ceiling, bright at top dim toward horizon;
@@ -89,15 +103,14 @@ static void build_palette(void) {
                         25 * s / SHADE_LEVELS,
                         6  * s / SHADE_LEVELS);
     }
-    /* Carpet: stained light brown. Brighter base so the brown survives
-     * the per-row distance shading instead of collapsing to near-black
-     * in the middle of the screen. */
+    /* Carpet: yellow-mustard, same hue family as the walls but a touch
+     * darker so the wall/floor seam still reads through the depth fade. */
     for (int i = 0; i < SHADE_LEVELS; i++) {
         int s = SHADE_LEVELS - i;
         Hw32xSetBGColor(FLOOR_BASE + i,
-                        22 * s / SHADE_LEVELS,
-                        12 * s / SHADE_LEVELS,
-                        4  * s / SHADE_LEVELS);
+                        24 * s / SHADE_LEVELS,
+                        20 * s / SHADE_LEVELS,
+                        5  * s / SHADE_LEVELS);
     }
     /* Ceiling: neutral light gray-white (balanced RGB) so it doesn't
      * cross-read as yellow next to the wall. */
@@ -115,9 +128,23 @@ static inline volatile uint8_t *fb_pixels(void) {
     return (volatile uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
 }
 
+/* Drop-ceiling pattern: 2-pixel-wide dark grid lines at panel edges, light
+ * panel surface inside. Values are shade-addition (0..15) added to the
+ * per-row ceiling base shade. */
+static void build_ceil_tex(void) {
+    for (int y = 0; y < CEIL_TEX_H; y++) {
+        for (int x = 0; x < CEIL_TEX_W; x++) {
+            int edge = (x < 2) || (x >= CEIL_TEX_W - 2)
+                    || (y < 2) || (y >= CEIL_TEX_H - 2);
+            ceil_tex[y][x] = edge ? 5 : 0;
+        }
+    }
+}
+
 void raycast_init(void) {
     build_palette();
     build_shading_tables();
+    build_ceil_tex();
 }
 
 
@@ -169,11 +196,16 @@ void player_update(void) {
 void raycast_render(void) {
     volatile uint8_t *fb = fb_pixels();
 
-    /* Base layer: per-row floor/ceiling with distance shading. Use 32-bit
-     * stores (4 pixels per write) to fit a full clear under the SH-2's
-     * frame budget. Framebuffer is 4-byte aligned; rows are 320 bytes. */
+    /* Camera basis: forward = (cos a, sin a); camera plane perpendicular,
+     * length 0.66 -> ~66° horizontal FOV. */
+    fx_t dirX   = COS_FX(player.angle);
+    fx_t dirY   = SIN_FX(player.angle);
+    fx_t planeX = FX_MUL(-dirY, FX(0.66));
+    fx_t planeY = FX_MUL( dirX, FX(0.66));
+
+    /* Floor: per-row solid color (32-bit aligned writes, 4 px per store). */
     volatile uint32_t *fb32 = (volatile uint32_t *)fb;
-    for (int y = 0; y < SCREEN_H; y++) {
+    for (int y = SCREEN_H / 2; y < SCREEN_H; y++) {
         uint8_t  c   = row_color[y];
         uint32_t c32 = ((uint32_t)c << 24) | ((uint32_t)c << 16)
                      | ((uint32_t)c <<  8) |  (uint32_t)c;
@@ -181,12 +213,39 @@ void raycast_render(void) {
         for (int x = 0; x < SCREEN_W / 4; x++) row[x] = c32;
     }
 
-    /* Camera basis: forward = (cos a, sin a); camera plane perpendicular,
-     * length 0.66 -> ~66° horizontal FOV. */
-    fx_t dirX   = COS_FX(player.angle);
-    fx_t dirY   = SIN_FX(player.angle);
-    fx_t planeX = FX_MUL(-dirY, FX(0.66));
-    fx_t planeY = FX_MUL( dirX, FX(0.66));
+    /* Ceiling: per-pixel floorcast. For each ceiling row, compute the world
+     * position of the leftmost column then step horizontally in world units;
+     * sample the drop-ceiling grid pattern by world XY. */
+    fx_t leftRayDirX = dirX - planeX;
+    fx_t leftRayDirY = dirY - planeY;
+    for (int y = 0; y < SCREEN_H / 2; y++) {
+        int p = SCREEN_H / 2 - y;            /* pixels above the horizon */
+        /* rowDistance = (SCREEN_H/2) / p in world units (camera height 0.5). */
+        fx_t rowDistance = ((fx_t)(SCREEN_H / 2) << FX_SHIFT) / p;
+
+        fx_t worldX = player.x + FX_MUL(rowDistance, leftRayDirX);
+        fx_t worldY = player.y + FX_MUL(rowDistance, leftRayDirY);
+        /* Step per column = rowDistance * (2*plane) / SCREEN_W. */
+        fx_t stepX = FX_MUL(rowDistance, planeX << 1) / SCREEN_W;
+        fx_t stepY = FX_MUL(rowDistance, planeY << 1) / SCREEN_W;
+
+        int shade = (SCREEN_H / 2) / p - 1;
+        if (shade < 0) shade = 0;
+        if (shade > SHADE_LEVELS - 1) shade = SHADE_LEVELS - 1;
+        uint8_t base = CEIL_BASE + shade;
+
+        volatile uint8_t *row = fb + y * SCREEN_W;
+        for (int x = 0; x < SCREEN_W; x++) {
+            int tx = (worldX >> CEIL_TEX_SHIFT) & CEIL_TEX_W_MASK;
+            int ty = (worldY >> CEIL_TEX_SHIFT) & CEIL_TEX_H_MASK;
+            int s  = shade + ceil_tex[ty][tx];
+            if (s >= SHADE_LEVELS) s = SHADE_LEVELS - 1;
+            row[x] = CEIL_BASE + s;
+            (void)base;  /* placeholder so 'base' stays used if pattern is 0 */
+            worldX += stepX;
+            worldY += stepY;
+        }
+    }
 
     for (int col = 0; col < SCREEN_W; col++) {
         /* cameraX in [-1, +1) */

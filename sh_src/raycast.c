@@ -148,24 +148,24 @@ static void build_palette(void) {
                         MIX(27, FOG_G, i),
                         MIX(13, FOG_B, i));
     }
-    /* Carpet: warm beige/tan brown — matched to reference. Drops out of
-     * the yellow family into a true brown-beige (R > G > B with all three
-     * relatively close). */
+    /* Carpet: yellower stained-mustard brown. Pulled back into the yellow
+     * family with R high and B much lower for the saturated Backrooms look,
+     * still slightly less bright than walls so the seam reads. */
     for (int i = 0; i < SHADE_LEVELS; i++) {
         Hw32xSetBGColor(FLOOR_BASE + i,
-                        MIX(24, FOG_R, i),
-                        MIX(21, FOG_G, i),
-                        MIX(16, FOG_B, i));
+                        MIX(27, FOG_R, i),
+                        MIX(22, FOG_G, i),
+                        MIX(11, FOG_B, i));
     }
-    /* Ceiling: yellow eggshell tint, pulled into the wall's color family.
-     * Slightly less bright than walls (27 vs 30 R) so the wall/ceiling
-     * seam still reads, but shares the warm yellow undertone for a
-     * unified Backrooms atmosphere. */
+    /* Ceiling: pulled further into the yellow family — was reading too
+     * "white drop ceiling" against the warm walls. B dropped from 18 to
+     * 14, G from 26 to 25; still slightly cooler/less saturated than the
+     * walls (30,27,13) but unmistakably in the same warm yellow palette. */
     for (int i = 0; i < SHADE_LEVELS; i++) {
         Hw32xSetBGColor(CEIL_BASE + i,
                         MIX(27, FOG_R, i),
-                        MIX(26, FOG_G, i),
-                        MIX(18, FOG_B, i));
+                        MIX(25, FOG_G, i),
+                        MIX(14, FOG_B, i));
     }
     /* Fluorescent lights: 4 brightness states for flicker (full / 75 / 50 / 25%). */
     Hw32xSetBGColor(LIGHT_BASE + 0, 31, 31, 28);
@@ -341,6 +341,66 @@ void raycast_render(void) {
                      | ((uint32_t)c <<  8) |  (uint32_t)c;
         volatile uint32_t *row = fb32 + y * (SCREEN_W / 4);
         for (int x = 0; x < SCREEN_W / 4; x++) row[x] = c32;
+    }
+
+    /* Drop-ceiling vertical grid lines. For each ceiling row, compute the
+     * world XY at the leftmost and rightmost screen columns, then linearly
+     * interpolate to find any integer world-X or world-Y boundaries this
+     * row crosses. Mark those pixels darker. The result is a perspective-
+     * correct grid that slides with player motion and converges to the
+     * vanishing point — composes with the existing distance-ring darkening
+     * to give a true cross-grid (square panels close, perspective-squashed
+     * toward horizon). Cost ~1ms per frame. */
+    {
+        fx_t leftDirX  = dirX - planeX;
+        fx_t leftDirY  = dirY - planeY;
+        fx_t rightDirX = dirX + planeX;
+        fx_t rightDirY = dirY + planeY;
+        int mid = SCREEN_H / 2;
+        for (int y = 0; y < mid; y++) {
+            int p = mid - y;
+            fx_t rowDist = ((fx_t)mid << FX_SHIFT) / p;
+            fx_t wxL = player.x + FX_MUL(rowDist, leftDirX);
+            fx_t wxR = player.x + FX_MUL(rowDist, rightDirX);
+            fx_t wyL = player.y + FX_MUL(rowDist, leftDirY);
+            fx_t wyR = player.y + FX_MUL(rowDist, rightDirY);
+
+            /* Grid line color: ceiling row color, darkened by 3 more shades. */
+            int shade = row_color[y] - CEIL_BASE + 3;
+            if (shade >= SHADE_LEVELS) shade = SHADE_LEVELS - 1;
+            uint8_t grid_c = CEIL_BASE + shade;
+
+            /* World-X integer crossings. */
+            fx_t dX = wxR - wxL;
+            if (dX != 0) {
+                int lo = FX_INT(wxL), hi = FX_INT(wxR);
+                if (lo > hi) { int t = lo; lo = hi; hi = t; }
+                for (int target = lo + 1; target <= hi; target++) {
+                    fx_t num = ((fx_t)target << FX_SHIFT) - wxL;
+                    fx_t t   = FX_DIV(num, dX);
+                    if (t < 0 || t >= FX_ONE) continue;
+                    int col = (int)(((int32_t)t * SCREEN_W) >> FX_SHIFT);
+                    if (col >= 0 && col < SCREEN_W) {
+                        ((volatile uint8_t *)fb)[y * SCREEN_W + col] = grid_c;
+                    }
+                }
+            }
+            /* World-Y integer crossings. */
+            fx_t dY = wyR - wyL;
+            if (dY != 0) {
+                int lo = FX_INT(wyL), hi = FX_INT(wyR);
+                if (lo > hi) { int t = lo; lo = hi; hi = t; }
+                for (int target = lo + 1; target <= hi; target++) {
+                    fx_t num = ((fx_t)target << FX_SHIFT) - wyL;
+                    fx_t t   = FX_DIV(num, dY);
+                    if (t < 0 || t >= FX_ONE) continue;
+                    int col = (int)(((int32_t)t * SCREEN_W) >> FX_SHIFT);
+                    if (col >= 0 && col < SCREEN_W) {
+                        ((volatile uint8_t *)fb)[y * SCREEN_W + col] = grid_c;
+                    }
+                }
+            }
+        }
     }
 
     for (int col = 0; col < SCREEN_W; col++) {

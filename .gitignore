@@ -1,0 +1,9 @@
+# Build artifacts
+*.o
+*.elf
+*.bin
+*.lst
+*.32x
+
+# macOS
+.DS_Store

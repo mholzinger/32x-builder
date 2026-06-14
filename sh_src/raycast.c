@@ -322,11 +322,12 @@ static void draw_standups(volatile uint8_t *fb,
         int screenX = (SCREEN_W >> 1)
                     + (int)(((int32_t)(SCREEN_W >> 1) * ratio) >> FX_SHIFT);
 
-        /* 1/3 world unit tall, 1:2 aspect. Floor-anchored: bottom (feet)
+        /* 2/3 world unit tall, 1:2 aspect. Floor-anchored: bottom (feet)
          * lands on the floor row at this distance; top (head) is
          * spriteHeight pixels above. Also benefits texture quality —
-         * a smaller apparent sprite avoids upscaling the 64-row texture. */
-        int spriteHeight = (int)(((int32_t)SCREEN_H << FX_SHIFT) / (transformY * 3));
+         * keeps apparent sprite from upscaling the 64-row texture too
+         * far past 1:1 at close range. */
+        int spriteHeight = (int)((((int32_t)SCREEN_H * 2) << FX_SHIFT) / (transformY * 3));
         int spriteWidth  = spriteHeight >> 1;
         if (spriteWidth < 1) spriteWidth = 1;
         if (spriteHeight < 1) continue;

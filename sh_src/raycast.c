@@ -1,6 +1,7 @@
 #include "mars.h"
 #include "raycast.h"
 #include "sin_table.h"
+#include "wall_tex.h"
 
 /* Player spawn — west end of the main east-west spine, facing east. */
 player_t player = {
@@ -43,12 +44,9 @@ const uint8_t world_map[MAP_H][MAP_W] = {
 #define CEIL_BASE    33
 #define SHADE_LEVELS 16
 
-/* Wall texture: procedural Backrooms chevron pattern, built at init.
- * 16x16 fits in cache; the pattern is hand-shaped to read as wallpaper
- * even at the small size (the downsampled JPG was muddy here). */
-#define TEX_W 16
-#define TEX_H 16
-static uint8_t wall_tex[TEX_H][TEX_W];
+/* Wall texture comes from wall_tex.h (generated from images/walltile.jpg). */
+#define TEX_W WALL_TEX_WIDTH
+#define TEX_H WALL_TEX_HEIGHT
 
 /* How many times the wallpaper tile repeats per 1-unit map cell.
  * TEX_W/H must be powers of 2 so the wrap can be a cheap bitmask. */
@@ -57,20 +55,6 @@ static uint8_t wall_tex[TEX_H][TEX_W];
 #define TEX_W_MASK  (TEX_W - 1)
 #define TEX_H_MASK  (TEX_H - 1)
 
-/* Drop-ceiling panel grid (procedural). 16x16 tile (256 bytes, fits in
- * cache) with CEIL_TILES=4 keeps the same effective scale as 32x32 @ 2x.
- * Dark edge = grid line, bright center = panel surface. */
-#define CEIL_TEX_W  16
-#define CEIL_TEX_H  16
-#define CEIL_TILES  4
-/* Shift = FX_SHIFT - log2(CEIL_TEX_W * CEIL_TILES). With 16*4 = 64 = 2^6,
- * shift = 10. (worldX_fx >> CEIL_TEX_SHIFT) & mask gives the tex coord
- * with proper wrap for negative worldX (arithmetic shift + AND). */
-#define CEIL_TEX_SHIFT 10
-#define CEIL_TEX_W_MASK (CEIL_TEX_W - 1)
-#define CEIL_TEX_H_MASK (CEIL_TEX_H - 1)
-
-static uint8_t ceil_tex[CEIL_TEX_H][CEIL_TEX_W];
 
 /* Precomputed pixel color per screen row for the base floor/ceiling layer.
  * Indexes [0..SCREEN_H/2-1] = ceiling, bright at top dim toward horizon;
@@ -131,48 +115,9 @@ static inline volatile uint8_t *fb_pixels(void) {
     return (volatile uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
 }
 
-/* Backrooms chevron wallpaper, 16x16:
- *   - Two 8-col-wide vertical panels separated by a dark vertical seam
- *   - Each panel has chevrons (V-shapes pointing up) every 4 rows
- *   - Chevron tip at panel column 4, legs slope to cols (4-y, 4+y)
- *   - Values are shade-additions (0..15) added to the wall distance shade
- * Hand-shaped so the pattern stays crisp at low texture resolution. */
-static void build_wall_tex(void) {
-    for (int y = 0; y < TEX_H; y++) {
-        for (int x = 0; x < TEX_W; x++) {
-            int panel_x = x & 7;          /* 0..7 within each 8-col panel */
-            int chev_y  = y & 3;          /* 0..3 within each 4-row chevron */
-            uint8_t v = 1;                /* base background (subtle shade) */
-            if (panel_x == 0) v = 3;      /* vertical seam between panels */
-            /* Chevron arms: V pointing up, tip at panel_x=4 row=0 */
-            int leftArm  = 4 - chev_y;
-            int rightArm = 4 + chev_y;
-            if ((panel_x == leftArm || panel_x == rightArm)
-                && panel_x >= 1 && panel_x <= 7) {
-                if (v < 4) v = 4;         /* chevron line darkening */
-            }
-            wall_tex[y][x] = v;
-        }
-    }
-}
-
-/* Drop-ceiling pattern: 1-pixel dark grid line at panel edges, light
- * interior. At 16x16 a 1px edge is the right proportion. */
-static void build_ceil_tex(void) {
-    for (int y = 0; y < CEIL_TEX_H; y++) {
-        for (int x = 0; x < CEIL_TEX_W; x++) {
-            int edge = (x == 0) || (x == CEIL_TEX_W - 1)
-                    || (y == 0) || (y == CEIL_TEX_H - 1);
-            ceil_tex[y][x] = edge ? 5 : 0;
-        }
-    }
-}
-
 void raycast_init(void) {
     build_palette();
     build_shading_tables();
-    build_wall_tex();
-    build_ceil_tex();
 }
 
 
@@ -231,46 +176,15 @@ void raycast_render(void) {
     fx_t planeX = FX_MUL(-dirY, FX(0.66));
     fx_t planeY = FX_MUL( dirX, FX(0.66));
 
-    /* Floor: per-row solid color (32-bit aligned writes, 4 px per store). */
+    /* Floor + ceiling: per-row solid color (32-bit aligned writes,
+     * 4 pixels per store). Fast clear. */
     volatile uint32_t *fb32 = (volatile uint32_t *)fb;
-    for (int y = SCREEN_H / 2; y < SCREEN_H; y++) {
+    for (int y = 0; y < SCREEN_H; y++) {
         uint8_t  c   = row_color[y];
         uint32_t c32 = ((uint32_t)c << 24) | ((uint32_t)c << 16)
                      | ((uint32_t)c <<  8) |  (uint32_t)c;
         volatile uint32_t *row = fb32 + y * (SCREEN_W / 4);
         for (int x = 0; x < SCREEN_W / 4; x++) row[x] = c32;
-    }
-
-    /* Ceiling: floorcast at HALF horizontal resolution. Each sample paints
-     * two adjacent screen columns via one 16-bit store. Cuts ceiling cost
-     * roughly in half; the 1-pixel pairing is invisible at 320 wide. */
-    fx_t leftRayDirX = dirX - planeX;
-    fx_t leftRayDirY = dirY - planeY;
-    for (int y = 0; y < SCREEN_H / 2; y++) {
-        int p = SCREEN_H / 2 - y;
-        fx_t rowDistance = ((fx_t)(SCREEN_H / 2) << FX_SHIFT) / p;
-
-        fx_t worldX = player.x + FX_MUL(rowDistance, leftRayDirX);
-        fx_t worldY = player.y + FX_MUL(rowDistance, leftRayDirY);
-        /* Step covers 2 screen pixels of world extent per sample. */
-        fx_t stepX = FX_MUL(rowDistance, planeX << 1) / (SCREEN_W / 2);
-        fx_t stepY = FX_MUL(rowDistance, planeY << 1) / (SCREEN_W / 2);
-
-        int shade = (SCREEN_H / 2) / p - 1;
-        if (shade < 0) shade = 0;
-        if (shade > SHADE_LEVELS - 1) shade = SHADE_LEVELS - 1;
-
-        volatile uint16_t *row16 = (volatile uint16_t *)(fb + y * SCREEN_W);
-        for (int sample = 0; sample < SCREEN_W / 2; sample++) {
-            int tx = (worldX >> CEIL_TEX_SHIFT) & CEIL_TEX_W_MASK;
-            int ty = (worldY >> CEIL_TEX_SHIFT) & CEIL_TEX_H_MASK;
-            int s  = shade + ceil_tex[ty][tx];
-            if (s >= SHADE_LEVELS) s = SHADE_LEVELS - 1;
-            uint16_t c = (uint16_t)(CEIL_BASE + s);
-            row16[sample] = (c << 8) | c;          /* paint both pixels */
-            worldX += stepX;
-            worldY += stepY;
-        }
     }
 
     for (int col = 0; col < SCREEN_W; col++) {

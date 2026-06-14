@@ -5,6 +5,7 @@
 #include "sin_table.h"
 #include "wall_tex.h"
 #include "neander_tex.h"
+#include "neander_tex_hi.h"
 
 /* SH-2 dual-CPU sanity check: top-right 8x8 indicator. Green when the
  * slave's heartbeat counter advanced this frame (slave is running and
@@ -461,18 +462,36 @@ static void draw_standups(uint8_t *fb,
         int is_silhouette = standups[i].silhouette;
         uint8_t silhouette_color = NEANDER_BASE + 1;
 
+        /* LOD: swap to the 128x256 hi-res texture when the sprite is
+         * close enough that the 32x64 lo-res starts showing block
+         * artifacts. At transformY < 3, the sprite is ~75+ px tall —
+         * each lo-res texel is ~2.3 screen pixels (visibly chunky).
+         * Hi-res cuts that to ~0.6 (silky). Beyond distance 3 the
+         * sprite is small enough that lo-res reads as crisp. */
+        const uint8_t *tex;
+        int tex_w, tex_h;
+        if (transformY < FX(3)) {
+            tex   = (const uint8_t *)neander_tex_hi;
+            tex_w = NEANDER_TEX_HI_WIDTH;
+            tex_h = NEANDER_TEX_HI_HEIGHT;
+        } else {
+            tex   = (const uint8_t *)neander_tex;
+            tex_w = NEANDER_TEX_WIDTH;
+            tex_h = NEANDER_TEX_HEIGHT;
+        }
+
         /* Precompute texY increment per screen row — same trick as wall
          * texture stepping. Was doing one divide per pixel (~30 cycles each
          * on SH-2), now one divide per sprite + add per pixel. For a sprite
          * at distance 3 (~3000 pixels) this is ~4ms saved per frame. */
-        fx_t texY_step    = ((fx_t)NEANDER_TEX_HEIGHT << FX_SHIFT) / spriteHeight;
+        fx_t texY_step    = ((fx_t)tex_h << FX_SHIFT) / spriteHeight;
         fx_t texY_start_v = (fx_t)(drawStartY - drawStartY_u) * texY_step;
 
         for (int stripe = drawStartX; stripe <= drawEndX; stripe++) {
             if (transformY >= WALL_DIST(stripe)) continue;
 
-            int texX = ((stripe - drawStartX_u) * NEANDER_TEX_WIDTH) / spriteWidth;
-            if (texX < 0 || texX >= NEANDER_TEX_WIDTH) continue;
+            int texX = ((stripe - drawStartX_u) * tex_w) / spriteWidth;
+            if (texX < 0 || texX >= tex_w) continue;
 
             uint8_t *p = fb + drawStartY * SCREEN_W + stripe;
             fx_t tex_pos = texY_start_v;
@@ -480,8 +499,8 @@ static void draw_standups(uint8_t *fb,
              * negative — tex_pos starts >= 0 and step is positive). */
             for (int y = drawStartY; y <= drawEndY; y++) {
                 int texY = tex_pos >> FX_SHIFT;
-                if (texY >= NEANDER_TEX_HEIGHT) texY = NEANDER_TEX_HEIGHT - 1;
-                uint8_t v = neander_tex[texY][texX];
+                if (texY >= tex_h) texY = tex_h - 1;
+                uint8_t v = tex[texY * tex_w + texX];
                 if (v != 0) {
                     *p = is_silhouette ? silhouette_color
                        : is_front      ? (NEANDER_BASE + v)

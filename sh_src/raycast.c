@@ -78,18 +78,22 @@ const uint8_t world_map[MAP_H][MAP_W] = {
 static fx_t wall_dist[SCREEN_W];
 
 /* Floor-standing cardboard cutouts. Each standup has a world position
- * and a facing direction; viewing from the front shows the texture,
- * viewing from behind shows solid cardboard. */
+ * and a facing direction. silhouette=1 renders as flat dark outline only
+ * (the iconic "something is watching" Backrooms vibe) and disappears when
+ * the player gets too close. */
 typedef struct {
     fx_t x, y;
     uint8_t facing_angle;
+    uint8_t silhouette;
 } standup_t;
 
 static const standup_t standups[] = {
-    /* In the corridor at col 4, north of player spawn (12.5), so it's
-     * visible as player walks forward. Facing south (angle 64) so the
-     * front of the cutout faces the approaching player. */
-    { FX(4.5), FX(8.5), 64 },
+    /* The neanderthal cardboard cutout — facing south, faces the player
+     * coming from the south. */
+    { FX(4.5), FX(8.5), 64,  0 },
+    /* The watcher — far north end of the spawn corridor. Renders as a
+     * dark silhouette in the haze, vanishes when you get within ~3 cells. */
+    { FX(4.5), FX(2.5), 64,  1 },
 };
 #define NUM_STANDUPS (int)(sizeof(standups) / sizeof(standups[0]))
 
@@ -267,6 +271,14 @@ static int cell_passable(int x, int y) {
     return world_map[y][x] == 0;
 }
 
+/* Head-bob state. bob_phase advances when the player is moving, and
+ * raycast_render applies a small perpendicular position sway derived
+ * from sin(bob_phase) before computing the camera basis. Cheap (just
+ * two extra muls per frame) and reads as "walking through a hallway"
+ * — the single biggest immersion bump per line of code. */
+static uint8_t bob_phase   = 0;
+static uint8_t is_walking  = 0;
+
 /* Read controller, advance player by one frame. Axis-separated collision
  * gives natural sliding along walls. */
 void player_update(void) {
@@ -304,6 +316,10 @@ void player_update(void) {
 
     fx_t newY = player.y + dy;
     if (cell_passable(FX_INT(player.x), FX_INT(newY))) player.y = newY;
+
+    /* Track walking state and advance bob phase. */
+    is_walking = (dx != 0 || dy != 0);
+    if (is_walking) bob_phase += 8;          /* ~2 steps per second at 60fps */
 }
 
 /* Render each cardboard standup as a textured Wolf3D-style billboard.
@@ -327,6 +343,9 @@ static void draw_standups(uint8_t *fb,
                             FX_MUL(-planeY, sx) + FX_MUL( planeX, sy));
         if (transformY < FX(0.5))     continue;     /* behind / too close */
         if (transformY >= MAX_VIEW_DIST) continue;  /* beyond fog */
+        /* Watcher: vanishes when you get within 3 cells. Iconic Backrooms
+         * "did I see something?" tell. */
+        if (standups[i].silhouette && transformY < FX(3)) continue;
 
         fx_t ratio = FX_DIV(transformX, transformY);
         int screenX = (SCREEN_W >> 1)
@@ -362,6 +381,11 @@ static void draw_standups(uint8_t *fb,
         fx_t fwdY = SIN_FX(standups[i].facing_angle);
         int is_front = (FX_MUL(sx, fwdX) + FX_MUL(sy, fwdY)) < 0;
         uint8_t back_color = NEANDER_BASE + 0;
+        /* Watcher silhouette: every non-transparent texture pixel becomes
+         * the darkest figure shade. No front/back distinction — just a
+         * flat dark outline against the wallpaper. */
+        int is_silhouette = standups[i].silhouette;
+        uint8_t silhouette_color = NEANDER_BASE + 1;
 
         /* Precompute texY increment per screen row — same trick as wall
          * texture stepping. Was doing one divide per pixel (~30 cycles each
@@ -385,7 +409,9 @@ static void draw_standups(uint8_t *fb,
                 if (texY >= NEANDER_TEX_HEIGHT) texY = NEANDER_TEX_HEIGHT - 1;
                 uint8_t v = neander_tex[texY][texX];
                 if (v != 0) {
-                    *p = is_front ? (NEANDER_BASE + v) : back_color;
+                    *p = is_silhouette ? silhouette_color
+                       : is_front      ? (NEANDER_BASE + v)
+                                       : back_color;
                 }
                 p += SCREEN_W;
                 tex_pos += texY_step;
@@ -469,6 +495,24 @@ static void draw_lights(uint8_t *fb,
 
 void raycast_render(void) {
     uint8_t *fb = fb_pixels();
+
+    /* Head bob: when walking, apply a tiny perpendicular position sway
+     * derived from sin(bob_phase). The bob saved/restored around the
+     * actual render so collision and DDA see the swayed position but the
+     * stored player position stays clean. Amplitude ~FX(0.03) = a couple
+     * of inches in world space, which projects to ~1-2 px of camera
+     * sway — exactly the subtle "walking through a hallway" feel. */
+    fx_t saved_px = player.x;
+    fx_t saved_py = player.y;
+    if (is_walking) {
+        fx_t bob_sin = SIN_FX(bob_phase);                   /* -FX_ONE..+FX_ONE */
+        fx_t bob_amt = FX_MUL(bob_sin, FX(0.03));
+        /* Perpendicular to facing direction. */
+        fx_t perpX = -SIN_FX(player.angle);
+        fx_t perpY =  COS_FX(player.angle);
+        player.x += FX_MUL(perpX, bob_amt);
+        player.y += FX_MUL(perpY, bob_amt);
+    }
 
     /* Camera basis: forward = (cos a, sin a); camera plane perpendicular,
      * length 0.66 -> ~66° horizontal FOV. */
@@ -684,4 +728,9 @@ void raycast_render(void) {
 
     draw_standups(fb, dirX, dirY, planeX, planeY);
     draw_lights(fb, dirX, dirY, planeX, planeY);
+
+    /* Restore the player position so the bob doesn't accumulate across
+     * frames or corrupt collision/AI logic. */
+    player.x = saved_px;
+    player.y = saved_py;
 }

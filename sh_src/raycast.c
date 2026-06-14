@@ -664,11 +664,13 @@ void raycast_render(void) {
         int drawStart = wall_top < 0 ? 0 : wall_top;
         int drawEnd   = wall_bot >= SCREEN_H ? SCREEN_H - 1 : wall_bot;
 
-        /* Shade scaled so walls reach max darkness at MAX_VIEW_DIST. Combined
-         * with the cutoff above, walls fade smoothly into the haze rather
-         * than popping out at the boundary. */
-        int wall_shade = (FX_INT(perpDist) * (SHADE_LEVELS - 1))
-                       / MAX_VIEW_DIST_INT;
+        /* Shade scaled so walls reach max darkness at MAX_VIEW_DIST. Uses
+         * the FRACTIONAL perpDist instead of FX_INT(perpDist) so the shade
+         * transitions land at arbitrary sub-cell distances. With integer
+         * cell truncation, every 1.0 unit of distance jumped 2-3 shade
+         * levels at the same screen position, creating visible bands as
+         * you walked. Sub-cell precision makes the gradient feel continuous. */
+        int wall_shade = (int)((perpDist * (SHADE_LEVELS - 1)) / MAX_VIEW_DIST);
         if (side == 1) wall_shade += 1;
         if (wall_shade < 0) wall_shade = 0;
 
@@ -700,15 +702,20 @@ void raycast_render(void) {
          * Pointer is non-volatile: the 32X framebuffer at 0x24000000 isn't SH-2
          * cached, so writes go through directly. A compiler barrier at the end
          * of raycast_render commits any reordered stores before swapBuffers. */
-        int dist_int = FX_INT(perpDist);
+        /* Detail falloff using the FRACTIONAL perpDist for the same reason
+         * as the shade ramp — keeps the transition smooth instead of
+         * snapping at integer cell boundaries. */
         int detail_factor;
-        if (dist_int < 3) {
+        if (perpDist < FX(3)) {
             detail_factor = 16;
+        } else if (perpDist < MAX_VIEW_DIST) {
+            fx_t remaining = MAX_VIEW_DIST - perpDist;
+            fx_t span      = MAX_VIEW_DIST - FX(3);
+            detail_factor  = (int)((remaining * 16) / span);
+            if (detail_factor < 0)  detail_factor = 0;
+            if (detail_factor > 16) detail_factor = 16;
         } else {
-            /* Linear fade from 16 at distance 3 to 0 at MAX_VIEW_DIST. */
-            int span = MAX_VIEW_DIST_INT - 3;
-            detail_factor = 16 - ((dist_int - 3) * 16) / span;
-            if (detail_factor < 0) detail_factor = 0;
+            detail_factor = 0;
         }
         uint8_t shade_lut[TEX_H];
         for (int ty = 0; ty < TEX_H; ty++) {

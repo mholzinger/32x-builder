@@ -490,8 +490,13 @@ void raycast_render(void) {
             fx_t wyL = player.y + FX_MUL(rowDist, leftDirY);
             fx_t wyR = player.y + FX_MUL(rowDist, rightDirY);
 
-            /* Grid line color: ceiling row color, darkened by 3 more shades. */
-            int shade = row_color[y] - CEIL_BASE + 3;
+            /* Grid line color: ceiling row color, darkened by 3 more shades.
+             * If the base row is already at max-dark shade, the +3 clamps to
+             * the same value as the row — no visible grid line, so skip all
+             * the crossing math for this row. Saves work near the horizon. */
+            int base_shade = row_color[y] - CEIL_BASE;
+            if (base_shade >= SHADE_LEVELS - 1) continue;
+            int shade = base_shade + 3;
             if (shade >= SHADE_LEVELS) shade = SHADE_LEVELS - 1;
             uint8_t grid_c = CEIL_BASE + shade;
 
@@ -570,7 +575,9 @@ void raycast_render(void) {
             sideDistY = FX_MUL(((fx_t)(mapY + 1) << FX_SHIFT) - player.y, deltaDistY);
         }
 
-        /* DDA loop. Safety cap of 64 to keep ROM-side bugs from hanging. */
+        /* DDA loop. Safety cap of 64 to keep ROM-side bugs from hanging.
+         * Early-exit when both sideDistances exceed MAX_VIEW_DIST — the ray
+         * has gone past the fog cutoff, no wall draw would happen anyway. */
         int side = 0;
         int hit = 0;
         for (int i = 0; i < 64 && !hit; i++) {
@@ -584,7 +591,8 @@ void raycast_render(void) {
                 side = 1;
             }
             if (mapX < 0 || mapX >= MAP_W || mapY < 0 || mapY >= MAP_H) break;
-            if (world_map[mapY][mapX]) hit = 1;
+            if (world_map[mapY][mapX]) { hit = 1; break; }
+            if (sideDistX > MAX_VIEW_DIST && sideDistY > MAX_VIEW_DIST) break;
         }
         if (!hit) continue;
 

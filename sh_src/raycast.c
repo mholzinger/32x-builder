@@ -41,12 +41,42 @@ const uint8_t world_map[MAP_H][MAP_W] = {
 #define WALL_BASE    1
 #define FLOOR_BASE   17
 #define CEIL_BASE    33
+#define SPRITE_BASE  49     /* 49..64 = furniture gray, 16 distance shades */
 #define SHADE_LEVELS 16
 
 /* Procedural wallpaper texture size — no bitmap, the pattern is derived
  * from (texX, texY) coordinates inline in the wall loop. */
 #define TEX_W 32
 #define TEX_H 32
+
+/* Sprite texture is a 16x16 procedural silhouette. Same shading model as
+ * walls (distance shade clamped to SHADE_LEVELS). */
+#define SPRITE_TEX_W 16
+#define SPRITE_TEX_H 16
+
+typedef struct {
+    fx_t x, y;
+    uint8_t type;   /* reserved for future sprite types */
+} sprite_t;
+
+#define SPRITE_TYPE_CHAIR 0
+
+static const sprite_t sprites[] = {
+    { FX(4.5),  FX(7.5),  SPRITE_TYPE_CHAIR },   /* spine, just east of spawn */
+    { FX(11.5), FX(8.5),  SPRITE_TYPE_CHAIR },   /* spine, far east */
+    { FX(2.5),  FX(12.5), SPRITE_TYPE_CHAIR },   /* SW alcove */
+    { FX(7.5),  FX(3.5),  SPRITE_TYPE_CHAIR },   /* N alcove near center */
+    { FX(13.5), FX(5.5),  SPRITE_TYPE_CHAIR },   /* NE alcove */
+};
+#define NUM_SPRITES (int)(sizeof(sprites) / sizeof(sprites[0]))
+
+/* Per-column z-buffer captured during wall draw, then consumed by sprite
+ * draw for occlusion. Holds perpendicular distance in FX. */
+static fx_t wall_dist[SCREEN_W];
+
+/* Sort indices for back-to-front sprite render. */
+static int    sprite_order[NUM_SPRITES];
+static int32_t sprite_dist[NUM_SPRITES];
 
 /* Precomputed pixel color per screen row for the base floor/ceiling layer.
  * Indexes [0..SCREEN_H/2-1] = ceiling, bright at top dim toward horizon;
@@ -97,6 +127,15 @@ static void build_palette(void) {
         int v = 26 * s / SHADE_LEVELS;
         Hw32xSetBGColor(CEIL_BASE + i, v, v, v);
     }
+    /* Furniture: medium gray with slight warm cast so chairs sit a touch
+     * cooler than the yellow walls and don't disappear into the carpet. */
+    for (int i = 0; i < SHADE_LEVELS; i++) {
+        int s = SHADE_LEVELS - i;
+        Hw32xSetBGColor(SPRITE_BASE + i,
+                        14 * s / SHADE_LEVELS,
+                        13 * s / SHADE_LEVELS,
+                        12 * s / SHADE_LEVELS);
+    }
 }
 
 /* Byte pointer to the start of pixel data in the current back framebuffer.
@@ -109,6 +148,108 @@ static inline volatile uint8_t *fb_pixels(void) {
 void raycast_init(void) {
     build_palette();
     build_shading_tables();
+}
+
+/* 16x16 folding chair silhouette. Returns non-zero where opaque. */
+static int chair_pattern(int x, int y) {
+    if (y <= 1)              return (x >= 4 && x <= 11);   /* back top bar */
+    if (y >= 2  && y <= 6)   return (x == 4 || x == 11);   /* back uprights */
+    if (y >= 7  && y <= 8)   return (x >= 2 && x <= 13);   /* seat */
+    if (y >= 9  && y <= 14)  return (x == 4 || x == 11);   /* legs */
+    return 0;
+}
+
+/* Compute squared distance for sort ordering (monotonic; saves a sqrt). */
+static int32_t sprite_sqdist(int i) {
+    fx_t dx = sprites[i].x - player.x;
+    fx_t dy = sprites[i].y - player.y;
+    /* Each term up to ~ (16<<16)^2 / 65536 = 16*16*65536 = ~16M; fits int32. */
+    return (int32_t)(FX_MUL(dx, dx) + FX_MUL(dy, dy));
+}
+
+/* Sort sprite_order indices so farthest is first (painter's algorithm). */
+static void sort_sprites_back_to_front(void) {
+    for (int i = 0; i < NUM_SPRITES; i++) {
+        sprite_order[i] = i;
+        sprite_dist[i] = sprite_sqdist(i);
+    }
+    /* Bubble sort by sprite_dist[sprite_order[i]] descending. */
+    for (int i = 0; i < NUM_SPRITES - 1; i++) {
+        for (int j = 0; j < NUM_SPRITES - i - 1; j++) {
+            if (sprite_dist[sprite_order[j]] < sprite_dist[sprite_order[j + 1]]) {
+                int tmp = sprite_order[j];
+                sprite_order[j] = sprite_order[j + 1];
+                sprite_order[j + 1] = tmp;
+            }
+        }
+    }
+}
+
+static void draw_sprites(fx_t dirX, fx_t dirY, fx_t planeX, fx_t planeY) {
+    /* inv_det = 1 / (planeX*dirY - dirX*planeY). For our 66° FOV with
+     * orthogonal basis this is ~ -1.515. Avoid div-by-zero defensively. */
+    fx_t det = FX_MUL(planeX, dirY) - FX_MUL(dirX, planeY);
+    if (det == 0) return;
+    fx_t inv_det = FX_DIV(FX_ONE, det);
+
+    sort_sprites_back_to_front();
+    volatile uint8_t *fb = fb_pixels();
+
+    for (int idx = 0; idx < NUM_SPRITES; idx++) {
+        int si = sprite_order[idx];
+        fx_t sx = sprites[si].x - player.x;
+        fx_t sy = sprites[si].y - player.y;
+
+        /* Camera-space transform.
+         *   transformX = inv_det * ( dirY * sx - dirX  * sy)
+         *   transformY = inv_det * (-planeY * sx + planeX * sy)
+         * transformY is depth (must be > 0 to be in front of camera). */
+        fx_t transformX = FX_MUL(inv_det,
+                            FX_MUL( dirY,  sx) - FX_MUL( dirX,  sy));
+        fx_t transformY = FX_MUL(inv_det,
+                            FX_MUL(-planeY, sx) + FX_MUL( planeX, sy));
+        if (transformY < FX(0.2)) continue;
+
+        /* Project to screen. */
+        fx_t ratio = FX_DIV(transformX, transformY);
+        int spriteScreenX = (SCREEN_W >> 1)
+            + (int)(((int64_t)(SCREEN_W >> 1) * ratio) >> FX_SHIFT);
+
+        int spriteHeight = (int)(((int64_t)SCREEN_H << FX_SHIFT) / transformY);
+        int spriteWidth  = spriteHeight;  /* square texture */
+
+        int drawStartY_u = SCREEN_H / 2 - spriteHeight / 2;
+        int drawEndY_u   = SCREEN_H / 2 + spriteHeight / 2;
+        int drawStartX_u = spriteScreenX - spriteWidth / 2;
+        int drawEndX_u   = spriteScreenX + spriteWidth / 2;
+        int drawStartY = drawStartY_u < 0 ? 0 : drawStartY_u;
+        int drawEndY   = drawEndY_u >= SCREEN_H ? SCREEN_H - 1 : drawEndY_u;
+        int drawStartX = drawStartX_u < 0 ? 0 : drawStartX_u;
+        int drawEndX   = drawEndX_u >= SCREEN_W ? SCREEN_W - 1 : drawEndX_u;
+
+        if (spriteWidth < 1 || spriteHeight < 1) continue;
+
+        int shade = FX_INT(transformY);
+        if (shade < 0) shade = 0;
+        if (shade >= SHADE_LEVELS) shade = SHADE_LEVELS - 1;
+        uint8_t spriteColor = SPRITE_BASE + shade;
+
+        for (int stripe = drawStartX; stripe <= drawEndX; stripe++) {
+            /* Z-buffer: skip column if a wall is in front of this sprite. */
+            if (transformY >= wall_dist[stripe]) continue;
+
+            int texX = ((stripe - drawStartX_u) * SPRITE_TEX_W) / spriteWidth;
+            if (texX < 0 || texX >= SPRITE_TEX_W) continue;
+
+            for (int y = drawStartY; y <= drawEndY; y++) {
+                int texY = ((y - drawStartY_u) * SPRITE_TEX_H) / spriteHeight;
+                if (texY < 0 || texY >= SPRITE_TEX_H) continue;
+                if (chair_pattern(texX, texY)) {
+                    fb[y * SCREEN_W + stripe] = spriteColor;
+                }
+            }
+        }
+    }
 }
 
 /* Returns 1 if cell (x, y) is walkable, 0 if blocked or out of bounds. */
@@ -179,6 +320,9 @@ void raycast_render(void) {
     fx_t planeY = FX_MUL( dirX, FX(0.66));
 
     for (int col = 0; col < SCREEN_W; col++) {
+        /* Default z-buffer to "infinity" so columns where the ray misses
+         * still let sprites render in front. Overwritten on a wall hit. */
+        wall_dist[col] = 0x7FFFFFFF;
         /* cameraX in [-1, +1) */
         fx_t cameraX = ((fx_t)col << (FX_SHIFT + 1)) / SCREEN_W - FX_ONE;
         fx_t rayDirX = dirX + FX_MUL(planeX, cameraX);
@@ -231,6 +375,7 @@ void raycast_render(void) {
         fx_t perpDist = (side == 0) ? (sideDistX - deltaDistX)
                                     : (sideDistY - deltaDistY);
         if (perpDist < FX(0.1)) perpDist = FX(0.1);
+        wall_dist[col] = perpDist;  /* z-buffer for sprite occlusion */
 
         /* Projected line height in pixels = SCREEN_H / perpDist. */
         int lineHeight = (int)(((int64_t)SCREEN_H << FX_SHIFT) / perpDist);
@@ -273,4 +418,6 @@ void raycast_render(void) {
             tex_pos += tex_step;
         }
     }
+
+    draw_sprites(dirX, dirY, planeX, planeY);
 }

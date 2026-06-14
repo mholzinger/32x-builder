@@ -2,6 +2,7 @@
 #include "raycast.h"
 #include "sin_table.h"
 #include "wall_tex.h"
+#include "neander_tex.h"
 
 /* Player spawn for gameplay — south end of the corridor at col 4, looking
  * north up the long sightline toward the perimeter wall ~11 cells away.
@@ -52,6 +53,7 @@ const uint8_t world_map[MAP_H][MAP_W] = {
 #define FLOOR_BASE   17
 #define CEIL_BASE    33
 #define LIGHT_BASE   49     /* 4 entries: full / 75% / 50% / 25% for flicker */
+#define NEANDER_BASE 64     /* 8 entries: 0=cardboard back, 1-7=figure shades */
 #define SHADE_LEVELS 16
 
 /* Wall texture comes from wall_tex.h (generated from images/walltile.jpg). */
@@ -74,6 +76,22 @@ const uint8_t world_map[MAP_H][MAP_W] = {
 /* Per-column z-buffer captured during wall draw so the light billboards
  * can z-test against walls. 0x7FFFFFFF = no wall hit (light wins). */
 static fx_t wall_dist[SCREEN_W];
+
+/* Floor-standing cardboard cutouts. Each standup has a world position
+ * and a facing direction; viewing from the front shows the texture,
+ * viewing from behind shows solid cardboard. */
+typedef struct {
+    fx_t x, y;
+    uint8_t facing_angle;
+} standup_t;
+
+static const standup_t standups[] = {
+    /* In the corridor at col 4, north of player spawn (12.5), so it's
+     * visible as player walks forward. Facing south (angle 64) so the
+     * front of the cutout faces the approaching player. */
+    { FX(4.5), FX(8.5), 64 },
+};
+#define NUM_STANDUPS (int)(sizeof(standups) / sizeof(standups[0]))
 
 /* Ceiling fluorescent tube positions in world coords. Each one renders
  * as a small horizontal bright bar at its world position, sized by
@@ -190,6 +208,17 @@ static void build_palette(void) {
     Hw32xSetBGColor(LIGHT_BASE + 1, 23, 23, 21);
     Hw32xSetBGColor(LIGHT_BASE + 2, 15, 15, 14);
     Hw32xSetBGColor(LIGHT_BASE + 3,  7,  7,  7);
+    /* Neanderthal cardboard standup. Index 0 = cardboard back (warm tan
+     * brown), 1-7 = quantized figure shades pulled from neanderthal.webp.
+     * Hand-picked palette so the figure reads at any wall distance. */
+    Hw32xSetBGColor(NEANDER_BASE + 0, 16, 11,  5);
+    Hw32xSetBGColor(NEANDER_BASE + 1,  3,  2,  1);
+    Hw32xSetBGColor(NEANDER_BASE + 2,  8,  6,  4);
+    Hw32xSetBGColor(NEANDER_BASE + 3, 13, 10,  8);
+    Hw32xSetBGColor(NEANDER_BASE + 4, 17, 14, 11);
+    Hw32xSetBGColor(NEANDER_BASE + 5, 21, 18, 15);
+    Hw32xSetBGColor(NEANDER_BASE + 6, 25, 23, 21);
+    Hw32xSetBGColor(NEANDER_BASE + 7, 27, 27, 26);
 }
 
 /* Byte pointer to the start of pixel data in the current back framebuffer.
@@ -265,6 +294,79 @@ void player_update(void) {
 
     fx_t newY = player.y + dy;
     if (cell_passable(FX_INT(player.x), FX_INT(newY))) player.y = newY;
+}
+
+/* Render each cardboard standup as a textured Wolf3D-style billboard.
+ * Same camera-space transform as draw_lights. Vertical centering on the
+ * horizon places the figure's feet on the floor and head 1 world unit up.
+ * Front/back is dot(player - standup, standup_forward) — positive = front
+ * (sample texture), negative = back (cardboard fill). */
+static void draw_standups(volatile uint8_t *fb,
+                          fx_t dirX, fx_t dirY, fx_t planeX, fx_t planeY) {
+    fx_t det = FX_MUL(planeX, dirY) - FX_MUL(dirX, planeY);
+    if (det == 0) return;
+    fx_t inv_det = FX_DIV(FX_ONE, det);
+
+    for (int i = 0; i < NUM_STANDUPS; i++) {
+        fx_t sx = standups[i].x - player.x;
+        fx_t sy = standups[i].y - player.y;
+
+        fx_t transformX = FX_MUL(inv_det,
+                            FX_MUL( dirY,  sx) - FX_MUL( dirX,  sy));
+        fx_t transformY = FX_MUL(inv_det,
+                            FX_MUL(-planeY, sx) + FX_MUL( planeX, sy));
+        if (transformY < FX(0.5))     continue;     /* behind / too close */
+        if (transformY >= MAX_VIEW_DIST) continue;  /* beyond fog */
+
+        fx_t ratio = FX_DIV(transformX, transformY);
+        int screenX = (SCREEN_W >> 1)
+                    + (int)(((int32_t)(SCREEN_W >> 1) * ratio) >> FX_SHIFT);
+
+        /* 1 world unit tall, 0.5 wide -> 1:2 aspect. Centering on horizon
+         * makes feet land on floor-distance row automatically (camera
+         * height = 0.5 in our raycaster). */
+        int spriteHeight = (int)(((int32_t)SCREEN_H << FX_SHIFT) / transformY);
+        int spriteWidth  = spriteHeight >> 1;
+        if (spriteWidth < 1) spriteWidth = 1;
+        if (spriteHeight < 1) continue;
+
+        int drawStartY_u = (SCREEN_H >> 1) - (spriteHeight >> 1);
+        int drawEndY_u   = (SCREEN_H >> 1) + (spriteHeight >> 1);
+        int drawStartX_u = screenX - (spriteWidth >> 1);
+        int drawEndX_u   = screenX + (spriteWidth >> 1);
+        int drawStartY = drawStartY_u < 0 ? 0 : drawStartY_u;
+        int drawEndY   = drawEndY_u >= SCREEN_H ? SCREEN_H - 1 : drawEndY_u;
+        int drawStartX = drawStartX_u < 0 ? 0 : drawStartX_u;
+        int drawEndX   = drawEndX_u >= SCREEN_W ? SCREEN_W - 1 : drawEndX_u;
+
+        /* Front/back: standup forward is (cos angle, sin angle).
+         * sx, sy = standup - player, so player - standup = -sx, -sy.
+         * dot(player - standup, forward) > 0 means player is in front;
+         * equivalently (sx*fx + sy*fy) < 0. */
+        fx_t fwdX = COS_FX(standups[i].facing_angle);
+        fx_t fwdY = SIN_FX(standups[i].facing_angle);
+        int is_front = (FX_MUL(sx, fwdX) + FX_MUL(sy, fwdY)) < 0;
+        uint8_t back_color = NEANDER_BASE + 0;
+
+        for (int stripe = drawStartX; stripe <= drawEndX; stripe++) {
+            if (transformY >= wall_dist[stripe]) continue;
+
+            int texX = ((stripe - drawStartX_u) * NEANDER_TEX_WIDTH) / spriteWidth;
+            if (texX < 0 || texX >= NEANDER_TEX_WIDTH) continue;
+
+            volatile uint8_t *p = fb + drawStartY * SCREEN_W + stripe;
+            for (int y = drawStartY; y <= drawEndY; y++) {
+                int texY = ((y - drawStartY_u) * NEANDER_TEX_HEIGHT) / spriteHeight;
+                if (texY < 0) texY = 0;
+                if (texY >= NEANDER_TEX_HEIGHT) texY = NEANDER_TEX_HEIGHT - 1;
+                uint8_t v = neander_tex[texY][texX];
+                if (v != 0) {
+                    *p = is_front ? (NEANDER_BASE + v) : back_color;
+                }
+                p += SCREEN_W;
+            }
+        }
+    }
 }
 
 /* Project each ceiling light to screen space, paint a small bright bar
@@ -532,5 +634,6 @@ void raycast_render(void) {
         }
     }
 
+    draw_standups(fb, dirX, dirY, planeX, planeY);
     draw_lights(fb, dirX, dirY, planeX, planeY);
 }

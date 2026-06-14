@@ -122,6 +122,10 @@ static const light_t lights[] = {
  * [SCREEN_H/2..SCREEN_H-1] = floor, dim near horizon bright at bottom. */
 static uint8_t row_color[SCREEN_H];
 
+/* Precomputed cameraX value per screen column. Replaces a per-column divide
+ * (one of the few remaining ones in the wall loop) with a single table load. */
+static fx_t cameraX_table[SCREEN_W];
+
 static void build_shading_tables(void) {
     int mid = SCREEN_H / 2;
     for (int y = 0; y < SCREEN_H; y++) {
@@ -233,6 +237,10 @@ static inline uint8_t *fb_pixels(void) {
 void raycast_init(void) {
     build_palette();
     build_shading_tables();
+    /* Precompute cameraX[col] = 2*col/SCREEN_W - 1 in FX. */
+    for (int col = 0; col < SCREEN_W; col++) {
+        cameraX_table[col] = ((fx_t)col << (FX_SHIFT + 1)) / SCREEN_W - FX_ONE;
+    }
 }
 
 /* Per-frame palette nudge on the brightest wall and ceiling entries —
@@ -370,10 +378,11 @@ static void draw_standups(uint8_t *fb,
 
             uint8_t *p = fb + drawStartY * SCREEN_W + stripe;
             fx_t tex_pos = texY_start_v;
+            /* texY can only overshoot the bottom of the texture (not go
+             * negative — tex_pos starts >= 0 and step is positive). */
             for (int y = drawStartY; y <= drawEndY; y++) {
                 int texY = tex_pos >> FX_SHIFT;
-                if (texY < 0) texY = 0;
-                else if (texY >= NEANDER_TEX_HEIGHT) texY = NEANDER_TEX_HEIGHT - 1;
+                if (texY >= NEANDER_TEX_HEIGHT) texY = NEANDER_TEX_HEIGHT - 1;
                 uint8_t v = neander_tex[texY][texX];
                 if (v != 0) {
                     *p = is_front ? (NEANDER_BASE + v) : back_color;
@@ -558,8 +567,7 @@ void raycast_render(void) {
         /* Default z-buffer to "infinity" so missed-ray columns let lights
          * render. Overwritten on a wall hit. */
         wall_dist[col] = 0x7FFFFFFF;
-        /* cameraX in [-1, +1) */
-        fx_t cameraX = ((fx_t)col << (FX_SHIFT + 1)) / SCREEN_W - FX_ONE;
+        fx_t cameraX = cameraX_table[col];
         fx_t rayDirX = dirX + FX_MUL(planeX, cameraX);
         fx_t rayDirY = dirY + FX_MUL(planeY, cameraX);
 

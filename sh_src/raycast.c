@@ -355,6 +355,13 @@ static void draw_standups(uint8_t *fb,
         int is_front = (FX_MUL(sx, fwdX) + FX_MUL(sy, fwdY)) < 0;
         uint8_t back_color = NEANDER_BASE + 0;
 
+        /* Precompute texY increment per screen row — same trick as wall
+         * texture stepping. Was doing one divide per pixel (~30 cycles each
+         * on SH-2), now one divide per sprite + add per pixel. For a sprite
+         * at distance 3 (~3000 pixels) this is ~4ms saved per frame. */
+        fx_t texY_step    = ((fx_t)NEANDER_TEX_HEIGHT << FX_SHIFT) / spriteHeight;
+        fx_t texY_start_v = (fx_t)(drawStartY - drawStartY_u) * texY_step;
+
         for (int stripe = drawStartX; stripe <= drawEndX; stripe++) {
             if (transformY >= wall_dist[stripe]) continue;
 
@@ -362,15 +369,17 @@ static void draw_standups(uint8_t *fb,
             if (texX < 0 || texX >= NEANDER_TEX_WIDTH) continue;
 
             uint8_t *p = fb + drawStartY * SCREEN_W + stripe;
+            fx_t tex_pos = texY_start_v;
             for (int y = drawStartY; y <= drawEndY; y++) {
-                int texY = ((y - drawStartY_u) * NEANDER_TEX_HEIGHT) / spriteHeight;
+                int texY = tex_pos >> FX_SHIFT;
                 if (texY < 0) texY = 0;
-                if (texY >= NEANDER_TEX_HEIGHT) texY = NEANDER_TEX_HEIGHT - 1;
+                else if (texY >= NEANDER_TEX_HEIGHT) texY = NEANDER_TEX_HEIGHT - 1;
                 uint8_t v = neander_tex[texY][texX];
                 if (v != 0) {
                     *p = is_front ? (NEANDER_BASE + v) : back_color;
                 }
                 p += SCREEN_W;
+                tex_pos += texY_step;
             }
         }
     }

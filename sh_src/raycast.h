@@ -3,8 +3,8 @@
 
 #include <stdint.h>
 
-#define MAP_W      8
-#define MAP_H      8
+#define MAP_W      16
+#define MAP_H      16
 #define SCREEN_W   320
 #define SCREEN_H   224
 

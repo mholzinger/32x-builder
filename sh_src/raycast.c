@@ -2,25 +2,34 @@
 #include "raycast.h"
 #include "sin_table.h"
 
-/* Player spawn — in the western corridor, facing east toward the divider. */
+/* Player spawn — west end of the main east-west spine, facing east. */
 player_t player = {
     .x = FX(1.5),
-    .y = FX(3.5),
+    .y = FX(7.5),
     .angle = 0,
 };
 
-/* 8x8 grid: 1 = wall, 0 = floor.
- * Interior wall at column x=3, rows y=3..4 creates two rooms connected
- * by a corridor running north and south of the divider. */
+/* 16x16 Backrooms-ish layout: one long east-west spine corridor at
+ * y=7..8 with five north-south branch alcoves. The long sightline
+ * down the spine sells the distance shading; the alcoves give you
+ * places to peek into / get lost in. */
 const uint8_t world_map[MAP_H][MAP_W] = {
-    {1,1,1,1,1,1,1,1},
-    {1,0,0,0,0,0,0,1},
-    {1,0,0,0,0,0,0,1},
-    {1,0,0,1,0,0,0,1},
-    {1,0,0,1,0,0,0,1},
-    {1,0,0,0,0,0,0,1},
-    {1,0,0,0,0,0,0,1},
-    {1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
+    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
+    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
+    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
+    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
+    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
+    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
+    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
+    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
+    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
+    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
+    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
 };
 
 /* Palette layout (8bpp, 256 entries):
@@ -63,9 +72,7 @@ static void build_shading_tables(void) {
 }
 
 static void build_palette(void) {
-    /* Color 0 = bright magenta so we can spot anywhere the renderer
-     * left the framebuffer untouched (a debug aid, removed later). */
-    Hw32xSetBGColor(0, 31, 0, 31);
+    Hw32xSetBGColor(0, 0, 0, 0);
     /* Wall: vivid Backrooms mustard. Needs big R-B gap to read as YELLOW
      * (not drab tan) after distance shading + 5-bit quantization. */
     for (int i = 0; i < SHADE_LEVELS; i++) {

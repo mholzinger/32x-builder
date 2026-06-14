@@ -788,13 +788,15 @@ void raycast_render(void) {
      * the next swapBuffers() makes them visible via the VDP page flip. */
     __asm__ __volatile__("" ::: "memory");
 
-    /* === Slave SH-2 proof-of-life test — non-blocking variant ===
-     * Set COMM0 = 1 to *invite* slave to paint its stripe. Do NOT wait
-     * for the slave to clear it. If slave is alive it will paint the
-     * stripe; we'll see it next frame. If slave is dead, game still
-     * renders normally — no hang risk. This separates "is slave alive"
-     * from "does sync work" so we can debug them independently. */
+    /* === Slave SH-2 proof-of-life test ===
+     * Set COMM0 = 1 to ask slave to paint its stripe, then wait for it
+     * to clear the flag. If we see a bright stripe at the left edge of
+     * the screen, slave is running and can write the framebuffer. */
     MARS_SYS_COMM0 = 1;
+    /* Master does ZERO work here on purpose — pure round-trip test of
+     * the sync mechanism. Real workload split will come after this proves
+     * the slave is alive. */
+    while (MARS_SYS_COMM0 != 0) { }
 
     draw_standups(fb, dirX, dirY, planeX, planeY);
     draw_lights(fb, dirX, dirY, planeX, planeY);

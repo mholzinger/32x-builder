@@ -319,7 +319,7 @@ void player_update(void) {
 
     /* Track walking state and advance bob phase. */
     is_walking = (dx != 0 || dy != 0);
-    if (is_walking) bob_phase += 12;         /* ~2.8 Hz — real walking cadence */
+    if (is_walking) bob_phase += 16;         /* ~3.7 Hz — tight footfall cadence */
 }
 
 /* Render each cardboard standup as a textured Wolf3D-style billboard.

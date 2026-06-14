@@ -5,5 +5,9 @@
 *.lst
 *.32x
 
+# Track built ROM artifacts in rom/ as committed release snapshots
+!rom/*.32x
+!rom/*.bin
+
 # macOS
 .DS_Store

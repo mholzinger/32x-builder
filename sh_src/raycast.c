@@ -86,32 +86,39 @@ static void build_shading_tables(void) {
     }
 }
 
+/* Fog target — what every surface fades toward at maximum distance.
+ * Neutral misty grey with the slightest cool cast so the far haze reads
+ * as "somewhere" rather than as the black void. All three palette ramps
+ * converge here, so the walls/floor/ceiling blend into one fog at depth. */
+#define FOG_R 10
+#define FOG_G 10
+#define FOG_B 11
+
+/* Linear blend of bright base (weight: SHADE_LEVELS - i) toward fog (weight: i). */
+#define MIX(bright, fog, i) (((bright) * (SHADE_LEVELS - (i)) + (fog) * (i)) / SHADE_LEVELS)
+
 static void build_palette(void) {
     Hw32xSetBGColor(0, 0, 0, 0);
-    /* Wall: vivid Backrooms mustard. Needs big R-B gap to read as YELLOW
-     * (not drab tan) after distance shading + 5-bit quantization. */
+    /* Wall: vivid Backrooms mustard at shade 0, fading to misty grey at shade 15. */
     for (int i = 0; i < SHADE_LEVELS; i++) {
-        int s = SHADE_LEVELS - i;
         Hw32xSetBGColor(WALL_BASE + i,
-                        30 * s / SHADE_LEVELS,
-                        25 * s / SHADE_LEVELS,
-                        6  * s / SHADE_LEVELS);
+                        MIX(30, FOG_R, i),
+                        MIX(25, FOG_G, i),
+                        MIX( 6, FOG_B, i));
     }
-    /* Carpet: yellow-mustard, same hue family as the walls but a touch
-     * darker so the wall/floor seam still reads through the depth fade. */
+    /* Carpet: yellow-mustard, same hue family as walls. */
     for (int i = 0; i < SHADE_LEVELS; i++) {
-        int s = SHADE_LEVELS - i;
         Hw32xSetBGColor(FLOOR_BASE + i,
-                        24 * s / SHADE_LEVELS,
-                        20 * s / SHADE_LEVELS,
-                        5  * s / SHADE_LEVELS);
+                        MIX(24, FOG_R, i),
+                        MIX(20, FOG_G, i),
+                        MIX( 5, FOG_B, i));
     }
-    /* Ceiling: neutral light gray-white (balanced RGB) so it doesn't
-     * cross-read as yellow next to the wall. */
+    /* Ceiling: neutral off-white. */
     for (int i = 0; i < SHADE_LEVELS; i++) {
-        int s = SHADE_LEVELS - i;
-        int v = 26 * s / SHADE_LEVELS;
-        Hw32xSetBGColor(CEIL_BASE + i, v, v, v);
+        Hw32xSetBGColor(CEIL_BASE + i,
+                        MIX(26, FOG_R, i),
+                        MIX(26, FOG_G, i),
+                        MIX(26, FOG_B, i));
     }
 }
 

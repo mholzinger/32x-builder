@@ -223,9 +223,11 @@ static void build_palette(void) {
 
 /* Byte pointer to the start of pixel data in the current back framebuffer.
  * (32X 8bpp layout: 0x100 words of line table, then pixels at byte offset 0x200.)
- * volatile is required — the VDP observes these writes, the compiler doesn't. */
-static inline volatile uint8_t *fb_pixels(void) {
-    return (volatile uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
+ * Non-volatile: the 32X framebuffer at 0x24000000 isn't SH-2 cached, so
+ * writes go through directly. A single `asm("" ::: "memory")` barrier at
+ * end-of-render commits any reordered stores before the VDP sees them. */
+static inline uint8_t *fb_pixels(void) {
+    return (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
 }
 
 void raycast_init(void) {
@@ -301,7 +303,7 @@ void player_update(void) {
  * horizon places the figure's feet on the floor and head 1 world unit up.
  * Front/back is dot(player - standup, standup_forward) — positive = front
  * (sample texture), negative = back (cardboard fill). */
-static void draw_standups(volatile uint8_t *fb,
+static void draw_standups(uint8_t *fb,
                           fx_t dirX, fx_t dirY, fx_t planeX, fx_t planeY) {
     fx_t det = FX_MUL(planeX, dirY) - FX_MUL(dirX, planeY);
     if (det == 0) return;
@@ -359,7 +361,7 @@ static void draw_standups(volatile uint8_t *fb,
             int texX = ((stripe - drawStartX_u) * NEANDER_TEX_WIDTH) / spriteWidth;
             if (texX < 0 || texX >= NEANDER_TEX_WIDTH) continue;
 
-            volatile uint8_t *p = fb + drawStartY * SCREEN_W + stripe;
+            uint8_t *p = fb + drawStartY * SCREEN_W + stripe;
             for (int y = drawStartY; y <= drawEndY; y++) {
                 int texY = ((y - drawStartY_u) * NEANDER_TEX_HEIGHT) / spriteHeight;
                 if (texY < 0) texY = 0;
@@ -377,7 +379,7 @@ static void draw_standups(volatile uint8_t *fb,
 /* Project each ceiling light to screen space, paint a small bright bar
  * with z-test against wall_dist, apply per-light flicker. The math is the
  * sprite-billboard transform; the cost is ~50-100 cycles per light. */
-static void draw_lights(volatile uint8_t *fb,
+static void draw_lights(uint8_t *fb,
                         fx_t dirX, fx_t dirY, fx_t planeX, fx_t planeY) {
     fx_t det = FX_MUL(planeX, dirY) - FX_MUL(dirX, planeY);
     if (det == 0) return;
@@ -438,7 +440,7 @@ static void draw_lights(volatile uint8_t *fb,
 
         for (int x = x0; x <= x1; x++) {
             if (transformY >= wall_dist[x]) continue;  /* wall in front */
-            volatile uint8_t *p = fb + y0 * SCREEN_W + x;
+            uint8_t *p = fb + y0 * SCREEN_W + x;
             for (int y = y0; y <= y1; y++) {
                 *p = color;
                 p += SCREEN_W;
@@ -448,7 +450,7 @@ static void draw_lights(volatile uint8_t *fb,
 }
 
 void raycast_render(void) {
-    volatile uint8_t *fb = fb_pixels();
+    uint8_t *fb = fb_pixels();
 
     /* Camera basis: forward = (cos a, sin a); camera plane perpendicular,
      * length 0.66 -> ~66° horizontal FOV. */
@@ -459,12 +461,12 @@ void raycast_render(void) {
 
     /* Floor + ceiling: per-row solid color (32-bit aligned writes,
      * 4 pixels per store). Fast clear. */
-    volatile uint32_t *fb32 = (volatile uint32_t *)fb;
+    uint32_t *fb32 = (uint32_t *)fb;
     for (int y = 0; y < SCREEN_H; y++) {
         uint8_t  c   = row_color[y];
         uint32_t c32 = ((uint32_t)c << 24) | ((uint32_t)c << 16)
                      | ((uint32_t)c <<  8) |  (uint32_t)c;
-        volatile uint32_t *row = fb32 + y * (SCREEN_W / 4);
+        uint32_t *row = fb32 + y * (SCREEN_W / 4);
         for (int x = 0; x < SCREEN_W / 4; x++) row[x] = c32;
     }
 
@@ -518,7 +520,7 @@ void raycast_render(void) {
                     if (t < 0 || t >= FX_ONE) continue;
                     int col = (int)(((int32_t)t * SCREEN_W) >> FX_SHIFT);
                     if (col >= 0 && col < SCREEN_W) {
-                        ((volatile uint8_t *)fb)[y * SCREEN_W + col] = grid_c;
+                        fb[y * SCREEN_W + col] = grid_c;
                     }
                 }
             }
@@ -533,7 +535,7 @@ void raycast_render(void) {
                     if (t < 0 || t >= FX_ONE) continue;
                     int col = (int)(((int32_t)t * SCREEN_W) >> FX_SHIFT);
                     if (col >= 0 && col < SCREEN_W) {
-                        ((volatile uint8_t *)fb)[y * SCREEN_W + col] = grid_c;
+                        fb[y * SCREEN_W + col] = grid_c;
                     }
                 }
             }

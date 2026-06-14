@@ -2,20 +2,22 @@
 #include "raycast.h"
 #include "sin_table.h"
 
-/* Player starts in the middle of the room, facing east. */
+/* Player spawn — in the western corridor, facing east toward the divider. */
 player_t player = {
-    .x = FX(3.5),
+    .x = FX(1.5),
     .y = FX(3.5),
     .angle = 0,
 };
 
-/* 8x8 grid: 1 = wall, 0 = floor. */
+/* 8x8 grid: 1 = wall, 0 = floor.
+ * Interior wall at column x=3, rows y=3..4 creates two rooms connected
+ * by a corridor running north and south of the divider. */
 const uint8_t world_map[MAP_H][MAP_W] = {
     {1,1,1,1,1,1,1,1},
     {1,0,0,0,0,0,0,1},
     {1,0,0,0,0,0,0,1},
-    {1,0,0,0,0,0,0,1},
-    {1,0,0,0,0,0,0,1},
+    {1,0,0,1,0,0,0,1},
+    {1,0,0,1,0,0,0,1},
     {1,0,0,0,0,0,0,1},
     {1,0,0,0,0,0,0,1},
     {1,1,1,1,1,1,1,1},
@@ -31,6 +33,29 @@ const uint8_t world_map[MAP_H][MAP_W] = {
 #define FLOOR_BASE   17
 #define CEIL_BASE    33
 #define SHADE_LEVELS 16
+
+/* Precomputed pixel color per screen row for the base floor/ceiling layer.
+ * Indexes [0..SCREEN_H/2-1] = ceiling, bright at top dim toward horizon;
+ * [SCREEN_H/2..SCREEN_H-1] = floor, dim near horizon bright at bottom. */
+static uint8_t row_color[SCREEN_H];
+
+static void build_shading_tables(void) {
+    int mid = SCREEN_H / 2;
+    for (int y = 0; y < SCREEN_H; y++) {
+        int yy;
+        if (y < mid)      yy = mid - y;
+        else if (y > mid) yy = y - mid;
+        else              yy = 1;          /* avoid div-by-zero at horizon */
+        /* Classic raycaster row distance: rowDist = mid / yy.
+         * Pre-clamp to shade range; visually compresses far rows into the
+         * darkest shade (the "Backrooms haze" near the horizon). */
+        int shade = mid / yy - 1;
+        if (shade < 0) shade = 0;
+        if (shade >= SHADE_LEVELS) shade = SHADE_LEVELS - 1;
+        row_color[y] = (y <= mid) ? (CEIL_BASE + shade)
+                                  : (FLOOR_BASE + shade);
+    }
+}
 
 static void build_palette(void) {
     /* Color 0 = bright magenta so we can spot anywhere the renderer
@@ -78,6 +103,7 @@ static void vline(int x, int top, int bot, uint8_t color) {
 
 void raycast_init(void) {
     build_palette();
+    build_shading_tables();
 }
 
 /* Returns 1 if cell (x, y) is walkable, 0 if blocked or out of bounds. */
@@ -128,16 +154,16 @@ void player_update(void) {
 void raycast_render(void) {
     volatile uint8_t *fb = fb_pixels();
 
-    /* Flat ceiling + flat floor as the base layer. We'll add per-row
-     * shading once the renderer is proven correct.
-     * Using a mid-bright shade (index 4) so they read clearly on hardware. */
-    uint8_t ceil_color  = CEIL_BASE  + 4;
-    uint8_t floor_color = FLOOR_BASE + 4;
-    for (int y = 0; y < SCREEN_H / 2; y++) {
-        for (int x = 0; x < SCREEN_W; x++) fb[y * SCREEN_W + x] = ceil_color;
-    }
-    for (int y = SCREEN_H / 2; y < SCREEN_H; y++) {
-        for (int x = 0; x < SCREEN_W; x++) fb[y * SCREEN_W + x] = floor_color;
+    /* Base layer: per-row floor/ceiling with distance shading. Use 32-bit
+     * stores (4 pixels per write) to fit a full clear under the SH-2's
+     * frame budget. Framebuffer is 4-byte aligned; rows are 320 bytes. */
+    volatile uint32_t *fb32 = (volatile uint32_t *)fb;
+    for (int y = 0; y < SCREEN_H; y++) {
+        uint8_t  c   = row_color[y];
+        uint32_t c32 = ((uint32_t)c << 24) | ((uint32_t)c << 16)
+                     | ((uint32_t)c <<  8) |  (uint32_t)c;
+        volatile uint32_t *row = fb32 + y * (SCREEN_W / 4);
+        for (int x = 0; x < SCREEN_W / 4; x++) row[x] = c32;
     }
 
     /* Camera basis: forward = (cos a, sin a); camera plane perpendicular,

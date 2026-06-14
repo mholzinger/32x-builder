@@ -80,6 +80,51 @@ void raycast_init(void) {
     build_palette();
 }
 
+/* Returns 1 if cell (x, y) is walkable, 0 if blocked or out of bounds. */
+static int cell_passable(int x, int y) {
+    if (x < 0 || x >= MAP_W || y < 0 || y >= MAP_H) return 0;
+    return world_map[y][x] == 0;
+}
+
+/* Read controller, advance player by one frame. Axis-separated collision
+ * gives natural sliding along walls. */
+void player_update(void) {
+    HwMdReadPad(0);
+    uint16_t pad = MARS_SYS_COMM8;
+
+    fx_t walk = (pad & SEGA_CTRL_C) ? FX(0.10) : FX(0.05);
+    uint8_t turn = 2;
+
+    /* B toggles left/right between turning and strafing. */
+    int strafing = (pad & SEGA_CTRL_B) != 0;
+
+    if (!strafing) {
+        if (pad & SEGA_CTRL_LEFT)  player.angle -= turn;
+        if (pad & SEGA_CTRL_RIGHT) player.angle += turn;
+    }
+
+    fx_t dirX = COS_FX(player.angle);
+    fx_t dirY = SIN_FX(player.angle);
+    /* Player's RIGHT is dir rotated +90° (with +y down). */
+    fx_t rightX = -dirY;
+    fx_t rightY =  dirX;
+
+    fx_t dx = 0, dy = 0;
+    if (pad & SEGA_CTRL_UP)   { dx += FX_MUL(dirX, walk); dy += FX_MUL(dirY, walk); }
+    if (pad & SEGA_CTRL_DOWN) { dx -= FX_MUL(dirX, walk); dy -= FX_MUL(dirY, walk); }
+    if (strafing) {
+        if (pad & SEGA_CTRL_RIGHT) { dx += FX_MUL(rightX, walk); dy += FX_MUL(rightY, walk); }
+        if (pad & SEGA_CTRL_LEFT)  { dx -= FX_MUL(rightX, walk); dy -= FX_MUL(rightY, walk); }
+    }
+
+    /* Axis-separated collision: try X first, then Y. */
+    fx_t newX = player.x + dx;
+    if (cell_passable(FX_INT(newX), FX_INT(player.y))) player.x = newX;
+
+    fx_t newY = player.y + dy;
+    if (cell_passable(FX_INT(player.x), FX_INT(newY))) player.y = newY;
+}
+
 void raycast_render(void) {
     volatile uint8_t *fb = fb_pixels();
 

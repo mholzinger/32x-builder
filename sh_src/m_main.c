@@ -18,6 +18,7 @@ int m_main(void) {
     raycast_init();
 
     for (;;) {
+        player_update();
         raycast_render();
         swapBuffers();
     }

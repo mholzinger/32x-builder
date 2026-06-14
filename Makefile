@@ -8,8 +8,9 @@ TOOLSBIN = $(MARSDEV)/bin
 MDBIN    = $(MARSDEV)/m68k-elf/bin
 SHBIN    = $(MARSDEV)/sh-elf/bin
 
-TARGET  ?= backrooms
-MDTARGET = md_start
+ROMDIR  := rom
+TARGET  ?= $(ROMDIR)/backrooms
+MDTARGET = $(ROMDIR)/md_start
 
 # m68k GCC and Binutils
 MDCC   = $(MDBIN)/m68k-elf-gcc
@@ -102,7 +103,7 @@ $(MDTARGET).bin: $(MDTARGET).elf
 	@echo "Stripping ELF header from M68K program"
 	@$(MDOBJC) -O binary $< $@
 
-$(MDTARGET).elf: $(MDOBJS)
+$(MDTARGET).elf: $(MDOBJS) | $(ROMDIR)
 	$(MDCC) $(MDLDFLAGS) $^ -o $@ $(MDLIBS)
 
 md_src/%.o: md_src/%.s
@@ -125,8 +126,11 @@ $(TARGET).32x: $(TARGET).elf
 	@dd if=temp.32x of=$@ bs=8192 conv=sync
 	@rm -f temp.32x
 
-$(TARGET).elf: $(SHOBJS)
+$(TARGET).elf: $(SHOBJS) | $(ROMDIR)
 	$(SHCC) $(SHLDFLAGS) $^ -o $@ $(SHLIBS)
+
+$(ROMDIR):
+	@mkdir -p $(ROMDIR)
 
 sh_src/%.o: sh_src/%.s 
 	@echo "SHAS $<"

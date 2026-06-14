@@ -212,6 +212,48 @@ template pool the cart can pick from. Lets us seed the procedural
 templates with actual AI imagination instead of hand-design. Pure
 roadmap dreaming; needs nothing else first.
 
+### Backrooms couch (8-angle directional billboard)
+**Status:** designed, not implemented. Deep-research agent landed a
+concrete recommendation.
+
+A mustard-yellow vinyl 3-seater sofa in the SE lounge and NE nested
+rooms — matches the "70s/80s waiting-room furniture, condition
+slightly worn but not destroyed" canonical Backrooms vocabulary.
+Mustard yellow uses the existing wall family palette so the couch
+reads as "the wallpaper color but stained darker."
+
+**Technique: 8-angle billboard with Doom-style mirroring** (4 unique
+front-half textures + 1 side, mirror for back half). Same per-frame
+cost as the existing neanderthal standup (~1.5 ms per visible couch).
+Multi-angle gives "appears to rotate as you circle it" without the
+~9-18 ms cost of true sprite stacking — which would bust the budget
+on 23 MHz SH-2.
+
+**Files to add:**
+- `sh_src/couch_tex.h` — 5 × 64 × 32 × 1 byte = 10 KB of texture data
+  (palette-indexed, baked by a new `tools/bake_couch.py`)
+- New `couch_t` struct + `couches[]` array in `raycast.c` next to
+  the existing `standups[]`
+- `draw_couches` function modeled on `draw_standups`, with angle
+  quantization (atan2 → 8 slots, mirror slots 5/6/7 → 3/2/1)
+- `COUCH_BASE = 72` in the palette (8 shades, slot 72-79; existing
+  layout has slot 80+ free)
+- `point_in_couches(px, py)` AABB collision wrap in `player_update`
+
+**Asset pipeline:** Blender or MagicaVoxel low-poly model →
+fixed-camera render at 8 yaw angles → `tools/bake_couch.py`
+quantizes each to the 8-color couch palette → emits `couch_tex.h`.
+Mirrors the existing `tools/extract_floorplan.py` pattern.
+
+**Scalability:** texture data is shared, only per-instance placement
+adds bytes (~20 bytes per couch). 5-6 visible couches comfortable
+per frame; 10+ would tighten budget. In practice 1-2 per major room
+(~4-8 total in the map but usually 0-2 visible).
+
+Full report from the deep-mine agent is in the session transcript;
+the recommendation maps cleanly to the existing infrastructure with
+~150 LOC + the texture data.
+
 ### Sprites populating the rooms
 - Folding chair cardboard cutout (sprite pipeline already in place)
 - Vent grate (could be drawn on a wall face or a free-standing standup)

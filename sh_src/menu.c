@@ -74,14 +74,17 @@ void menu_update(uint16_t pad) {
     *target = (uint8_t)v;
 }
 
-/* Format a number 0..255 as a 3-character right-aligned decimal,
- * trailing-padded with leading spaces. Output buffer must be at
- * least 4 bytes (3 digits + null). */
-static void fmt_u8(uint8_t v, char out[4]) {
-    out[0] = (v >= 100) ? ('0' + (v / 100))       : ' ';
-    out[1] = (v >=  10) ? ('0' + ((v / 10) % 10)) : ((v >= 100) ? '0' : ' ');
-    out[2] =              ('0' + (v % 10));
-    out[3] = 0;
+/* Format a 0..255 byte as a percentage (0..100%) in a 4-character
+ * right-aligned string with the '%' suffix. Output buffer must be at
+ * least 5 bytes. The +127 in the rounding is so e.g. 255 → 100 and
+ * 0 → 0 without off-by-one. */
+static void fmt_pct(uint8_t v, char out[5]) {
+    int pct = ((int)v * 100 + 127) / 255;
+    out[0] = (pct >= 100) ? '1' : ' ';
+    out[1] = (pct >=  10) ? ('0' + ((pct / 10) % 10)) : ' ';
+    out[2] = ('0' + (pct % 10));
+    out[3] = '%';
+    out[4] = 0;
 }
 
 /* Fill the menu rectangle with the background color. The framebuffer
@@ -127,17 +130,17 @@ void menu_render(uint8_t *fb) {
      * of padding either side. */
     font_draw_string(fb, X + 8 * 5, Y + 16, "SETTINGS", MENU_FG_COLOR);
 
-    char num[4];
+    char num[5];
 
     /* AMBIENCE row. */
-    fmt_u8(SHARED_UC->amb_volume, num);
+    fmt_pct(SHARED_UC->amb_volume, num);
     font_draw_string(fb, X + 8, Y + 32,
                      (menu_row == 0) ? "> AMBIENCE " : "  AMBIENCE ",
                      MENU_FG_COLOR);
     font_draw_string(fb, X + 8 * 13, Y + 32, num, MENU_FG_COLOR);
 
     /* FOOTSTEPS row. */
-    fmt_u8(SHARED_UC->step_volume, num);
+    fmt_pct(SHARED_UC->step_volume, num);
     font_draw_string(fb, X + 8, Y + 40,
                      (menu_row == 1) ? "> FOOTSTEPS" : "  FOOTSTEPS",
                      MENU_FG_COLOR);

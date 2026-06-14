@@ -4,43 +4,72 @@
 #include "wall_tex.h"
 #include "neander_tex.h"
 
-/* Player spawn for gameplay — south end of the corridor at col 4, looking
- * north up the long sightline toward the perimeter wall ~11 cells away.
- * Walls flank the corridor at col 3 (left) and col 5 (right), and the
- * iconic "room-within-a-room" structure (cols 5-9 rows 2-6) is visible
- * on the right side as you walk. This is the most Backrooms-feeling view
- * of the extracted geometry. */
+/* Player spawn — south end of the col-16 spine corridor in the
+ * hand-tuned 32x32 Backrooms map. Walls flank tightly at cols 15/17
+ * for the iconic "infinite hallway" first frame. The corridor opens
+ * north into a central band, then four distinct zones branch off:
+ * NW = office cubicles, NE = nested rooms, SW = twisty maze,
+ * SE = lounge with pillars. */
 player_t player = {
-    .x = FX(4.5),
-    .y = FX(12.5),
+    .x = FX(16.5),
+    .y = FX(28.5),
     .angle = 192,
 };
 
-/* 16x16 floor plan extracted from the Sketchfab Backrooms model
- * (models/original-backrooms/source/Sketchfab_2022_04_30_13_07_42.blend)
- * via tools/extract_floorplan.py. The extractor iterates every mesh face,
- * filters to wall-oriented faces (|normal.z| < 0.5) that span the wall
- * height band, and rasterizes their XY footprint into a 22x22 grid at
- * the model's native scale (~1 Blender unit per cell). This 16x16 region
- * is the top-left chunk with the perimeter walls + the canonical "room
- * within a room" structure (cols 5-9 rows 2-6) + a long N-S corridor. */
+/* Hand-tuned 32x32 Backrooms map (tools/gen_backrooms_map.py).
+ * Pivoted away from the movie.blend extraction because that geometry
+ * was either too cramped (32x32 of an 82-wide model swallowed all the
+ * doorways) or too sprawling (64x64 had doorways but felt like one
+ * long corridor in any direction). This hand-tuned map captures the
+ * "AI-generated procedural rooms" Backrooms feel by giving each
+ * cardinal direction a distinct character:
+ *
+ *   NW (rows 1-8, cols 1-13):  office cubicles — 4 small rooms with
+ *                              irregular doorways, Level-0 office floor.
+ *   NE (rows 1-8, cols 17-30): nested rooms — three concentric boxes
+ *                              ("room within a room within a room",
+ *                              the iconic Backrooms doorway shot).
+ *   CENTER (rows 10-15):       open band with pillar islands.
+ *   SW (rows 17-30, cols 1-14): twisty maze with partial walls.
+ *   SE (rows 17-30, cols 17-30): open lounge with scattered pillars
+ *                                and a couple of "stub walls" that
+ *                                make no logical sense (the uncanny
+ *                                "why is this here" Backrooms vibe).
+ *   SPAWN CORRIDOR: tight col-16 N-S corridor from row 17 to 28,
+ *                   side-doors at (15,20), (17,23), (15,26). */
 const uint8_t world_map[MAP_H][MAP_W] = {
-    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-    {1,0,0,1,0,1,0,0,0,1,0,0,0,0,0,1},
-    {1,0,0,1,0,1,1,0,0,1,0,0,0,0,0,1},
-    {1,0,0,1,0,1,1,0,0,1,0,0,0,0,0,1},
-    {1,0,0,1,0,1,1,0,0,1,0,0,0,0,0,1},
-    {1,0,0,1,0,1,1,1,1,1,0,0,0,0,0,1},
-    {1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1},
-    {1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1},
-    {1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1},
-    {1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1},
-    {1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1},
-    {1,0,0,1,0,0,0,0,0,0,0,0,1,1,0,1},
-    {1,0,0,1,0,0,0,1,0,1,1,1,1,1,1,1},
-    {1,0,0,1,0,0,0,1,0,1,1,1,1,1,1,1},
-    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+    {1,0,0,0,0,0,0,0,1,0,0,0,1,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,1},
+    {1,0,0,0,1,0,0,0,1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,1,0,1},
+    {1,1,0,1,1,1,0,1,1,1,1,0,1,1,1,0,0,0,1,0,0,1,1,1,1,1,1,0,0,1,0,1},
+    {1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0,0,0,0,0,0,1,0,0,0,0,1,0,0,1,0,1},
+    {1,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,0,0,1,0,0,1,1,1,0,1,1,0,0,1,0,1},
+    {1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,1,1,1,1,1,1,0,1},
+    {1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+    {1,1,0,1,1,1,1,1,1,1,1,1,1,1,0,1,0,1,1,1,1,1,1,0,1,1,1,1,0,1,1,1},
+    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+    {1,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,1,0,0,0,0,1,1,0,0,0,0,0,0,0,1},
+    {1,0,0,0,0,0,0,0,1,1,0,0,0,0,1,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,1},
+    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+    {1,1,0,1,1,1,1,1,0,1,1,1,1,1,1,0,0,1,1,1,1,1,0,1,1,1,1,1,0,1,1,1},
+    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,0,0,0,0,1,0,0,0,0,0,0,1},
+    {1,0,1,1,1,1,1,0,0,1,1,1,1,1,0,1,0,1,0,1,0,0,0,0,1,0,1,0,0,0,0,1},
+    {1,0,0,0,0,0,1,0,0,0,0,1,0,0,0,1,0,1,0,0,0,0,1,0,1,0,0,0,0,0,0,1},
+    {1,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,1,0,0,1},
+    {1,0,0,0,0,0,1,0,0,0,0,1,0,0,0,1,0,1,0,0,0,0,0,1,0,0,0,0,0,0,0,1},
+    {1,0,1,1,1,0,0,1,1,1,1,1,1,1,0,1,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,1},
+    {1,0,0,0,1,0,0,0,0,0,0,0,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1},
+    {1,0,0,0,1,1,1,1,1,1,0,0,0,1,0,1,0,1,0,0,0,0,0,0,1,0,0,0,0,0,0,1},
+    {1,0,0,0,1,0,0,0,0,1,0,0,0,1,0,1,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,1},
+    {1,0,1,1,1,1,1,0,0,1,1,1,1,1,0,0,0,1,0,0,0,0,0,0,0,0,0,0,1,0,0,1},
+    {1,0,0,0,1,0,0,0,0,1,0,0,0,0,0,1,0,1,0,1,1,1,0,0,0,1,0,0,0,0,0,1},
+    {1,0,0,0,1,1,1,1,0,1,0,1,1,1,0,1,0,1,0,0,0,1,0,0,0,0,0,0,0,0,0,1},
+    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1},
+    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
 };
 
 /* Palette layout (8bpp, 256 entries):
@@ -88,12 +117,11 @@ typedef struct {
 } standup_t;
 
 static const standup_t standups[] = {
-    /* The neanderthal cardboard cutout — facing south, faces the player
-     * coming from the south. */
-    { FX(4.5), FX(8.5), 64,  0 },
-    /* The watcher — far north end of the spawn corridor. Renders as a
-     * dark silhouette in the haze, vanishes when you get within ~3 cells. */
-    { FX(4.5), FX(2.5), 64,  1 },
+    /* Neanderthal ~5 cells north of spawn in the col-16 spine corridor. */
+    { FX(16.5), FX(23.5), 64,  0 },
+    /* Watcher far north end, just past the central band — visible only
+     * at distance, dissolves into haze when approached. */
+    { FX(16.5), FX(12.5), 64,  1 },
 };
 #define NUM_STANDUPS (int)(sizeof(standups) / sizeof(standups[0]))
 
@@ -104,12 +132,17 @@ static const standup_t standups[] = {
  * as actual drop-ceiling lighting rather than "lights everywhere". */
 typedef struct { fx_t x, y; } light_t;
 static const light_t lights[] = {
-    { FX(4.5),  FX(11.5) },   /* close to spawn, draws the eye forward */
-    { FX(2.5),  FX(9.5)  },   /* mid spine west */
-    { FX(10.5), FX(9.5)  },   /* mid spine east */
-    { FX(8.5),  FX(7.5)  },   /* center spine */
-    { FX(12.5), FX(5.5)  },   /* far interior east */
-    { FX(1.5),  FX(5.5)  },   /* far N corridor west */
+    /* Down the spawn corridor — three lights stretching north from
+     * spawn give the iconic "fluorescent panels recede toward vanishing
+     * point" Backrooms shot. */
+    { FX(16.5), FX(26.5) },   /* close to spawn */
+    { FX(16.5), FX(21.5) },
+    { FX(16.5), FX(15.5) },   /* far end of corridor, in central band */
+    /* One per surrounding zone, drawing the eye outward. */
+    { FX(6.5),  FX(6.5)  },   /* NW office cubicles */
+    { FX(24.5), FX(5.5)  },   /* NE inside the nested rooms */
+    { FX(24.5), FX(22.5) },   /* SE lounge */
+    { FX(6.5),  FX(23.5) },   /* SW maze */
 };
 #define NUM_LIGHTS (int)(sizeof(lights) / sizeof(lights[0]))
 
@@ -432,61 +465,72 @@ static void draw_lights(uint8_t *fb,
     static uint32_t light_frame = 0;
     light_frame++;
 
+    /* Lights are now CEILING TILES — flat axis-aligned rectangles in
+     * the ceiling plane at world position (lx, ly). Each tile spans
+     * (lx-HALF .. lx+HALF) × (ly-HALF .. ly+HALF). We project all 4
+     * corners to screen and fill the bounding rectangle, so the lit
+     * area tracks the same perspective as the surrounding ceiling
+     * grid lines instead of being a separate billboard sprite. */
+    const fx_t TILE_HALF = FX(0.25);   /* 0.5-unit panel = 2 small grid cells */
+
     for (int i = 0; i < NUM_LIGHTS; i++) {
-        fx_t sx = lights[i].x - player.x;
-        fx_t sy = lights[i].y - player.y;
+        fx_t lx = lights[i].x;
+        fx_t ly = lights[i].y;
 
-        fx_t transformX = FX_MUL(inv_det,
-                            FX_MUL( dirY,  sx) - FX_MUL( dirX,  sy));
-        fx_t transformY = FX_MUL(inv_det,
-                            FX_MUL(-planeY, sx) + FX_MUL( planeX, sy));
-        if (transformY < FX(0.5))     continue;     /* behind / too close */
-        if (transformY >= MAX_VIEW_DIST) continue;  /* beyond fog */
+        /* Center-distance check for view culling. */
+        fx_t cx = lx - player.x;
+        fx_t cy = ly - player.y;
+        fx_t centerY = FX_MUL(inv_det,
+                              FX_MUL(-planeY, cx) + FX_MUL(planeX, cy));
+        if (centerY < FX(0.5)) continue;
+        if (centerY >= MAX_VIEW_DIST) continue;
 
-        /* Project to screen.
-         * screenX = SCREEN_W/2 + (transformX/transformY) * (SCREEN_W/2)
-         * screenY = SCREEN_H/2 - (SCREEN_H/2)/transformY
-         *   (lights are mounted at ceiling height; sits above horizon). */
-        fx_t ratio = FX_DIV(transformX, transformY);
-        int screenX = (SCREEN_W >> 1)
-                    + (int)(((int32_t)(SCREEN_W >> 1) * ratio) >> FX_SHIFT);
-        int yoff   = (int)(((int32_t)(SCREEN_H >> 1) << FX_SHIFT) / transformY);
-        int screenY = (SCREEN_H >> 1) - yoff;
+        /* Project all 4 corners. */
+        fx_t corner_dx[4] = { -TILE_HALF, +TILE_HALF, +TILE_HALF, -TILE_HALF };
+        fx_t corner_dy[4] = { -TILE_HALF, -TILE_HALF, +TILE_HALF, +TILE_HALF };
 
-        int dist_int = FX_INT(transformY);
-        if (dist_int < 1) dist_int = 1;
-        /* Big recessed drop-ceiling panels, 2:1 aspect ratio. Matched to
-         * the lobby reference photo where close panels span roughly 1/3
-         * of the screen width and read as iconic Backrooms fluorescent
-         * ceiling tiles rather than little tubes. */
-        int width  = (SCREEN_W * 5 / 16) / dist_int;
-        int height = width >> 1;
-        if (width  < 3) width  = 3;
-        if (height < 2) height = 2;
+        int min_x = SCREEN_W, max_x = -1;
+        int min_y = SCREEN_H, max_y = -1;
+        int valid = 1;
+        for (int k = 0; k < 4; k++) {
+            fx_t rx = (lx + corner_dx[k]) - player.x;
+            fx_t ry = (ly + corner_dy[k]) - player.y;
+            fx_t tX = FX_MUL(inv_det, FX_MUL( dirY,  rx) - FX_MUL( dirX,  ry));
+            fx_t tY = FX_MUL(inv_det, FX_MUL(-planeY, rx) + FX_MUL( planeX, ry));
+            if (tY < FX(0.2)) { valid = 0; break; }
 
-        int x0 = screenX - width  / 2;
-        int x1 = screenX + width  / 2;
-        int y0 = screenY - height / 2;
-        int y1 = screenY + height / 2;
-        if (x0 < 0)         x0 = 0;
-        if (x1 >= SCREEN_W) x1 = SCREEN_W - 1;
-        if (y0 < 0)         y0 = 0;
-        if (y1 >= SCREEN_H) y1 = SCREEN_H - 1;
+            fx_t ratio = FX_DIV(tX, tY);
+            int sx = (SCREEN_W >> 1)
+                   + (int)(((int32_t)(SCREEN_W >> 1) * ratio) >> FX_SHIFT);
+            int yoff = (int)(((int32_t)(SCREEN_H >> 1) << FX_SHIFT) / tY);
+            int sy = (SCREEN_H >> 1) - yoff;
 
-        /* Per-light flicker: pseudo-random brightness state from LCG of
-         * (frame, light_index). Most frames the light is fully on; a small
-         * fraction it dims for one frame. */
+            if (sx < min_x) min_x = sx;
+            if (sx > max_x) max_x = sx;
+            if (sy < min_y) min_y = sy;
+            if (sy > max_y) max_y = sy;
+        }
+        if (!valid) continue;
+
+        if (min_x < 0)         min_x = 0;
+        if (max_x >= SCREEN_W) max_x = SCREEN_W - 1;
+        if (min_y < 0)         min_y = 0;
+        if (max_y >= SCREEN_H) max_y = SCREEN_H - 1;
+        if (max_x < min_x || max_y < min_y) continue;
+
+        /* Per-light flicker (unchanged). */
         uint32_t r = light_frame * 1103515245u + i * 12347u;
         int roll = (r >> 24) & 0x1F;
         uint8_t color;
-        if      (roll < 2)  color = LIGHT_BASE + 2;   /* deep dim */
-        else if (roll < 5)  color = LIGHT_BASE + 1;   /* slight dim */
-        else                color = LIGHT_BASE + 0;   /* full on */
+        if      (roll < 2)  color = LIGHT_BASE + 2;
+        else if (roll < 5)  color = LIGHT_BASE + 1;
+        else                color = LIGHT_BASE + 0;
 
-        for (int x = x0; x <= x1; x++) {
-            if (transformY >= wall_dist[x]) continue;  /* wall in front */
-            uint8_t *p = fb + y0 * SCREEN_W + x;
-            for (int y = y0; y <= y1; y++) {
+        /* Paint the bounding rectangle, z-tested against walls per column. */
+        for (int x = min_x; x <= max_x; x++) {
+            if (centerY >= wall_dist[x]) continue;
+            uint8_t *p = fb + min_y * SCREEN_W + x;
+            for (int y = min_y; y <= max_y; y++) {
                 *p = color;
                 p += SCREEN_W;
             }

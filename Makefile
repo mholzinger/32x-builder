@@ -80,8 +80,12 @@ SHOBJS += $(SHCPPS:.cpp=.o)
 .PHONY: all release debug deploy
 
 # Override on command line: make deploy MISTER=root@othermister.local
+# Note: MiSTer's USB drives renumber on reboot — what was usb0 may become
+# usb1, usb2, etc. If `make deploy` errors with "No such file or directory",
+# ssh into the MiSTer and `find /media -name S32X -type d` to locate the
+# current path, then `make deploy MISTER_DIR=/media/usb<N>/Games/S32X`.
 MISTER     ?= root@mister.office.local
-MISTER_DIR ?= /media/usb0/games/S32X
+MISTER_DIR ?= /media/usb1/Games/S32X
 
 all: release
 

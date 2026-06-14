@@ -509,18 +509,22 @@ void raycast_render(void) {
             fx_t wxR_s = wxR * CEIL_GRID_DENSITY;
             fx_t wyL_s = wyL * CEIL_GRID_DENSITY;
             fx_t wyR_s = wyR * CEIL_GRID_DENSITY;
-            /* World-X grid crossings. */
+            /* Hoist `y * SCREEN_W` once per row. */
+            uint8_t *row_p = fb + y * SCREEN_W;
+            /* World-X grid crossings. Compute SCREEN_W/dX_s once per row
+             * so each crossing reduces to a 32-bit mul + shift instead of
+             * a 64-bit FX_DIV. */
             fx_t dX = wxR_s - wxL_s;
             if (dX != 0) {
                 int lo = FX_INT(wxL_s), hi = FX_INT(wxR_s);
                 if (lo > hi) { int t = lo; lo = hi; hi = t; }
-                for (int target = lo + 1; target <= hi; target++) {
-                    fx_t num = ((fx_t)target << FX_SHIFT) - wxL_s;
-                    fx_t t   = FX_DIV(num, dX);
-                    if (t < 0 || t >= FX_ONE) continue;
-                    int col = (int)(((int32_t)t * SCREEN_W) >> FX_SHIFT);
-                    if (col >= 0 && col < SCREEN_W) {
-                        fb[y * SCREEN_W + col] = grid_c;
+                if (lo + 1 <= hi) {
+                    fx_t scale = FX_DIV((fx_t)SCREEN_W << FX_SHIFT, dX);
+                    for (int target = lo + 1; target <= hi; target++) {
+                        fx_t num = ((fx_t)target << FX_SHIFT) - wxL_s;
+                        /* col = (num/dX) * SCREEN_W = num * (SCREEN_W/dX). */
+                        int col = (int)(((int64_t)num * scale) >> (FX_SHIFT * 2));
+                        if (col >= 0 && col < SCREEN_W) row_p[col] = grid_c;
                     }
                 }
             }
@@ -529,13 +533,12 @@ void raycast_render(void) {
             if (dY != 0) {
                 int lo = FX_INT(wyL_s), hi = FX_INT(wyR_s);
                 if (lo > hi) { int t = lo; lo = hi; hi = t; }
-                for (int target = lo + 1; target <= hi; target++) {
-                    fx_t num = ((fx_t)target << FX_SHIFT) - wyL_s;
-                    fx_t t   = FX_DIV(num, dY);
-                    if (t < 0 || t >= FX_ONE) continue;
-                    int col = (int)(((int32_t)t * SCREEN_W) >> FX_SHIFT);
-                    if (col >= 0 && col < SCREEN_W) {
-                        fb[y * SCREEN_W + col] = grid_c;
+                if (lo + 1 <= hi) {
+                    fx_t scale = FX_DIV((fx_t)SCREEN_W << FX_SHIFT, dY);
+                    for (int target = lo + 1; target <= hi; target++) {
+                        fx_t num = ((fx_t)target << FX_SHIFT) - wyL_s;
+                        int col = (int)(((int64_t)num * scale) >> (FX_SHIFT * 2));
+                        if (col >= 0 && col < SCREEN_W) row_p[col] = grid_c;
                     }
                 }
             }

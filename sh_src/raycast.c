@@ -1,7 +1,6 @@
 #include "mars.h"
 #include "raycast.h"
 #include "sin_table.h"
-#include "wall_tex.h"
 
 /* Player spawn — west end of the main east-west spine, facing east. */
 player_t player = {
@@ -44,9 +43,12 @@ const uint8_t world_map[MAP_H][MAP_W] = {
 #define CEIL_BASE    33
 #define SHADE_LEVELS 16
 
-/* Wall texture comes from wall_tex.h (generated from images/walltile.jpg). */
-#define TEX_W WALL_TEX_WIDTH
-#define TEX_H WALL_TEX_HEIGHT
+/* Wall texture: procedural Backrooms chevron pattern, built at init.
+ * 16x16 fits in cache; the pattern is hand-shaped to read as wallpaper
+ * even at the small size (the downsampled JPG was muddy here). */
+#define TEX_W 16
+#define TEX_H 16
+static uint8_t wall_tex[TEX_H][TEX_W];
 
 /* How many times the wallpaper tile repeats per 1-unit map cell.
  * TEX_W/H must be powers of 2 so the wrap can be a cheap bitmask. */
@@ -129,6 +131,31 @@ static inline volatile uint8_t *fb_pixels(void) {
     return (volatile uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
 }
 
+/* Backrooms chevron wallpaper, 16x16:
+ *   - Two 8-col-wide vertical panels separated by a dark vertical seam
+ *   - Each panel has chevrons (V-shapes pointing up) every 4 rows
+ *   - Chevron tip at panel column 4, legs slope to cols (4-y, 4+y)
+ *   - Values are shade-additions (0..15) added to the wall distance shade
+ * Hand-shaped so the pattern stays crisp at low texture resolution. */
+static void build_wall_tex(void) {
+    for (int y = 0; y < TEX_H; y++) {
+        for (int x = 0; x < TEX_W; x++) {
+            int panel_x = x & 7;          /* 0..7 within each 8-col panel */
+            int chev_y  = y & 3;          /* 0..3 within each 4-row chevron */
+            uint8_t v = 1;                /* base background (subtle shade) */
+            if (panel_x == 0) v = 3;      /* vertical seam between panels */
+            /* Chevron arms: V pointing up, tip at panel_x=4 row=0 */
+            int leftArm  = 4 - chev_y;
+            int rightArm = 4 + chev_y;
+            if ((panel_x == leftArm || panel_x == rightArm)
+                && panel_x >= 1 && panel_x <= 7) {
+                if (v < 4) v = 4;         /* chevron line darkening */
+            }
+            wall_tex[y][x] = v;
+        }
+    }
+}
+
 /* Drop-ceiling pattern: 1-pixel dark grid line at panel edges, light
  * interior. At 16x16 a 1px edge is the right proportion. */
 static void build_ceil_tex(void) {
@@ -144,6 +171,7 @@ static void build_ceil_tex(void) {
 void raycast_init(void) {
     build_palette();
     build_shading_tables();
+    build_wall_tex();
     build_ceil_tex();
 }
 

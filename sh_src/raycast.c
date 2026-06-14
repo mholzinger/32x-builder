@@ -635,17 +635,30 @@ void raycast_render(void) {
         fx_t tex_step = ((fx_t)(TEX_H * WALL_TILE_Y) << FX_SHIFT) / lineHeight;
         fx_t tex_pos  = (fx_t)(drawStart - wall_top) * tex_step;
 
-        /* Stride pointer — avoids a multiply (y * SCREEN_W) per pixel. */
-        volatile uint8_t *p = fb + col + drawStart * SCREEN_W;
-        for (int y = drawStart; y <= drawEnd; y++) {
-            int texY = (tex_pos >> FX_SHIFT) & TEX_H_MASK;
-            int s = wall_shade + wall_tex[texY][texX];
+        /* Per-column shade LUT: (wall_shade + wall_tex[ty][texX]) clamped, mapped
+         * to a palette index. Since texX and wall_shade are constant for this
+         * column, compute the 16-entry table once and let the inner loop reduce
+         * to a single load + write per pixel.
+         *
+         * Pointer is non-volatile: the 32X framebuffer at 0x24000000 isn't SH-2
+         * cached, so writes go through directly. A compiler barrier at the end
+         * of raycast_render commits any reordered stores before swapBuffers. */
+        uint8_t shade_lut[TEX_H];
+        for (int ty = 0; ty < TEX_H; ty++) {
+            int s = wall_shade + wall_tex[ty][texX];
             if (s >= SHADE_LEVELS) s = SHADE_LEVELS - 1;
-            *p = WALL_BASE + s;
+            shade_lut[ty] = (uint8_t)(WALL_BASE + s);
+        }
+        uint8_t *p = (uint8_t *)fb + col + drawStart * SCREEN_W;
+        for (int y = drawStart; y <= drawEnd; y++) {
+            *p = shade_lut[(tex_pos >> FX_SHIFT) & TEX_H_MASK];
             p += SCREEN_W;
             tex_pos += tex_step;
         }
     }
+    /* Commit any reordered stores from the non-volatile draw loops before
+     * the next swapBuffers() makes them visible via the VDP page flip. */
+    __asm__ __volatile__("" ::: "memory");
 
     draw_standups(fb, dirX, dirY, planeX, planeY);
     draw_lights(fb, dirX, dirY, planeX, planeY);

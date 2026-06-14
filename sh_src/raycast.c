@@ -664,13 +664,22 @@ void raycast_render(void) {
         int drawStart = wall_top < 0 ? 0 : wall_top;
         int drawEnd   = wall_bot >= SCREEN_H ? SCREEN_H - 1 : wall_bot;
 
-        /* Shade scaled so walls reach max darkness at MAX_VIEW_DIST. Uses
-         * the FRACTIONAL perpDist instead of FX_INT(perpDist) so the shade
-         * transitions land at arbitrary sub-cell distances. With integer
-         * cell truncation, every 1.0 unit of distance jumped 2-3 shade
-         * levels at the same screen position, creating visible bands as
-         * you walked. Sub-cell precision makes the gradient feel continuous. */
-        int wall_shade = (int)((perpDist * (SHADE_LEVELS - 1)) / MAX_VIEW_DIST);
+        /* Piecewise shade curve: walls stay bright while detail fades, then
+         * darken in the final zone. This separates the two effects in
+         * distance so the mid-range reads as "flat yellow" (the chevron
+         * has faded but darkening hasn't started yet) rather than the
+         * muddy avocado you get when both happen together.
+         *
+         *   0..3.5 cells: barely-darkening from shade 0 to 2 (still bright)
+         *   3.5..6:        rapid darken from shade 2 to 15 (the actual fog) */
+        int wall_shade;
+        if (perpDist < FX(3.5)) {
+            wall_shade = (int)((perpDist * 2) / FX(3.5));
+        } else {
+            fx_t past = perpDist - FX(3.5);
+            fx_t span = MAX_VIEW_DIST - FX(3.5);
+            wall_shade = 2 + (int)((past * 13) / span);
+        }
         if (side == 1) wall_shade += 1;
         if (wall_shade < 0) wall_shade = 0;
 
@@ -702,15 +711,15 @@ void raycast_render(void) {
          * Pointer is non-volatile: the 32X framebuffer at 0x24000000 isn't SH-2
          * cached, so writes go through directly. A compiler barrier at the end
          * of raycast_render commits any reordered stores before swapBuffers. */
-        /* Detail falloff using the FRACTIONAL perpDist for the same reason
-         * as the shade ramp — keeps the transition smooth instead of
-         * snapping at integer cell boundaries. */
+        /* Detail falloff: chevron fades over 2..3.5 cells. By cell 3.5 the
+         * wallpaper is "just flat yellow" — this is the brief reveal-zone
+         * before the wall_shade curve takes over and darkens it. */
         int detail_factor;
-        if (perpDist < FX(3)) {
+        if (perpDist < FX(2)) {
             detail_factor = 16;
-        } else if (perpDist < MAX_VIEW_DIST) {
-            fx_t remaining = MAX_VIEW_DIST - perpDist;
-            fx_t span      = MAX_VIEW_DIST - FX(3);
+        } else if (perpDist < FX(3.5)) {
+            fx_t remaining = FX(3.5) - perpDist;
+            fx_t span      = FX(1.5);
             detail_factor  = (int)((remaining * 16) / span);
             if (detail_factor < 0)  detail_factor = 0;
             if (detail_factor > 16) detail_factor = 16;

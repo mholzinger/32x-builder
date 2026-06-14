@@ -4,6 +4,7 @@
 #include "sh2_asm.h"
 #include "sin_table.h"
 #include "wall_tex.h"
+#include "wall_tex_hi.h"
 #include "neander_tex.h"
 #include "neander_tex_hi.h"
 
@@ -112,9 +113,11 @@ const uint8_t world_map[MAP_H][MAP_W] = {
  * detection so a boundary at every (1/CEIL_GRID_DENSITY) units triggers. */
 #define CEIL_GRID_DENSITY 4
 
-/* Wallpaper chevron pattern strength at close range, 0-16. Reverted to
- * the original 16 — the 10 attempt didn't read well on hardware. */
-#define WALL_PATTERN_MAX 16
+/* Wallpaper chevron pattern strength at close range, 0-16. 8 caps
+ * the chevron-vs-base shade gap at 2 levels (out of 16) — subtle
+ * enough that the wall reads as yellow first, motif second, matching
+ * how an actual Backrooms wallpaper sits against the yellow base. */
+#define WALL_PATTERN_MAX 8
 
 /* Per-column z-buffer captured during wall draw so the light billboards
  * can z-test against walls. 0x7FFFFFFF = no wall hit (light wins).
@@ -174,9 +177,18 @@ static const light_t lights[] = {
 #define NUM_LIGHTS (int)(sizeof(lights) / sizeof(lights[0]))
 
 /* How many times the wallpaper tile repeats per 1-unit map cell.
- * TEX_W/H must be powers of 2 so the wrap can be a cheap bitmask. */
-#define WALL_TILE_X 16
-#define WALL_TILE_Y 16
+ * TEX_W/H must be powers of 2 so the wrap can be a cheap bitmask.
+ * The new source (square_walltile_composite.jpg) is a designed
+ * seamless tile with 8 chevron ribbons baked into the frame — one
+ * tile per cell renders 8 ribbons per wall cell with clean tile
+ * seams (left edge matches right edge). Lo and hi share the same
+ * tile rate; the LOD swap is purely a resolution upgrade per
+ * source repeat. */
+#define WALL_TILE_X        4
+#define WALL_TILE_Y        4
+#define WALL_TILE_HI_X     4
+#define WALL_TILE_HI_Y     4
+#define WALL_LOD_THRESHOLD FX(2)
 #define TEX_W_MASK  (TEX_W - 1)
 #define TEX_H_MASK  (TEX_H - 1)
 
@@ -864,15 +876,43 @@ void raycast_draw_walls(int col_start, int col_end) {
             fx_t span = MAX_VIEW_DIST - FX(3.5);
             wall_shade = 2 + (int)((past * 13) / span);
         }
-        if (side == 1) wall_shade += 1;
+        /* Bump all walls one shade darker so the wall reads as the
+         * muted yellow of an actual Backrooms hallway instead of the
+         * brightest palette entry. Was previously applied as a side==1
+         * depth cue (one wall darker than the other); now uniform on
+         * both sides so the wallpaper reads consistently and the
+         * chevron sits in the same perceptual region everywhere. */
+        wall_shade += 1;
         if (wall_shade < 0) wall_shade = 0;
+
+        /* Per-column LOD: hi-res chevron when the wall hit is close
+         * enough to read the motif, lo-res noise otherwise. Adjacent
+         * columns can land on opposite sides of the threshold — that's
+         * the seam tradeoff we accepted up front. */
+        const uint8_t *tex_data;
+        int tex_w, tex_h, tile_x, tile_y;
+        if (perpDist < WALL_LOD_THRESHOLD) {
+            tex_data = (const uint8_t *)wall_tex_hi;
+            tex_w    = WALL_TEX_HI_WIDTH;
+            tex_h    = WALL_TEX_HI_HEIGHT;
+            tile_x   = WALL_TILE_HI_X;
+            tile_y   = WALL_TILE_HI_Y;
+        } else {
+            tex_data = (const uint8_t *)wall_tex;
+            tex_w    = WALL_TEX_WIDTH;
+            tex_h    = WALL_TEX_HEIGHT;
+            tile_x   = WALL_TILE_X;
+            tile_y   = WALL_TILE_Y;
+        }
+        const int tex_w_mask = tex_w - 1;
+        const int tex_h_mask = tex_h - 1;
 
         fx_t wall_hit = (side == 0)
             ? (py + FX_MUL(perpDist, rayDirY))
             : (px + FX_MUL(perpDist, rayDirX));
         wall_hit -= (fx_t)FX_INT(wall_hit) << FX_SHIFT;
-        int texX = (int)(((int64_t)wall_hit * (TEX_W * WALL_TILE_X)) >> FX_SHIFT)
-                   & TEX_W_MASK;
+        int texX = (int)(((int64_t)wall_hit * (tex_w * tile_x)) >> FX_SHIFT)
+                   & tex_w_mask;
 
         int lineHeight = (int)divu_read();
 
@@ -881,11 +921,11 @@ void raycast_draw_walls(int col_start, int col_end) {
         int drawStart = wall_top < 0 ? 0 : wall_top;
         int drawEnd   = wall_bot >= SCREEN_H ? SCREEN_H - 1 : wall_bot;
 
-        /* DIVU latency hide #2: start tex_step = (TEX_H*WALL_TILE_Y
+        /* DIVU latency hide #2: start tex_step = (tex_h*tile_y
          * << 16) / lineHeight, then do detail_factor + shade_lut in
          * parallel. The shade_lut loop alone is ~256 cycles, far
          * exceeding the 39-cycle DIVU latency. */
-        divu_start_u32((uint32_t)((TEX_H * WALL_TILE_Y) << FX_SHIFT),
+        divu_start_u32((uint32_t)((tex_h * tile_y) << FX_SHIFT),
                        (uint32_t)lineHeight);
 
         int detail_factor;
@@ -900,9 +940,13 @@ void raycast_draw_walls(int col_start, int col_end) {
         } else {
             detail_factor = 0;
         }
-        uint8_t shade_lut[TEX_H];
-        for (int ty = 0; ty < TEX_H; ty++) {
-            int pattern = (wall_tex[ty][texX] * detail_factor) >> 4;
+        /* Column-major wall_tex: tex_data[texX * tex_h ..] is the
+         * contiguous tex_h-byte strip this loop walks. Sized for the
+         * largest possible TEX_H (hi-res 64), tiny stack cost. */
+        const uint8_t *wall_col = tex_data + texX * tex_h;
+        uint8_t shade_lut[WALL_TEX_HI_HEIGHT];
+        for (int ty = 0; ty < tex_h; ty++) {
+            int pattern = (wall_col[ty] * detail_factor) >> 4;
             int s = wall_shade + pattern;
             if (s >= SHADE_LEVELS) s = SHADE_LEVELS - 1;
             shade_lut[ty] = (uint8_t)(WALL_BASE + s);
@@ -912,7 +956,7 @@ void raycast_draw_walls(int col_start, int col_end) {
         fx_t tex_pos  = (fx_t)(drawStart - wall_top) * tex_step;
         uint8_t *p = (uint8_t *)fb + col + drawStart * SCREEN_W;
         for (int y = drawStart; y <= drawEnd; y++) {
-            *p = shade_lut[(tex_pos >> FX_SHIFT) & TEX_H_MASK];
+            *p = shade_lut[(tex_pos >> FX_SHIFT) & tex_h_mask];
             p += SCREEN_W;
             tex_pos += tex_step;
         }

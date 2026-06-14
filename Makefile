@@ -77,7 +77,7 @@ SHOBJS  = $(SHSS:.s=.o)
 SHOBJS += $(SHCS:.c=.o)
 SHOBJS += $(SHCPPS:.cpp=.o)
 
-.PHONY: all release debug deploy
+.PHONY: all release debug deploy deploy-tv
 
 # Override on command line: make deploy MISTER=root@othermister.local
 # Note: MiSTer's USB drives renumber on reboot — what was usb0 may become
@@ -86,6 +86,7 @@ SHOBJS += $(SHCPPS:.cpp=.o)
 # current path, then `make deploy MISTER_DIR=/media/usb<N>/Games/S32X`.
 MISTER     ?= root@mister.office.local
 MISTER_DIR ?= /media/usb1/Games/S32X
+MISTER_TV  ?= root@mister.tv.local
 
 all: release
 
@@ -97,6 +98,14 @@ release: $(MDTARGET).bin $(MDTARGET).lst $(TARGET).32x $(TARGET).lst
 deploy: release
 	@echo "==> Copying $(TARGET).32x to $(MISTER):$(MISTER_DIR)/"
 	@scp $(TARGET).32x $(MISTER):$(MISTER_DIR)/backrooms.32x
+
+# TV MiSTer: probe usb0 first (typical layout after a clean boot), fall
+# back to usb1 if the drives renumbered. Avoids the manual `find` dance
+# the office target's comment describes.
+deploy-tv: release
+	@DIR=$$(ssh $(MISTER_TV) 'for n in 0 1; do d=/media/usb$$n/Games/S32X; [ -d "$$d" ] && echo "$$d" && exit 0; done; exit 1') && \
+		echo "==> Copying $(TARGET).32x to $(MISTER_TV):$$DIR/" && \
+		scp $(TARGET).32x $(MISTER_TV):$$DIR/backrooms.32x
 
 # Gens-KMod, BlastEm and UMDK support GDB tracing, enabled by this target
 debug: MDEXTRA = -g -Og -DDEBUG -DKDEBUG

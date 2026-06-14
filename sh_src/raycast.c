@@ -3,12 +3,16 @@
 #include "sin_table.h"
 #include "wall_tex.h"
 
-/* Player spawn — in the long N-S corridor on the west side, facing north
- * toward the iconic Backrooms "room within a room" structure. */
+/* Player spawn matches the camera saved inside the .blend file (the POV
+ * from which images/reference_render.jpg was likely shot).
+ *   Blender camera: pos=(-9.87,-1.00,1.29) forward=(0.98,0.10,-0.15)
+ *   Mapped to our chunk:  col=0.81 row=9.56  angle=4
+ * Camera sits right against the west wall; snap east into the floor cell
+ * just inside it. Same eye level, same look direction. */
 player_t player = {
-    .x = FX(4.5),
-    .y = FX(7.5),
-    .angle = 192,
+    .x = FX(1.2),
+    .y = FX(9.6),
+    .angle = 4,
 };
 
 /* 16x16 floor plan extracted from the Sketchfab Backrooms model

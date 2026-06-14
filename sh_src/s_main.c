@@ -1,6 +1,7 @@
 #include "mars.h"
 #include "raycast.h"
 #include "shared.h"
+#include "sound.h"
 
 /* Slave SH-2 entry point. The crt0 jumps here once the master clears
  * the slave's S_OK wait at COMM4 — see m_main.c for the release fix.
@@ -10,6 +11,13 @@
  * increments every iteration so the master's debug indicator can tell
  * "slave alive" from "slave hung". */
 void s_main(void) {
+    /* Initialize ambient looping audio once at slave startup. PWM
+     * hardware is configured here, DMA channel 1 streams the buffer
+     * into MARS_PWM_MONO, and the DMA-complete IRQ (see mars_start.s
+     * slav_dma_irq) re-arms it forever. The polling loop below then
+     * runs unaffected — SH-2 interrupts preempt it cleanly. */
+    amb_sound_init();
+
     for (;;) {
         /* Throttled COMM4 poll. A tight poll (read-compare-branch
          * with no delay) hits the COMM4 MMIO ~3M times/sec, which on

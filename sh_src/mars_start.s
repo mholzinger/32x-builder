@@ -539,6 +539,8 @@ slav_irq:
 		bt      slav_cmd_irq
 		cmp/eq  #0x38,r0
 		bt      slav_vres_irq
+		cmp/eq  #0x10,r0
+		bt      slav_dma_irq
 
 		mov.l   @r15+,r0
 		rte
@@ -627,6 +629,53 @@ slav_pwm_irq:
 		.align  2
 spi_mars_adapter:
 		.long   0x20004000
+
+! Slave DMA-complete IRQ — fires on DMA channel 1 transfer end. Save
+! callee-saved set, clear CHCR1.TE (read-then-write-zero is required
+! by SH-2 hardware), call into _amb_dma_handler (sound.c) which re-
+! arms DMA1 with the same buffer to keep the ambient loop going.
+slav_dma_irq:
+		mov.l   r1,@-r15
+		mov.l   r2,@-r15
+		mov.l   r3,@-r15
+		mov.l   r4,@-r15
+		mov.l   r5,@-r15
+		mov.l   r6,@-r15
+		mov.l   r7,@-r15
+		sts.l   pr,@-r15
+		sts.l   mach,@-r15
+		sts.l   macl,@-r15
+
+		! Clear CHCR1.TE (read first per the hw protocol, then write 0)
+		mov.l   sdi_chcr1,r1
+		mov.l   @r1,r0
+		mov     #0,r0
+		mov.l   r0,@r1
+
+		! Call C handler (re-arms DMA1)
+		mov.l   sdi_handler,r0
+		jsr     @r0
+		nop
+
+		lds.l   @r15+,macl
+		lds.l   @r15+,mach
+		lds.l   @r15+,pr
+		mov.l   @r15+,r7
+		mov.l   @r15+,r6
+		mov.l   @r15+,r5
+		mov.l   @r15+,r4
+		mov.l   @r15+,r3
+		mov.l   @r15+,r2
+		mov.l   @r15+,r1
+		mov.l   @r15+,r0
+		rte
+		nop
+
+		.align  2
+sdi_chcr1:
+		.long   0xFFFFFF9C      /* SH2_DMA_CHCR1 */
+sdi_handler:
+		.long   _amb_dma_handler
 
 slav_vres_irq:
 		mov.l   svri_mars_adapter,r1

@@ -125,6 +125,25 @@ distinct zones (NW office cubicles, NE nested rooms, central band
 with pillars, SW twisty maze, SE lounge with stub walls) all meeting
 at the spawn. Plays well on real hardware.
 
+### In-game settings menu
+**Status:** planned — audio volume the primary motivator.
+
+Accessible via START (pause). Settings to expose:
+- **Audio volume** — applies a runtime gain to the PWM samples
+  before they're DMA'd. Simplest: pre-multiply each sample as we
+  fill the buffer (when we move from straight ROM-DMA to a slave-
+  generated buffer for the synthesis route). For ROM-DMA-only,
+  rebuild with `--volume N` at build time.
+- **Turn / walk speed** — currently hardcoded constants.
+- **View distance / fog cutoff** — currently `MAX_VIEW_DIST = 6`.
+- **Head bob amplitude** — currently `±2` pixels.
+- **Toggle for the SH-2 sanity-check indicator square** (when we
+  eventually re-enable that overlay for debug builds).
+
+Storage: SRAM-backed if the cart has SRAM, otherwise per-boot. The
+start menu (below) is the natural pre-game container for the same
+options.
+
 ### Start menu / map selection
 **Status:** planned
 

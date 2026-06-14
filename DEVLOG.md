@@ -793,6 +793,93 @@ extension); fix pattern in `viciious/d32xr::crt0.s::sec_dma_irq`.
 
 ---
 
+## 2026-06 — HW-TRUTH: SH-2 internal-peripheral IRQs use VCR, not auto-vector
+
+**Context.** First attempt at PWM audio on the slave. The implementation
+plan from the deep-mining agent said to set IPRA priority and the
+DMA-complete interrupt would fire. We wrote the asm dispatch in
+`mars_start.s`, plumbed `amb_sound_init` and `amb_dma_handler` through
+`sound.c`, set IPRA, and... heard exactly one buffer pass (1.5s) of
+audio, then silence. The DMA had clearly run once. The completion
+interrupt was never serviced.
+
+**Outcome.** Two interlocking bugs in the IRQ setup, both subtle, both
+hidden by the agent's plan being *almost* right:
+
+1. **IPRA bit field for DMA.** SH7095's IPRA layout is `[15:12]=DIVU,
+   [11:8]=DMAC, [7:4]=WDT, [3:0]=REF`. The agent's plan said "set bits
+   `[15:12]` to 4 for DMA priority," which actually sets *DIVU's*
+   priority. DMA priority stays at the reset default of 0 = "this
+   interrupt is masked." The correct mask is:
+
+   ```c
+   SH2_INT_IPRA = (SH2_INT_IPRA & 0xF0FF) | 0x0400;  /* bits [11:8] = 4 */
+   ```
+
+2. **Internal-peripheral IRQs use user-defined vectors via VCR
+   registers, not auto-vectors.** The external IRQs on the 32X (VRES,
+   VBI, HBI, CMD, PWM) use the standard SH-2 auto-vector path —
+   SH-2 looks up the vector number based on the interrupt level. But
+   SH-2 *internal* peripherals (DMA, DIVU, WDT, SCI, FRT) use
+   user-defined vector numbers via dedicated control registers
+   (`VCR0`, `VCR1`, etc.) that have to be set explicitly.
+
+   `SH2_DMA_VCR1` defaults to 0 after reset. Vector 0 in the VBR
+   table is the cold-start PC. So when DMA1 completes and tries to
+   dispatch its IRQ, the SH-2 looks up `VBR[0]` and jumps to the
+   slave's `sstart` — i.e., re-runs slave initialization. The slave
+   ends up in a weird re-entered state and the audio never resumes.
+
+   The fix: point VCR1 at a vector slot that holds our IRQ handler
+   address. Slot 66 in the slave vector table (the existing "Level
+   4 & 5" entry) already contains `slav_irq`, which has a chain that
+   dispatches to `slav_dma_irq` when SR.I3-I0 = 4. So:
+
+   ```c
+   SH2_DMA_VCR1 = 66;
+   ```
+
+After both fixes, audio loops indefinitely with no glitches.
+
+**Insight.** The SH-2 has two distinct interrupt-vector paths: the
+external/auto-vector path (where the SH-2 derives the vector number
+from the interrupt level it sees on its `IRL` pins) and the
+internal/user-vector path (where each on-chip peripheral has a
+control register that holds the vector number to use). They look
+similar from the C side because they end up dispatching through the
+same VBR table, but the *setup* is completely different. If your
+peripheral's `VCRx` is unset, the IRQ jumps to vector 0 = the
+cold-start handler, which produces extremely confusing symptoms.
+
+Also: when an agent's research plan is *almost* right, the
+near-misses are the highest-value findings. The agent correctly
+identified that IPRA needed setting and correctly identified the
+priority value (4), but got the bit field wrong; the agent never
+mentioned VCR1 at all (presumably because d32xr never writes VCR1
+either — but d32xr might have had VCR1 pre-set by the cart header,
+or might have used a different vector configuration we don't see in
+the snippets we read).
+
+**Files.** `sh_src/sound.c::amb_sound_init` (the IPRA + VCR1 writes
+with explanatory comments); `sh_src/mars_start.s::slav_dma_irq` (the
+asm handler that the user vector points at); `sh_src/mars.h:122-123`
+(`SH2_INT_IPRA` and `SH2_DMA_VCR1` declarations).
+
+**Excerpt** — the fix as committed:
+
+```c
+/* SH-2 IPRA layout (SH7095): [15:12]=DIVU, [11:8]=DMAC, [7:4]=WDT,
+ * [3:0]=REF. Set DMA priority to 4. */
+SH2_INT_IPRA = (SH2_INT_IPRA & 0xF0FF) | 0x0400;
+
+/* DMA1 uses a USER-DEFINED interrupt vector. VCR1 holds the vector
+ * number; SH-2 reads VBR[VCR1*4] to get the handler. Point at vector
+ * slot 66 = "Level 4 & 5" entry, which holds slav_irq. */
+SH2_DMA_VCR1 = 66;
+```
+
+---
+
 ## Template for new entries
 
 ```

@@ -139,15 +139,14 @@ static void build_shading_tables(void) {
 
 static void build_palette(void) {
     Hw32xSetBGColor(0, 0, 0, 0);
-    /* Walls: eggshell cream — matched to the classic Backrooms reference
-     * photo. Much less saturated than the previous mustard; reads as
-     * "off-white wallpaper" rather than "yellow paint". The chevron
-     * texture pattern adds the visible accent on top. */
+    /* Walls: yellow eggshell — bright cream with a clear yellow undertone.
+     * R and G stay close (eggshell), B drops noticeably below them
+     * (brings the yellow back). Reads as pale Backrooms wallpaper. */
     for (int i = 0; i < SHADE_LEVELS; i++) {
         Hw32xSetBGColor(WALL_BASE + i,
-                        MIX(28, FOG_R, i),
+                        MIX(29, FOG_R, i),
                         MIX(27, FOG_G, i),
-                        MIX(22, FOG_B, i));
+                        MIX(17, FOG_B, i));
     }
     /* Carpet: warm beige/tan brown — matched to reference. Drops out of
      * the yellow family into a true brown-beige (R > G > B with all three

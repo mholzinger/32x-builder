@@ -48,6 +48,13 @@ const uint8_t world_map[MAP_H][MAP_W] = {
 #define TEX_W WALL_TEX_WIDTH
 #define TEX_H WALL_TEX_HEIGHT
 
+/* How many times the wallpaper tile repeats per 1-unit map cell.
+ * TEX_W/H must be powers of 2 so the wrap can be a cheap bitmask. */
+#define WALL_TILE_X 4
+#define WALL_TILE_Y 4
+#define TEX_W_MASK  (TEX_W - 1)
+#define TEX_H_MASK  (TEX_H - 1)
+
 /* Precomputed pixel color per screen row for the base floor/ceiling layer.
  * Indexes [0..SCREEN_H/2-1] = ceiling, bright at top dim toward horizon;
  * [SCREEN_H/2..SCREEN_H-1] = floor, dim near horizon bright at bottom. */
@@ -82,13 +89,15 @@ static void build_palette(void) {
                         25 * s / SHADE_LEVELS,
                         6  * s / SHADE_LEVELS);
     }
-    /* Carpet: warm brown */
+    /* Carpet: stained light brown. Brighter base so the brown survives
+     * the per-row distance shading instead of collapsing to near-black
+     * in the middle of the screen. */
     for (int i = 0; i < SHADE_LEVELS; i++) {
         int s = SHADE_LEVELS - i;
         Hw32xSetBGColor(FLOOR_BASE + i,
-                        14 * s / SHADE_LEVELS,
-                        7  * s / SHADE_LEVELS,
-                        2  * s / SHADE_LEVELS);
+                        22 * s / SHADE_LEVELS,
+                        12 * s / SHADE_LEVELS,
+                        4  * s / SHADE_LEVELS);
     }
     /* Ceiling: neutral light gray-white (balanced RGB) so it doesn't
      * cross-read as yellow next to the wall. */
@@ -244,26 +253,24 @@ void raycast_render(void) {
         if (side == 1) wall_shade += 1;
         if (wall_shade < 0) wall_shade = 0;
 
-        /* Where on the wall did the ray hit, fractional [0,1). */
+        /* Where on the wall did the ray hit, fractional [0,1). Multiply
+         * by TEX_W * WALL_TILE_X so the texture repeats WALL_TILE_X times
+         * across each map cell, then mask to [0, TEX_W). */
         fx_t wall_hit = (side == 0)
             ? (player.y + FX_MUL(perpDist, rayDirY))
             : (player.x + FX_MUL(perpDist, rayDirX));
         wall_hit -= (fx_t)FX_INT(wall_hit) << FX_SHIFT;
-        int texX = (int)(((int64_t)wall_hit * TEX_W) >> FX_SHIFT);
-        if (texX < 0) texX = 0;
-        if (texX >= TEX_W) texX = TEX_W - 1;
+        int texX = (int)(((int64_t)wall_hit * (TEX_W * WALL_TILE_X)) >> FX_SHIFT)
+                   & TEX_W_MASK;
 
-        /* Texture Y walks from 0 at wall_top to TEX_H at wall_bot,
-         * sampled per screen pixel. Compute initial tex_pos in FX so the
-         * inner loop is one add + one shift. */
-        fx_t tex_step = ((fx_t)TEX_H << FX_SHIFT) / lineHeight;
+        /* Texture Y steps so the tile repeats WALL_TILE_Y times across the
+         * full wall height. Mask in the loop wraps each repeat. */
+        fx_t tex_step = ((fx_t)(TEX_H * WALL_TILE_Y) << FX_SHIFT) / lineHeight;
         fx_t tex_pos  = (fx_t)(drawStart - wall_top) * tex_step;
 
         volatile uint8_t *p = fb + col;
         for (int y = drawStart; y <= drawEnd; y++) {
-            int texY = tex_pos >> FX_SHIFT;
-            if (texY < 0) texY = 0;
-            if (texY >= TEX_H) texY = TEX_H - 1;
+            int texY = (tex_pos >> FX_SHIFT) & TEX_H_MASK;
             int s = wall_shade + wall_tex[texY][texX];
             if (s >= SHADE_LEVELS) s = SHADE_LEVELS - 1;
             p[y * SCREEN_W] = WALL_BASE + s;

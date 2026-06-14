@@ -3,33 +3,38 @@
 #include "sin_table.h"
 #include "wall_tex.h"
 
-/* Player spawn — west end of the main east-west spine, facing east. */
+/* Player spawn — in the long N-S corridor on the west side, facing north
+ * toward the iconic Backrooms "room within a room" structure. */
 player_t player = {
-    .x = FX(1.5),
+    .x = FX(4.5),
     .y = FX(7.5),
-    .angle = 0,
+    .angle = 192,
 };
 
-/* 16x16 Backrooms-ish layout: one long east-west spine corridor at
- * y=7..8 with five north-south branch alcoves. The long sightline
- * down the spine sells the distance shading; the alcoves give you
- * places to peek into / get lost in. */
+/* 16x16 floor plan extracted from the Sketchfab Backrooms model
+ * (models/original-backrooms/source/Sketchfab_2022_04_30_13_07_42.blend)
+ * via tools/extract_floorplan.py. The extractor iterates every mesh face,
+ * filters to wall-oriented faces (|normal.z| < 0.5) that span the wall
+ * height band, and rasterizes their XY footprint into a 22x22 grid at
+ * the model's native scale (~1 Blender unit per cell). This 16x16 region
+ * is the top-left chunk with the perimeter walls + the canonical "room
+ * within a room" structure (cols 5-9 rows 2-6) + a long N-S corridor. */
 const uint8_t world_map[MAP_H][MAP_W] = {
     {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
-    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
-    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
-    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
-    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
-    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
-    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-    {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
-    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
-    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
-    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
-    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
-    {1,1,0,0,1,1,1,0,0,1,1,1,1,0,0,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,0,0,1,0,1,0,0,0,1,0,0,0,0,0,1},
+    {1,0,0,1,0,1,1,0,0,1,0,0,0,0,0,1},
+    {1,0,0,1,0,1,1,0,0,1,0,0,0,0,0,1},
+    {1,0,0,1,0,1,1,0,0,1,0,0,0,0,0,1},
+    {1,0,0,1,0,1,1,1,1,1,0,0,0,0,0,1},
+    {1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1},
+    {1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1},
+    {1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1},
+    {1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1},
+    {1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1},
+    {1,0,0,1,0,0,0,0,0,0,0,0,1,1,0,1},
+    {1,0,0,1,0,0,0,1,0,1,1,1,1,1,1,1},
+    {1,0,0,1,0,0,0,1,0,1,1,1,1,1,1,1},
     {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
 };
 

@@ -467,17 +467,26 @@ static void draw_standups(uint8_t *fb,
          * artifacts. At transformY < 3, the sprite is ~75+ px tall —
          * each lo-res texel is ~2.3 screen pixels (visibly chunky).
          * Hi-res cuts that to ~0.6 (silky). Beyond distance 3 the
-         * sprite is small enough that lo-res reads as crisp. */
+         * sprite is small enough that lo-res reads as crisp.
+         *
+         * Hi-res is stored column-major: walking down a screen column
+         * walks sequential bytes in memory, so adjacent texY fetches
+         * share a cache line. The lo-res 32x64 (2KB) fits entirely in
+         * the SH-2 4KB cache so its row-major layout doesn't suffer
+         * the same penalty. col_step expresses the row-stride: 1 for
+         * column-major (sequential), tex_w for row-major (strided). */
         const uint8_t *tex;
-        int tex_w, tex_h;
+        int tex_w, tex_h, col_step;
         if (transformY < FX(3)) {
-            tex   = (const uint8_t *)neander_tex_hi;
-            tex_w = NEANDER_TEX_HI_WIDTH;
-            tex_h = NEANDER_TEX_HI_HEIGHT;
+            tex      = (const uint8_t *)neander_tex_hi;
+            tex_w    = NEANDER_TEX_HI_WIDTH;
+            tex_h    = NEANDER_TEX_HI_HEIGHT;
+            col_step = 1;                 /* column-major */
         } else {
-            tex   = (const uint8_t *)neander_tex;
-            tex_w = NEANDER_TEX_WIDTH;
-            tex_h = NEANDER_TEX_HEIGHT;
+            tex      = (const uint8_t *)neander_tex;
+            tex_w    = NEANDER_TEX_WIDTH;
+            tex_h    = NEANDER_TEX_HEIGHT;
+            col_step = NEANDER_TEX_WIDTH; /* row-major: next row is W bytes */
         }
 
         /* Precompute texY increment per screen row — same trick as wall
@@ -493,6 +502,14 @@ static void draw_standups(uint8_t *fb,
             int texX = ((stripe - drawStartX_u) * tex_w) / spriteWidth;
             if (texX < 0 || texX >= tex_w) continue;
 
+            /* Pointer to the start of this texture column. Column-major:
+             * column texX begins at tex + texX*tex_h. Row-major: column
+             * texX starts at tex + texX, and consecutive rows are tex_w
+             * apart. col_step encodes which. */
+            const uint8_t *col_base = (col_step == 1)
+                ? (tex + texX * tex_h)
+                : (tex + texX);
+
             uint8_t *p = fb + drawStartY * SCREEN_W + stripe;
             fx_t tex_pos = texY_start_v;
             /* texY can only overshoot the bottom of the texture (not go
@@ -500,7 +517,7 @@ static void draw_standups(uint8_t *fb,
             for (int y = drawStartY; y <= drawEndY; y++) {
                 int texY = tex_pos >> FX_SHIFT;
                 if (texY >= tex_h) texY = tex_h - 1;
-                uint8_t v = tex[texY * tex_w + texX];
+                uint8_t v = col_base[texY * col_step];
                 if (v != 0) {
                     *p = is_silhouette ? silhouette_color
                        : is_front      ? (NEANDER_BASE + v)

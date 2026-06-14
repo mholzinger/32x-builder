@@ -1,6 +1,5 @@
 #include "mars.h"
 #include "raycast.h"
-#include "shared.h"
 #include "sin_table.h"
 #include "wall_tex.h"
 #include "neander_tex.h"
@@ -74,9 +73,9 @@ const uint8_t world_map[MAP_H][MAP_W] = {
  * detection so a boundary at every (1/CEIL_GRID_DENSITY) units triggers. */
 #define CEIL_GRID_DENSITY 4
 
-/* Per-column z-buffer now lives in shared.h's shared_state_t at uncached
- * SDRAM so both SH-2s can write to their own column ranges and master
- * can read all of it for standup/light z-tests after the sync barrier. */
+/* Per-column z-buffer captured during wall draw so the light billboards
+ * can z-test against walls. 0x7FFFFFFF = no wall hit (light wins). */
+static fx_t wall_dist[SCREEN_W];
 
 /* Floor-standing cardboard cutouts. Each standup has a world position
  * and a facing direction. silhouette=1 renders as flat dark outline only
@@ -396,7 +395,7 @@ static void draw_standups(uint8_t *fb,
         fx_t texY_start_v = (fx_t)(drawStartY - drawStartY_u) * texY_step;
 
         for (int stripe = drawStartX; stripe <= drawEndX; stripe++) {
-            if (transformY >= shared->wall_dist[stripe]) continue;
+            if (transformY >= wall_dist[stripe]) continue;
 
             int texX = ((stripe - drawStartX_u) * NEANDER_TEX_WIDTH) / spriteWidth;
             if (texX < 0 || texX >= NEANDER_TEX_WIDTH) continue;
@@ -484,140 +483,12 @@ static void draw_lights(uint8_t *fb,
         else                color = LIGHT_BASE + 0;   /* full on */
 
         for (int x = x0; x <= x1; x++) {
-            if (transformY >= shared->wall_dist[x]) continue;  /* wall in front */
+            if (transformY >= wall_dist[x]) continue;  /* wall in front */
             uint8_t *p = fb + y0 * SCREEN_W + x;
             for (int y = y0; y <= y1; y++) {
                 *p = color;
                 p += SCREEN_W;
             }
-        }
-    }
-}
-
-/* Wall column renderer. Reads camera state from the shared struct (set by
- * master at the top of each raycast_render). Callable from either SH-2.
- * Master renders col_start..col_end = 0..SCREEN_W/2.
- * Slave renders col_start..col_end = SCREEN_W/2..SCREEN_W.
- * Both write to shared->wall_dist[col] in uncached SDRAM and to fb at
- * non-overlapping column addresses — no race. */
-void render_wall_columns(uint8_t *fb, int col_start, int col_end) {
-    /* Snapshot shared state into locals (uncached reads are 5x slower than
-     * cached, so do them once up front instead of every loop iter). */
-    fx_t player_x = shared->player_x;
-    fx_t player_y = shared->player_y;
-    fx_t dirX     = shared->dirX;
-    fx_t dirY     = shared->dirY;
-    fx_t planeX   = shared->planeX;
-    fx_t planeY   = shared->planeY;
-    int  mapX0    = FX_INT(player_x);
-    int  mapY0    = FX_INT(player_y);
-
-    for (int col = col_start; col < col_end; col++) {
-        shared->wall_dist[col] = 0x7FFFFFFF;
-        fx_t cameraX = cameraX_table[col];
-        fx_t rayDirX = dirX + FX_MUL(planeX, cameraX);
-        fx_t rayDirY = dirY + FX_MUL(planeY, cameraX);
-
-        int mapX = mapX0;
-        int mapY = mapY0;
-
-        fx_t deltaDistX = (rayDirX == 0) ? 0x7FFFFFFF
-                                         : FX_DIV(FX_ONE, FX_ABS(rayDirX));
-        fx_t deltaDistY = (rayDirY == 0) ? 0x7FFFFFFF
-                                         : FX_DIV(FX_ONE, FX_ABS(rayDirY));
-
-        int stepX, stepY;
-        fx_t sideDistX, sideDistY;
-        if (rayDirX < 0) {
-            stepX = -1;
-            sideDistX = FX_MUL(player_x - ((fx_t)mapX << FX_SHIFT), deltaDistX);
-        } else {
-            stepX = 1;
-            sideDistX = FX_MUL(((fx_t)(mapX + 1) << FX_SHIFT) - player_x, deltaDistX);
-        }
-        if (rayDirY < 0) {
-            stepY = -1;
-            sideDistY = FX_MUL(player_y - ((fx_t)mapY << FX_SHIFT), deltaDistY);
-        } else {
-            stepY = 1;
-            sideDistY = FX_MUL(((fx_t)(mapY + 1) << FX_SHIFT) - player_y, deltaDistY);
-        }
-
-        int side = 0;
-        int hit = 0;
-        for (int i = 0; i < 64 && !hit; i++) {
-            if (sideDistX < sideDistY) {
-                sideDistX += deltaDistX;
-                mapX += stepX;
-                side = 0;
-            } else {
-                sideDistY += deltaDistY;
-                mapY += stepY;
-                side = 1;
-            }
-            if (mapX < 0 || mapX >= MAP_W || mapY < 0 || mapY >= MAP_H) break;
-            if (world_map[mapY][mapX]) { hit = 1; break; }
-            if (sideDistX > MAX_VIEW_DIST && sideDistY > MAX_VIEW_DIST) break;
-        }
-        if (!hit) continue;
-
-        fx_t perpDist = (side == 0) ? (sideDistX - deltaDistX)
-                                    : (sideDistY - deltaDistY);
-        if (perpDist < FX(0.1)) perpDist = FX(0.1);
-        shared->wall_dist[col] = perpDist;
-        if (perpDist >= MAX_VIEW_DIST) continue;
-
-        int lineHeight = (int)((SCREEN_H << FX_SHIFT) / perpDist);
-        int wall_top  = SCREEN_H / 2 - lineHeight / 2;
-        int wall_bot  = SCREEN_H / 2 + lineHeight / 2;
-        int drawStart = wall_top < 0 ? 0 : wall_top;
-        int drawEnd   = wall_bot >= SCREEN_H ? SCREEN_H - 1 : wall_bot;
-
-        int wall_shade;
-        if (perpDist < FX(3.5)) {
-            wall_shade = (int)((perpDist * 2) / FX(3.5));
-        } else {
-            fx_t past = perpDist - FX(3.5);
-            fx_t span = MAX_VIEW_DIST - FX(3.5);
-            wall_shade = 2 + (int)((past * 13) / span);
-        }
-        if (side == 1) wall_shade += 1;
-        if (wall_shade < 0) wall_shade = 0;
-
-        fx_t wall_hit = (side == 0)
-            ? (player_y + FX_MUL(perpDist, rayDirY))
-            : (player_x + FX_MUL(perpDist, rayDirX));
-        wall_hit -= (fx_t)FX_INT(wall_hit) << FX_SHIFT;
-        int texX = (int)(((int64_t)wall_hit * (TEX_W * WALL_TILE_X)) >> FX_SHIFT)
-                   & TEX_W_MASK;
-
-        fx_t tex_step = ((fx_t)(TEX_H * WALL_TILE_Y) << FX_SHIFT) / lineHeight;
-        fx_t tex_pos  = (fx_t)(drawStart - wall_top) * tex_step;
-
-        int detail_factor;
-        if (perpDist < FX(2)) {
-            detail_factor = 16;
-        } else if (perpDist < FX(3.5)) {
-            fx_t remaining = FX(3.5) - perpDist;
-            fx_t span      = FX(1.5);
-            detail_factor  = (int)((remaining * 16) / span);
-            if (detail_factor < 0)  detail_factor = 0;
-            if (detail_factor > 16) detail_factor = 16;
-        } else {
-            detail_factor = 0;
-        }
-        uint8_t shade_lut[TEX_H];
-        for (int ty = 0; ty < TEX_H; ty++) {
-            int pattern = (wall_tex[ty][texX] * detail_factor) >> 4;
-            int s = wall_shade + pattern;
-            if (s >= SHADE_LEVELS) s = SHADE_LEVELS - 1;
-            shade_lut[ty] = (uint8_t)(WALL_BASE + s);
-        }
-        uint8_t *p = fb + col + drawStart * SCREEN_W;
-        for (int y = drawStart; y <= drawEnd; y++) {
-            *p = shade_lut[(tex_pos >> FX_SHIFT) & TEX_H_MASK];
-            p += SCREEN_W;
-            tex_pos += tex_step;
         }
     }
 }
@@ -635,16 +506,6 @@ void raycast_render(void) {
     fx_t dirY   = SIN_FX(player.angle);
     fx_t planeX = FX_MUL(-dirY, FX(0.66));
     fx_t planeY = FX_MUL( dirX, FX(0.66));
-
-    /* Publish camera state into uncached shared SDRAM so slave SH-2 sees
-     * fresh values when it reads. Writes complete before the signal flag
-     * is set because the uncached path bypasses the write buffer. */
-    shared->player_x = player.x;
-    shared->player_y = player.y;
-    shared->dirX     = dirX;
-    shared->dirY     = dirY;
-    shared->planeX   = planeX;
-    shared->planeY   = planeY;
 
     /* Floor + ceiling: per-row solid color (32-bit aligned writes,
      * 4 pixels per store). Fast clear. */
@@ -776,19 +637,153 @@ void raycast_render(void) {
         }
     }
 
-    /* Master signals slave to start rendering its column half (160..319).
-     * Slave is busy-waiting on shared->go_signal in s_main(). */
-    shared->go_signal = 1;
+    for (int col = 0; col < SCREEN_W; col++) {
+        /* Default z-buffer to "infinity" so missed-ray columns let lights
+         * render. Overwritten on a wall hit. */
+        wall_dist[col] = 0x7FFFFFFF;
+        fx_t cameraX = cameraX_table[col];
+        fx_t rayDirX = dirX + FX_MUL(planeX, cameraX);
+        fx_t rayDirY = dirY + FX_MUL(planeY, cameraX);
 
-    /* Master renders its half (0..159) in parallel with slave. */
-    render_wall_columns(fb, 0, SCREEN_W / 2);
+        int mapX = FX_INT(player.x);
+        int mapY = FX_INT(player.y);
 
-    /* Wait for slave to clear go_signal — it does so when it finishes
-     * its column range. After this point shared->wall_dist[] is fully
-     * populated and we can safely read all of it for standup/light
-     * z-tests below. */
-    while (shared->go_signal != 0) {}
+        /* Distance the ray covers per one-unit step on each axis. */
+        fx_t deltaDistX = (rayDirX == 0) ? 0x7FFFFFFF
+                                         : FX_DIV(FX_ONE, FX_ABS(rayDirX));
+        fx_t deltaDistY = (rayDirY == 0) ? 0x7FFFFFFF
+                                         : FX_DIV(FX_ONE, FX_ABS(rayDirY));
 
+        int stepX, stepY;
+        fx_t sideDistX, sideDistY;
+        if (rayDirX < 0) {
+            stepX = -1;
+            sideDistX = FX_MUL(player.x - ((fx_t)mapX << FX_SHIFT), deltaDistX);
+        } else {
+            stepX = 1;
+            sideDistX = FX_MUL(((fx_t)(mapX + 1) << FX_SHIFT) - player.x, deltaDistX);
+        }
+        if (rayDirY < 0) {
+            stepY = -1;
+            sideDistY = FX_MUL(player.y - ((fx_t)mapY << FX_SHIFT), deltaDistY);
+        } else {
+            stepY = 1;
+            sideDistY = FX_MUL(((fx_t)(mapY + 1) << FX_SHIFT) - player.y, deltaDistY);
+        }
+
+        /* DDA loop. Safety cap of 64 to keep ROM-side bugs from hanging.
+         * Early-exit when both sideDistances exceed MAX_VIEW_DIST — the ray
+         * has gone past the fog cutoff, no wall draw would happen anyway. */
+        int side = 0;
+        int hit = 0;
+        for (int i = 0; i < 64 && !hit; i++) {
+            if (sideDistX < sideDistY) {
+                sideDistX += deltaDistX;
+                mapX += stepX;
+                side = 0;
+            } else {
+                sideDistY += deltaDistY;
+                mapY += stepY;
+                side = 1;
+            }
+            if (mapX < 0 || mapX >= MAP_W || mapY < 0 || mapY >= MAP_H) break;
+            if (world_map[mapY][mapX]) { hit = 1; break; }
+            if (sideDistX > MAX_VIEW_DIST && sideDistY > MAX_VIEW_DIST) break;
+        }
+        if (!hit) continue;
+
+        fx_t perpDist = (side == 0) ? (sideDistX - deltaDistX)
+                                    : (sideDistY - deltaDistY);
+        if (perpDist < FX(0.1)) perpDist = FX(0.1);
+        wall_dist[col] = perpDist;
+        /* Fog cutoff: wall is beyond view distance — skip the draw entirely,
+         * the column already has the floor/ceiling haze from the row clear. */
+        if (perpDist >= MAX_VIEW_DIST) continue;
+
+        /* Projected line height in pixels = SCREEN_H / perpDist.
+         * Values fit in int32 — drop the int64 to avoid soft-emul divide. */
+        int lineHeight = (int)((SCREEN_H << FX_SHIFT) / perpDist);
+        int wall_top  = SCREEN_H / 2 - lineHeight / 2;   /* may be < 0 */
+        int wall_bot  = SCREEN_H / 2 + lineHeight / 2;   /* may be >= H */
+        int drawStart = wall_top < 0 ? 0 : wall_top;
+        int drawEnd   = wall_bot >= SCREEN_H ? SCREEN_H - 1 : wall_bot;
+
+        /* Piecewise shade curve: walls stay bright while detail fades, then
+         * darken in the final zone. This separates the two effects in
+         * distance so the mid-range reads as "flat yellow" (the chevron
+         * has faded but darkening hasn't started yet) rather than the
+         * muddy avocado you get when both happen together.
+         *
+         *   0..3.5 cells: barely-darkening from shade 0 to 2 (still bright)
+         *   3.5..6:        rapid darken from shade 2 to 15 (the actual fog) */
+        int wall_shade;
+        if (perpDist < FX(3.5)) {
+            wall_shade = (int)((perpDist * 2) / FX(3.5));
+        } else {
+            fx_t past = perpDist - FX(3.5);
+            fx_t span = MAX_VIEW_DIST - FX(3.5);
+            wall_shade = 2 + (int)((past * 13) / span);
+        }
+        if (side == 1) wall_shade += 1;
+        if (wall_shade < 0) wall_shade = 0;
+
+        /* Where on the wall did the ray hit, fractional [0,1). Multiply
+         * by TEX_W * WALL_TILE_X so the texture repeats WALL_TILE_X times
+         * across each map cell, then mask to [0, TEX_W). */
+        fx_t wall_hit = (side == 0)
+            ? (player.y + FX_MUL(perpDist, rayDirY))
+            : (player.x + FX_MUL(perpDist, rayDirX));
+        wall_hit -= (fx_t)FX_INT(wall_hit) << FX_SHIFT;
+        int texX = (int)(((int64_t)wall_hit * (TEX_W * WALL_TILE_X)) >> FX_SHIFT)
+                   & TEX_W_MASK;
+
+        /* Texture Y steps so the tile repeats WALL_TILE_Y times across the
+         * full wall height. Mask in the loop wraps each repeat. */
+        fx_t tex_step = ((fx_t)(TEX_H * WALL_TILE_Y) << FX_SHIFT) / lineHeight;
+        fx_t tex_pos  = (fx_t)(drawStart - wall_top) * tex_step;
+
+        /* Per-column shade LUT: (wall_shade + scaled_pattern) clamped, mapped
+         * to a palette index. Since texX, wall_shade, and detail_factor are
+         * constant for this column, compute the 16-entry table once and let
+         * the inner loop reduce to one load + write per pixel.
+         *
+         * Distance-based detail falloff: close walls show the full chevron
+         * pattern; walls past ~3 cells start fading the pattern out while
+         * the wall outline stays raycaster-sharp. detail_factor in [0..16],
+         * with `>> 4` doing the divide-by-16 in the per-LUT-entry math.
+         *
+         * Pointer is non-volatile: the 32X framebuffer at 0x24000000 isn't SH-2
+         * cached, so writes go through directly. A compiler barrier at the end
+         * of raycast_render commits any reordered stores before swapBuffers. */
+        /* Detail falloff: chevron fades over 2..3.5 cells. By cell 3.5 the
+         * wallpaper is "just flat yellow" — this is the brief reveal-zone
+         * before the wall_shade curve takes over and darkens it. */
+        int detail_factor;
+        if (perpDist < FX(2)) {
+            detail_factor = 16;
+        } else if (perpDist < FX(3.5)) {
+            fx_t remaining = FX(3.5) - perpDist;
+            fx_t span      = FX(1.5);
+            detail_factor  = (int)((remaining * 16) / span);
+            if (detail_factor < 0)  detail_factor = 0;
+            if (detail_factor > 16) detail_factor = 16;
+        } else {
+            detail_factor = 0;
+        }
+        uint8_t shade_lut[TEX_H];
+        for (int ty = 0; ty < TEX_H; ty++) {
+            int pattern = (wall_tex[ty][texX] * detail_factor) >> 4;
+            int s = wall_shade + pattern;
+            if (s >= SHADE_LEVELS) s = SHADE_LEVELS - 1;
+            shade_lut[ty] = (uint8_t)(WALL_BASE + s);
+        }
+        uint8_t *p = (uint8_t *)fb + col + drawStart * SCREEN_W;
+        for (int y = drawStart; y <= drawEnd; y++) {
+            *p = shade_lut[(tex_pos >> FX_SHIFT) & TEX_H_MASK];
+            p += SCREEN_W;
+            tex_pos += tex_step;
+        }
+    }
     /* Commit any reordered stores from the non-volatile draw loops before
      * the next swapBuffers() makes them visible via the VDP page flip. */
     __asm__ __volatile__("" ::: "memory");

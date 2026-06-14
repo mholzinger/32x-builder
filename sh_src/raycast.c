@@ -42,6 +42,7 @@ const uint8_t world_map[MAP_H][MAP_W] = {
 #define WALL_BASE    1
 #define FLOOR_BASE   17
 #define CEIL_BASE    33
+#define LIGHT_BASE   49     /* 4 entries: full / 75% / 50% / 25% for flicker */
 #define SHADE_LEVELS 16
 
 /* Wall texture comes from wall_tex.h (generated from images/walltile.jpg). */
@@ -54,6 +55,26 @@ const uint8_t world_map[MAP_H][MAP_W] = {
  * (fewer wall pixels per frame on long sightlines). */
 #define MAX_VIEW_DIST     FX(6)
 #define MAX_VIEW_DIST_INT 6
+
+/* Per-column z-buffer captured during wall draw so the light billboards
+ * can z-test against walls. 0x7FFFFFFF = no wall hit (light wins). */
+static fx_t wall_dist[SCREEN_W];
+
+/* Ceiling fluorescent tube positions in world coords. Each one renders
+ * as a small horizontal bright bar at its world position, sized by
+ * distance, flickering pseudo-randomly. */
+typedef struct { fx_t x, y; } light_t;
+static const light_t lights[] = {
+    /* Main east-west spine, every 2 cells */
+    { FX(2.5),  FX(7.5)  }, { FX(4.5),  FX(7.5)  },
+    { FX(6.5),  FX(7.5)  }, { FX(8.5),  FX(7.5)  },
+    { FX(10.5), FX(7.5)  }, { FX(12.5), FX(7.5)  },
+    /* North-side branch alcoves */
+    { FX(2.5),  FX(3.5)  }, { FX(7.5),  FX(3.5)  }, { FX(13.5), FX(3.5)  },
+    /* South-side branch alcoves */
+    { FX(2.5),  FX(11.5) }, { FX(7.5),  FX(11.5) }, { FX(13.5), FX(11.5) },
+};
+#define NUM_LIGHTS (int)(sizeof(lights) / sizeof(lights[0]))
 
 /* How many times the wallpaper tile repeats per 1-unit map cell.
  * TEX_W/H must be powers of 2 so the wrap can be a cheap bitmask. */
@@ -120,6 +141,11 @@ static void build_palette(void) {
                         MIX(26, FOG_G, i),
                         MIX(26, FOG_B, i));
     }
+    /* Fluorescent lights: 4 brightness states for flicker (full / 75 / 50 / 25%). */
+    Hw32xSetBGColor(LIGHT_BASE + 0, 31, 31, 28);
+    Hw32xSetBGColor(LIGHT_BASE + 1, 23, 23, 21);
+    Hw32xSetBGColor(LIGHT_BASE + 2, 15, 15, 14);
+    Hw32xSetBGColor(LIGHT_BASE + 3,  7,  7,  7);
 }
 
 /* Byte pointer to the start of pixel data in the current back framebuffer.
@@ -197,6 +223,76 @@ void player_update(void) {
     if (cell_passable(FX_INT(player.x), FX_INT(newY))) player.y = newY;
 }
 
+/* Project each ceiling light to screen space, paint a small bright bar
+ * with z-test against wall_dist, apply per-light flicker. The math is the
+ * sprite-billboard transform; the cost is ~50-100 cycles per light. */
+static void draw_lights(volatile uint8_t *fb,
+                        fx_t dirX, fx_t dirY, fx_t planeX, fx_t planeY) {
+    fx_t det = FX_MUL(planeX, dirY) - FX_MUL(dirX, planeY);
+    if (det == 0) return;
+    fx_t inv_det = FX_DIV(FX_ONE, det);
+
+    static uint32_t light_frame = 0;
+    light_frame++;
+
+    for (int i = 0; i < NUM_LIGHTS; i++) {
+        fx_t sx = lights[i].x - player.x;
+        fx_t sy = lights[i].y - player.y;
+
+        fx_t transformX = FX_MUL(inv_det,
+                            FX_MUL( dirY,  sx) - FX_MUL( dirX,  sy));
+        fx_t transformY = FX_MUL(inv_det,
+                            FX_MUL(-planeY, sx) + FX_MUL( planeX, sy));
+        if (transformY < FX(0.5))     continue;     /* behind / too close */
+        if (transformY >= MAX_VIEW_DIST) continue;  /* beyond fog */
+
+        /* Project to screen.
+         * screenX = SCREEN_W/2 + (transformX/transformY) * (SCREEN_W/2)
+         * screenY = SCREEN_H/2 - (SCREEN_H/2)/transformY
+         *   (lights are mounted at ceiling height; sits above horizon). */
+        fx_t ratio = FX_DIV(transformX, transformY);
+        int screenX = (SCREEN_W >> 1)
+                    + (int)(((int32_t)(SCREEN_W >> 1) * ratio) >> FX_SHIFT);
+        int yoff   = (int)(((int32_t)(SCREEN_H >> 1) << FX_SHIFT) / transformY);
+        int screenY = (SCREEN_H >> 1) - yoff;
+
+        int dist_int = FX_INT(transformY);
+        if (dist_int < 1) dist_int = 1;
+        /* Fluorescent tube ~0.5 world units wide, very thin. */
+        int width  = (SCREEN_W >> 2) / dist_int;
+        int height = (SCREEN_H >> 4) / dist_int + 1;
+        if (width  < 1) width  = 1;
+
+        int x0 = screenX - width  / 2;
+        int x1 = screenX + width  / 2;
+        int y0 = screenY - height / 2;
+        int y1 = screenY + height / 2;
+        if (x0 < 0)         x0 = 0;
+        if (x1 >= SCREEN_W) x1 = SCREEN_W - 1;
+        if (y0 < 0)         y0 = 0;
+        if (y1 >= SCREEN_H) y1 = SCREEN_H - 1;
+
+        /* Per-light flicker: pseudo-random brightness state from LCG of
+         * (frame, light_index). Most frames the light is fully on; a small
+         * fraction it dims for one frame. */
+        uint32_t r = light_frame * 1103515245u + i * 12347u;
+        int roll = (r >> 24) & 0x1F;
+        uint8_t color;
+        if      (roll < 2)  color = LIGHT_BASE + 2;   /* deep dim */
+        else if (roll < 5)  color = LIGHT_BASE + 1;   /* slight dim */
+        else                color = LIGHT_BASE + 0;   /* full on */
+
+        for (int x = x0; x <= x1; x++) {
+            if (transformY >= wall_dist[x]) continue;  /* wall in front */
+            volatile uint8_t *p = fb + y0 * SCREEN_W + x;
+            for (int y = y0; y <= y1; y++) {
+                *p = color;
+                p += SCREEN_W;
+            }
+        }
+    }
+}
+
 void raycast_render(void) {
     volatile uint8_t *fb = fb_pixels();
 
@@ -219,6 +315,9 @@ void raycast_render(void) {
     }
 
     for (int col = 0; col < SCREEN_W; col++) {
+        /* Default z-buffer to "infinity" so missed-ray columns let lights
+         * render. Overwritten on a wall hit. */
+        wall_dist[col] = 0x7FFFFFFF;
         /* cameraX in [-1, +1) */
         fx_t cameraX = ((fx_t)col << (FX_SHIFT + 1)) / SCREEN_W - FX_ONE;
         fx_t rayDirX = dirX + FX_MUL(planeX, cameraX);
@@ -271,6 +370,7 @@ void raycast_render(void) {
         fx_t perpDist = (side == 0) ? (sideDistX - deltaDistX)
                                     : (sideDistY - deltaDistY);
         if (perpDist < FX(0.1)) perpDist = FX(0.1);
+        wall_dist[col] = perpDist;
         /* Fog cutoff: wall is beyond view distance — skip the draw entirely,
          * the column already has the floor/ceiling haze from the row clear. */
         if (perpDist >= MAX_VIEW_DIST) continue;
@@ -317,4 +417,6 @@ void raycast_render(void) {
             tex_pos += tex_step;
         }
     }
+
+    draw_lights(fb, dirX, dirY, planeX, planeY);
 }

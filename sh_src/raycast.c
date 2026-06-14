@@ -209,16 +209,16 @@ static void build_palette(void) {
     Hw32xSetBGColor(LIGHT_BASE + 2, 15, 15, 14);
     Hw32xSetBGColor(LIGHT_BASE + 3,  7,  7,  7);
     /* Neanderthal cardboard standup. Index 0 = cardboard back (warm tan
-     * brown), 1-7 = quantized figure shades pulled from neanderthal.webp.
-     * Hand-picked palette so the figure reads at any wall distance. */
+     * brown). 1-7 = quantized figure shades pulled from the 32x64 PNG
+     * texture by 7-bucket brightness quantization. */
     Hw32xSetBGColor(NEANDER_BASE + 0, 16, 11,  5);
-    Hw32xSetBGColor(NEANDER_BASE + 1,  3,  2,  1);
-    Hw32xSetBGColor(NEANDER_BASE + 2,  8,  6,  4);
-    Hw32xSetBGColor(NEANDER_BASE + 3, 13, 10,  8);
-    Hw32xSetBGColor(NEANDER_BASE + 4, 17, 14, 11);
-    Hw32xSetBGColor(NEANDER_BASE + 5, 21, 18, 15);
-    Hw32xSetBGColor(NEANDER_BASE + 6, 25, 23, 21);
-    Hw32xSetBGColor(NEANDER_BASE + 7, 27, 27, 26);
+    Hw32xSetBGColor(NEANDER_BASE + 1,  2,  2,  1);
+    Hw32xSetBGColor(NEANDER_BASE + 2,  7,  5,  3);
+    Hw32xSetBGColor(NEANDER_BASE + 3, 11,  8,  6);
+    Hw32xSetBGColor(NEANDER_BASE + 4, 16, 12,  9);
+    Hw32xSetBGColor(NEANDER_BASE + 5, 19, 16, 13);
+    Hw32xSetBGColor(NEANDER_BASE + 6, 23, 20, 17);
+    Hw32xSetBGColor(NEANDER_BASE + 7, 26, 22, 19);
 }
 
 /* Byte pointer to the start of pixel data in the current back framebuffer.

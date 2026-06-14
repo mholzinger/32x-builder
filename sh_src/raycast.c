@@ -127,12 +127,13 @@ static void build_palette(void) {
                         MIX(25, FOG_G, i),
                         MIX( 6, FOG_B, i));
     }
-    /* Carpet: yellow-mustard, same hue family as walls. */
+    /* Carpet: lighter yellow-mustard. Brighter than before, still slightly
+     * darker than the walls (30,25,6) so the wall/floor seam reads. */
     for (int i = 0; i < SHADE_LEVELS; i++) {
         Hw32xSetBGColor(FLOOR_BASE + i,
-                        MIX(24, FOG_R, i),
-                        MIX(20, FOG_G, i),
-                        MIX( 5, FOG_B, i));
+                        MIX(27, FOG_R, i),
+                        MIX(23, FOG_G, i),
+                        MIX( 7, FOG_B, i));
     }
     /* Ceiling: neutral off-white. */
     for (int i = 0; i < SHADE_LEVELS; i++) {

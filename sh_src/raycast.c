@@ -120,20 +120,22 @@ static void build_shading_tables(void) {
 
 static void build_palette(void) {
     Hw32xSetBGColor(0, 0, 0, 0);
-    /* Wall: vivid Backrooms mustard at shade 0, fading to misty grey at shade 15. */
+    /* Walls: eggshell — warm cream with a yellow undertone. R held high,
+     * G and B brought up so it reads as off-white wallpaper rather than
+     * the previous saturated mustard. */
     for (int i = 0; i < SHADE_LEVELS; i++) {
         Hw32xSetBGColor(WALL_BASE + i,
                         MIX(30, FOG_R, i),
-                        MIX(25, FOG_G, i),
-                        MIX( 6, FOG_B, i));
+                        MIX(27, FOG_G, i),
+                        MIX(14, FOG_B, i));
     }
-    /* Carpet: lighter yellow-mustard. Brighter than before, still slightly
-     * darker than the walls (30,25,6) so the wall/floor seam reads. */
+    /* Carpet: lighter yellow with a tinge of brown. Bumped brightness and
+     * lifted B so the yellow desaturates into a beige/tan direction. */
     for (int i = 0; i < SHADE_LEVELS; i++) {
         Hw32xSetBGColor(FLOOR_BASE + i,
-                        MIX(27, FOG_R, i),
-                        MIX(23, FOG_G, i),
-                        MIX( 7, FOG_B, i));
+                        MIX(28, FOG_R, i),
+                        MIX(24, FOG_G, i),
+                        MIX(11, FOG_B, i));
     }
     /* Ceiling: neutral off-white. */
     for (int i = 0; i < SHADE_LEVELS; i++) {

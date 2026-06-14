@@ -30,5 +30,7 @@ void raycast_init(void);
 void raycast_render(void);
 void player_update(void);
 void raycast_shimmer(void);
+void raycast_debug_overlay(void);
+void raycast_draw_ceiling_grid(void);
 
 #endif

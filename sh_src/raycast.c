@@ -1,8 +1,16 @@
 #include "mars.h"
 #include "raycast.h"
+#include "shared.h"
 #include "sin_table.h"
 #include "wall_tex.h"
 #include "neander_tex.h"
+
+/* SH-2 dual-CPU sanity check: top-right 8x8 indicator. Green when the
+ * slave's heartbeat counter advanced this frame (slave is running and
+ * its uncached SDRAM writes reach us), red otherwise. Will be removed
+ * once we move past Step 0 of the SH-2 split work. */
+#define DEBUG_ALIVE_IDX 254
+#define DEBUG_DEAD_IDX  255
 
 /* Player spawn — south end of the col-16 spine corridor in the
  * hand-tuned 32x32 Backrooms map. Walls flank tightly at cols 15/17
@@ -260,6 +268,9 @@ static void build_palette(void) {
     Hw32xSetBGColor(NEANDER_BASE + 5, 19, 16, 13);
     Hw32xSetBGColor(NEANDER_BASE + 6, 23, 20, 17);
     Hw32xSetBGColor(NEANDER_BASE + 7, 26, 22, 19);
+    /* SH-2 sanity-check indicator colors. */
+    Hw32xSetBGColor(DEBUG_ALIVE_IDX,  0, 31,  0);   /* bright green */
+    Hw32xSetBGColor(DEBUG_DEAD_IDX,  31,  0,  0);   /* bright red */
 }
 
 /* Byte pointer to the start of pixel data in the current back framebuffer.
@@ -269,6 +280,25 @@ static void build_palette(void) {
  * end-of-render commits any reordered stores before the VDP sees them. */
 static inline uint8_t *fb_pixels(void) {
     return (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
+}
+
+void raycast_debug_overlay(void) {
+    /* Single 8x8 indicator in the top-right corner: green if the
+     * slave's heartbeat counter advanced since the last frame, red
+     * if it stalled. Now that COMM4 is the doorbell rather than a
+     * free-running counter, the only general "slave alive" signal
+     * is the heartbeat in shared SDRAM (incremented every iteration
+     * of the slave's dispatch loop). */
+    static uint32_t last_hb = 0;
+    uint32_t hb = SLAVE_HEARTBEAT;
+    uint8_t color = (hb != last_hb) ? DEBUG_ALIVE_IDX : DEBUG_DEAD_IDX;
+    last_hb = hb;
+
+    uint8_t *fb = fb_pixels();
+    for (int dy = 0; dy < 8; dy++) {
+        uint8_t *row = fb + (dy + 4) * SCREEN_W + (SCREEN_W - 12);
+        for (int dx = 0; dx < 8; dx++) row[dx] = color;
+    }
 }
 
 void raycast_init(void) {
@@ -538,6 +568,81 @@ static void draw_lights(uint8_t *fb,
     }
 }
 
+/* Drop-ceiling grid pass — called from the slave SH-2's dispatch loop
+ * after the master writes the player snapshot and signals
+ * MARS_CMD_CEILING on COMM4. Master can also call this directly during
+ * single-CPU testing; in both cases the function reads player state
+ * from SHARED_UC (cache-through alias) so the slave sees the master's
+ * latest writes without explicit cache flushes.
+ *
+ * Writes only to the top half of the framebuffer (rows 0..SCREEN_H/2-1).
+ * Disjoint from the carpet pass (bottom half) so they run in parallel
+ * without races. Walls overwrite grid pixels where they intersect,
+ * matching the previous sequential behavior. */
+void raycast_draw_ceiling_grid(void) {
+    fx_t px = SHARED_UC->player.x;
+    fx_t py = SHARED_UC->player.y;
+    uint8_t angle = (uint8_t)SHARED_UC->player.angle;
+
+    fx_t dirX   = COS_FX(angle);
+    fx_t dirY   = SIN_FX(angle);
+    fx_t planeX = FX_MUL(-dirY, FX(0.66));
+    fx_t planeY = FX_MUL( dirX, FX(0.66));
+    fx_t leftDirX  = dirX - planeX;
+    fx_t leftDirY  = dirY - planeY;
+    fx_t rightDirX = dirX + planeX;
+    fx_t rightDirY = dirY + planeY;
+
+    uint8_t *fb = fb_pixels();
+    int mid = SCREEN_H / 2;
+    for (int y = 0; y < mid; y++) {
+        int p = mid - y;
+        fx_t rowDist = ((fx_t)mid << FX_SHIFT) / p;
+        fx_t wxL = px + FX_MUL(rowDist, leftDirX);
+        fx_t wxR = px + FX_MUL(rowDist, rightDirX);
+        fx_t wyL = py + FX_MUL(rowDist, leftDirY);
+        fx_t wyR = py + FX_MUL(rowDist, rightDirY);
+
+        int base_shade = row_color[y] - CEIL_BASE;
+        if (base_shade >= SHADE_LEVELS - 1) continue;
+        int shade = base_shade + 3;
+        if (shade >= SHADE_LEVELS) shade = SHADE_LEVELS - 1;
+        uint8_t grid_c = CEIL_BASE + shade;
+
+        fx_t wxL_s = wxL * CEIL_GRID_DENSITY;
+        fx_t wxR_s = wxR * CEIL_GRID_DENSITY;
+        fx_t wyL_s = wyL * CEIL_GRID_DENSITY;
+        fx_t wyR_s = wyR * CEIL_GRID_DENSITY;
+        uint8_t *row_p = fb + y * SCREEN_W;
+        fx_t dX = wxR_s - wxL_s;
+        if (dX != 0) {
+            int lo = FX_INT(wxL_s), hi = FX_INT(wxR_s);
+            if (lo > hi) { int t = lo; lo = hi; hi = t; }
+            if (lo + 1 <= hi) {
+                fx_t scale = FX_DIV((fx_t)SCREEN_W << FX_SHIFT, dX);
+                for (int target = lo + 1; target <= hi; target++) {
+                    fx_t num = ((fx_t)target << FX_SHIFT) - wxL_s;
+                    int col = (int)(((int64_t)num * scale) >> (FX_SHIFT * 2));
+                    if (col >= 0 && col < SCREEN_W) row_p[col] = grid_c;
+                }
+            }
+        }
+        fx_t dY = wyR_s - wyL_s;
+        if (dY != 0) {
+            int lo = FX_INT(wyL_s), hi = FX_INT(wyR_s);
+            if (lo > hi) { int t = lo; lo = hi; hi = t; }
+            if (lo + 1 <= hi) {
+                fx_t scale = FX_DIV((fx_t)SCREEN_W << FX_SHIFT, dY);
+                for (int target = lo + 1; target <= hi; target++) {
+                    fx_t num = ((fx_t)target << FX_SHIFT) - wyL_s;
+                    int col = (int)(((int64_t)num * scale) >> (FX_SHIFT * 2));
+                    if (col >= 0 && col < SCREEN_W) row_p[col] = grid_c;
+                }
+            }
+        }
+    }
+}
+
 void raycast_render(void) {
     uint8_t *fb = fb_pixels();
 
@@ -562,6 +667,17 @@ void raycast_render(void) {
         uint32_t *row = fb32 + y * (SCREEN_W / 4);
         for (int x = 0; x < SCREEN_W / 4; x++) row[x] = c32;
     }
+
+    /* Dispatch the drop-ceiling grid to the slave SH-2. Snapshot the
+     * player state into the cache-through-aliased shared struct first,
+     * then write the command code to COMM4. The slave's polling loop
+     * picks it up, calls raycast_draw_ceiling_grid(), and writes 0
+     * back to COMM4 when done. Master continues with the carpet pass
+     * in parallel — disjoint framebuffer halves, no race. */
+    SHARED_UC->player.x     = player.x;
+    SHARED_UC->player.y     = player.y;
+    SHARED_UC->player.angle = player.angle;
+    MARS_SYS_COMM4 = MARS_CMD_CEILING;
 
     /* Carpet wear pass: stamp dark "stains" at world-position-hashed
      * locations on the floor. For each floor row, compute world XY at the
@@ -609,80 +725,12 @@ void raycast_render(void) {
         }
     }
 
-    /* Drop-ceiling vertical grid lines. For each ceiling row, compute the
-     * world XY at the leftmost and rightmost screen columns, then linearly
-     * interpolate to find any integer world-X or world-Y boundaries this
-     * row crosses. Mark those pixels darker. The result is a perspective-
-     * correct grid that slides with player motion and converges to the
-     * vanishing point — composes with the existing distance-ring darkening
-     * to give a true cross-grid (square panels close, perspective-squashed
-     * toward horizon). Cost ~1ms per frame. */
-    {
-        fx_t leftDirX  = dirX - planeX;
-        fx_t leftDirY  = dirY - planeY;
-        fx_t rightDirX = dirX + planeX;
-        fx_t rightDirY = dirY + planeY;
-        int mid = SCREEN_H / 2;
-        for (int y = 0; y < mid; y++) {
-            int p = mid - y;
-            fx_t rowDist = ((fx_t)mid << FX_SHIFT) / p;
-            fx_t wxL = player.x + FX_MUL(rowDist, leftDirX);
-            fx_t wxR = player.x + FX_MUL(rowDist, rightDirX);
-            fx_t wyL = player.y + FX_MUL(rowDist, leftDirY);
-            fx_t wyR = player.y + FX_MUL(rowDist, rightDirY);
-
-            /* Grid line color: ceiling row color, darkened by 3 more shades.
-             * If the base row is already at max-dark shade, the +3 clamps to
-             * the same value as the row — no visible grid line, so skip all
-             * the crossing math for this row. Saves work near the horizon. */
-            int base_shade = row_color[y] - CEIL_BASE;
-            if (base_shade >= SHADE_LEVELS - 1) continue;
-            int shade = base_shade + 3;
-            if (shade >= SHADE_LEVELS) shade = SHADE_LEVELS - 1;
-            uint8_t grid_c = CEIL_BASE + shade;
-
-            /* Scale world coords by CEIL_GRID_DENSITY so the integer-
-             * crossing detection triggers at every (1/density)-unit
-             * boundary instead of every whole unit. */
-            fx_t wxL_s = wxL * CEIL_GRID_DENSITY;
-            fx_t wxR_s = wxR * CEIL_GRID_DENSITY;
-            fx_t wyL_s = wyL * CEIL_GRID_DENSITY;
-            fx_t wyR_s = wyR * CEIL_GRID_DENSITY;
-            /* Hoist `y * SCREEN_W` once per row. */
-            uint8_t *row_p = fb + y * SCREEN_W;
-            /* World-X grid crossings. Compute SCREEN_W/dX_s once per row
-             * so each crossing reduces to a 32-bit mul + shift instead of
-             * a 64-bit FX_DIV. */
-            fx_t dX = wxR_s - wxL_s;
-            if (dX != 0) {
-                int lo = FX_INT(wxL_s), hi = FX_INT(wxR_s);
-                if (lo > hi) { int t = lo; lo = hi; hi = t; }
-                if (lo + 1 <= hi) {
-                    fx_t scale = FX_DIV((fx_t)SCREEN_W << FX_SHIFT, dX);
-                    for (int target = lo + 1; target <= hi; target++) {
-                        fx_t num = ((fx_t)target << FX_SHIFT) - wxL_s;
-                        /* col = (num/dX) * SCREEN_W = num * (SCREEN_W/dX). */
-                        int col = (int)(((int64_t)num * scale) >> (FX_SHIFT * 2));
-                        if (col >= 0 && col < SCREEN_W) row_p[col] = grid_c;
-                    }
-                }
-            }
-            /* World-Y grid crossings. */
-            fx_t dY = wyR_s - wyL_s;
-            if (dY != 0) {
-                int lo = FX_INT(wyL_s), hi = FX_INT(wyR_s);
-                if (lo > hi) { int t = lo; lo = hi; hi = t; }
-                if (lo + 1 <= hi) {
-                    fx_t scale = FX_DIV((fx_t)SCREEN_W << FX_SHIFT, dY);
-                    for (int target = lo + 1; target <= hi; target++) {
-                        fx_t num = ((fx_t)target << FX_SHIFT) - wyL_s;
-                        int col = (int)(((int64_t)num * scale) >> (FX_SHIFT * 2));
-                        if (col >= 0 && col < SCREEN_W) row_p[col] = grid_c;
-                    }
-                }
-            }
-        }
-    }
+    /* Sync point: wait for the slave to finish the ceiling grid before
+     * we start drawing walls. Walls write to both halves and may
+     * overlap the slave's top-half writes; matching the original
+     * sequential ordering (ceiling first, walls overwrite where they
+     * hit) keeps the visuals identical. */
+    while (MARS_SYS_COMM4 != MARS_CMD_NONE);
 
     for (int col = 0; col < SCREEN_W; col++) {
         /* Default z-buffer to "infinity" so missed-ray columns let lights

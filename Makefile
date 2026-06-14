@@ -125,11 +125,11 @@ md_src/%.o: md_src/%.s
 
 md_src/%.o: md_src/%.c
 	@echo "MDCC $<"
-	@$(MDCC) $(MDCCFLAGS) $(MDEXTRA) $(MDINCS) -c $< -o $@
+	@$(MDCC) $(MDCCFLAGS) $(MDEXTRA) $(MDINCS) -MMD -MP -c $< -o $@
 
 md_src/%.o: md_src/%.cpp
 	@echo "MDCXX $<"
-	@$(MDCXX) $(MDCXXFLAGS) $(MDEXTRA) $(MDINCS) -c $< -o $@
+	@$(MDCXX) $(MDCXXFLAGS) $(MDEXTRA) $(MDINCS) -MMD -MP -c $< -o $@
 
 # sh2 stuff
 
@@ -151,16 +151,25 @@ sh_src/%.o: sh_src/%.s
 
 sh_src/%.o: sh_src/%.c
 	@echo "SHCC $<"
-	@$(SHCC) $(SHCCFLAGS) $(SHEXTRA) $(SHINCS) -c $< -o $@
+	@$(SHCC) $(SHCCFLAGS) $(SHEXTRA) $(SHINCS) -MMD -MP -c $< -o $@
 
 sh_src/%.o: sh_src/%.cpp
 	@echo "SHCXX $<"
-	@$(SHCXX) $(SHCXXFLAGS) $(SHEXTRA) $(SHINCS) -c $< -o $@
+	@$(SHCXX) $(SHCXXFLAGS) $(SHEXTRA) $(SHINCS) -MMD -MP -c $< -o $@
+
+# Auto-generated header dependency files. -MMD emits one per .c next to
+# the .o; -include silently ignores them on a clean tree. Without this,
+# header changes don't trigger rebuilds and you ship stale .o files
+# compiled against an outdated struct layout — which is exactly how
+# we corrupted memory during the SH-2 split work.
+-include $(MDOBJS:.o=.d)
+-include $(SHOBJS:.o=.d)
 
 .PHONY: clean
 
 clean:
 	rm -f $(MDOBJS) $(SHOBJS)
+	rm -f $(MDOBJS:.o=.d) $(SHOBJS:.o=.d)
 	rm -f $(MDTARGET).bin $(MDTARGET).elf $(MDTARGET).lst
 	rm -f $(TARGET).32x $(TARGET).elf $(TARGET).lst
 	rm -f m68k_crt0.bin.o m68k_crt0.bin

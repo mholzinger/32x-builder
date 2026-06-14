@@ -1,0 +1,49 @@
+#ifndef SHARED_H
+#define SHARED_H
+
+#include <stdint.h>
+
+/* Inter-CPU shared state between the master and slave SH-2s.
+ *
+ * Lives in normal SDRAM (.bss). BOTH CPUs MUST access fields via the
+ * SHARED_UC macro below — plain `shared.field` access goes through
+ * each SH-2's 4KB write-through cache and the other CPU sees stale
+ * values. The cache-through alias (any SDRAM address OR'd with
+ * 0x20000000) bypasses the cache entirely; reads always hit SDRAM,
+ * writes commit directly. Slower than cached (~12 cycles per read)
+ * but coherent across CPUs. Confirmed working on real 32X hardware
+ * — see ROADMAP.md → SH-2 dual-CPU split. */
+
+/* COMM4 command codes (master → slave doorbell). 0 = no command /
+ * ACK. The slave's polling loop in s_main.c reads COMM4, executes
+ * the named work, then writes 0 back. Master waits for the 0 before
+ * proceeding past the sync point. */
+#define MARS_CMD_NONE     0
+#define MARS_CMD_CEILING  1
+
+/* Snapshot of the master's player state for the slave to render from.
+ * Master writes this just before signaling CMD_CEILING; slave reads
+ * it via cache-through. */
+typedef struct {
+    int32_t  x, y;      /* FX 16.16 world position */
+    uint16_t angle;     /* 0..255 in low byte (matches player.angle) */
+    uint16_t _pad;
+} player_snap_t;
+
+typedef struct {
+    /* Monotonic counter the slave increments forever in its idle loop.
+     * Master reads it as a "slave alive" indicator. */
+    volatile uint32_t slave_heartbeat;
+    /* Player snapshot for cross-CPU rendering. */
+    player_snap_t player;
+} shared_t;
+
+extern shared_t shared;
+
+/* Cache-through pointer to the shared struct. Use on BOTH CPUs for
+ * every read and write of any shared field. */
+#define SHARED_UC ((shared_t *)((uintptr_t)&shared | 0x20000000))
+
+#define SLAVE_HEARTBEAT (SHARED_UC->slave_heartbeat)
+
+#endif

@@ -12,3 +12,6 @@
 # macOS
 .DS_Store
 sh_src/md_start.bin
+
+# GCC -MMD auto-generated header dependency files
+*.d

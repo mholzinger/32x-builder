@@ -41,7 +41,7 @@ player_t player = {
  *                                "why is this here" Backrooms vibe).
  *   SPAWN CORRIDOR: tight col-16 N-S corridor from row 17 to 28,
  *                   side-doors at (15,20), (17,23), (15,26). */
-const uint8_t world_map[MAP_H][MAP_W] = {
+uint8_t world_map[MAP_H][MAP_W] = {
     {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
     {1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
     {1,0,0,0,0,0,0,0,1,0,0,0,1,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,1},
@@ -140,16 +140,23 @@ typedef struct {
 static const standup_t standups[] = {
     /* Neanderthal ~5 cells north of spawn in the col-16 spine corridor.
      * Solid, walkable-through, the "iconic Backrooms cardboard cutout"
-     * moment. */
+     * moment. Audio-positioned via the Voyager-record hello loop. */
     { FX(16.5), FX(23.5), 64,  0 },
-    /* Watcher in the far east corner of the SE lounge — different zone
-     * so it isn't confused with the corridor neanderthal. Player has
-     * to take the east door off the spawn corridor (col 17, row 23)
-     * to find it. Silhouette fades when approached. Facing north
-     * (192) so it appears to be looking back at the player as they
-     * enter the lounge. */
-    { FX(28.5), FX(22.5), 192, 1 },
 };
+
+/* Free-standing wallpaper partitions ("fake walls"). Defined by two
+ * world-space endpoints — rendered as perspective-correct textured
+ * line segments (1/z column interpolation), full ceiling-to-floor
+ * height, both sides identical wallpaper. Same chevron and shade
+ * ramp as the surrounding walls. Walkable-through. */
+typedef struct { fx_t x1, y1, x2, y2; } partition_t;
+static const partition_t partitions[] = {
+    /* SE lounge — 4-cell partition along Y=22. */
+    { FX(22), FX(22), FX(26), FX(22) },
+    /* Central band — 3-cell partition along X=20. */
+    { FX(20), FX(11), FX(20), FX(14) },
+};
+#define NUM_PARTITIONS (int)(sizeof(partitions) / sizeof(partitions[0]))
 #define NUM_STANDUPS (int)(sizeof(standups) / sizeof(standups[0]))
 
 /* Illuminated drop-ceiling panels (the Backrooms iconic recessed
@@ -356,6 +363,32 @@ static int cell_passable(int x, int y) {
     return world_map[y][x] == 0;
 }
 
+/* Returns 1 if (px, py) world position would intersect any partition's
+ * thickened axis-aligned bounding box (rendered thickness + player
+ * radius), 0 otherwise. */
+static int partition_collides(fx_t px, fx_t py) {
+    const fx_t PARTITION_HALF_THICK = FX(0.075);
+    const fx_t PLAYER_RADIUS        = FX(0.2);
+    fx_t margin = PARTITION_HALF_THICK + PLAYER_RADIUS;
+    for (int i = 0; i < NUM_PARTITIONS; i++) {
+        fx_t x1 = partitions[i].x1, x2 = partitions[i].x2;
+        fx_t y1 = partitions[i].y1, y2 = partitions[i].y2;
+        if (x1 > x2) { fx_t t = x1; x1 = x2; x2 = t; }
+        if (y1 > y2) { fx_t t = y1; y1 = y2; y2 = t; }
+        if (px >= x1 - margin && px <= x2 + margin &&
+            py >= y1 - margin && py <= y2 + margin) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int position_clear(fx_t px, fx_t py) {
+    if (!cell_passable(FX_INT(px), FX_INT(py))) return 0;
+    if (partition_collides(px, py)) return 0;
+    return 1;
+}
+
 /* Head-bob state. bob_phase advances when the player is moving, and
  * raycast_render applies a small perpendicular position sway derived
  * from sin(bob_phase) before computing the camera basis. Cheap (just
@@ -400,10 +433,10 @@ void player_update(void) {
 
     /* Axis-separated collision: try X first, then Y. */
     fx_t newX = player.x + dx;
-    if (cell_passable(FX_INT(newX), FX_INT(player.y))) player.x = newX;
+    if (position_clear(newX, player.y)) player.x = newX;
 
     fx_t newY = player.y + dy;
-    if (cell_passable(FX_INT(player.x), FX_INT(newY))) player.y = newY;
+    if (position_clear(player.x, newY)) player.y = newY;
 
     /* Track walking state and advance bob phase. */
     is_walking = (dx != 0 || dy != 0);
@@ -540,6 +573,214 @@ static void draw_standups(uint8_t *fb,
                 tex_pos += texY_step;
             }
         }
+    }
+}
+
+/* Render one textured line segment as a wall slice. Used by
+ * draw_partitions which calls this 4 times per partition — once
+ * per side of the partition's thin rectangle. */
+static void draw_partition_segment(uint8_t *fb, fx_t inv_det,
+                                   fx_t dirX, fx_t dirY,
+                                   fx_t planeX, fx_t planeY,
+                                   fx_t wx1, fx_t wy1, fx_t wx2, fx_t wy2,
+                                   fx_t length_cells) {
+    fx_t sx1 = wx1 - player.x;
+    fx_t sy1 = wy1 - player.y;
+    fx_t sx2 = wx2 - player.x;
+    fx_t sy2 = wy2 - player.y;
+
+    fx_t tx1 = FX_MUL(inv_det,
+                      FX_MUL( dirY,  sx1) - FX_MUL( dirX,  sy1));
+    fx_t ty1 = FX_MUL(inv_det,
+                      FX_MUL(-planeY, sx1) + FX_MUL( planeX, sy1));
+    fx_t tx2 = FX_MUL(inv_det,
+                      FX_MUL( dirY,  sx2) - FX_MUL( dirX,  sy2));
+    fx_t ty2 = FX_MUL(inv_det,
+                      FX_MUL(-planeY, sx2) + FX_MUL( planeX, sy2));
+
+    if (ty1 < FX(0.5) && ty2 < FX(0.5)) return;
+
+    fx_t u1 = 0;
+    fx_t u2 = FX_ONE;
+    if (ty1 < FX(0.5)) {
+        fx_t t = FX_DIV(FX(0.5) - ty1, ty2 - ty1);
+        tx1 += FX_MUL(t, tx2 - tx1);
+        u1  += FX_MUL(t, u2 - u1);
+        ty1  = FX(0.5);
+    }
+    if (ty2 < FX(0.5)) {
+        fx_t t = FX_DIV(FX(0.5) - ty2, ty1 - ty2);
+        tx2 += FX_MUL(t, tx1 - tx2);
+        u2  += FX_MUL(t, u1 - u2);
+        ty2  = FX(0.5);
+    }
+
+    int sxA = (SCREEN_W >> 1)
+            + (int)(((int32_t)(SCREEN_W >> 1) * FX_DIV(tx1, ty1)) >> FX_SHIFT);
+    int sxB = (SCREEN_W >> 1)
+            + (int)(((int32_t)(SCREEN_W >> 1) * FX_DIV(tx2, ty2)) >> FX_SHIFT);
+
+    fx_t tyL = ty1, tyR = ty2, uL = u1, uR = u2;
+    int sxL = sxA, sxR = sxB;
+    if (sxA > sxB) {
+        sxL = sxB; sxR = sxA;
+        tyL = ty2; tyR = ty1;
+        uL  = u2;  uR  = u1;
+    }
+    if (sxR < 0 || sxL >= SCREEN_W) return;
+    int sx_clamped_lo = sxL < 0 ? 0 : sxL;
+    int sx_clamped_hi = sxR >= SCREEN_W ? SCREEN_W - 1 : sxR;
+    int sx_range = sxR - sxL;
+    if (sx_range <= 0) return;
+
+    fx_t inv_zL = FX_DIV(FX_ONE, tyL);
+    fx_t inv_zR = FX_DIV(FX_ONE, tyR);
+    fx_t uoverz_L = FX_MUL(uL, inv_zL);
+    fx_t uoverz_R = FX_MUL(uR, inv_zR);
+
+    int tex_u_total =
+        ((int)(length_cells >> FX_SHIFT)) * WALL_TILE_X * WALL_TEX_WIDTH;
+    if (tex_u_total <= 0) tex_u_total = WALL_TEX_WIDTH;
+
+    for (int x = sx_clamped_lo; x <= sx_clamped_hi; x++) {
+        fx_t t = ((fx_t)(x - sxL) << FX_SHIFT) / sx_range;
+        fx_t inv_z = FX_MUL(FX_ONE - t, inv_zL) + FX_MUL(t, inv_zR);
+        if (inv_z <= 0) continue;
+        fx_t z = FX_DIV(FX_ONE, inv_z);
+        if (z >= WALL_DIST(x)) continue;
+
+        fx_t u_over_z = FX_MUL(FX_ONE - t, uoverz_L) + FX_MUL(t, uoverz_R);
+        fx_t u = FX_MUL(u_over_z, z);
+
+        /* LOD swap matching the main wall draw — hi-res 64×64 inside
+         * WALL_LOD_THRESHOLD, lo-res 16×16 otherwise. Both stored
+         * column-major. */
+        const uint8_t *tex_data;
+        int tex_w, tex_h, tile_x, tile_y;
+        if (z < WALL_LOD_THRESHOLD) {
+            tex_data = (const uint8_t *)wall_tex_hi;
+            tex_w    = WALL_TEX_HI_WIDTH;
+            tex_h    = WALL_TEX_HI_HEIGHT;
+            tile_x   = WALL_TILE_HI_X;
+            tile_y   = WALL_TILE_HI_Y;
+        } else {
+            tex_data = (const uint8_t *)wall_tex;
+            tex_w    = WALL_TEX_WIDTH;
+            tex_h    = WALL_TEX_HEIGHT;
+            tile_x   = WALL_TILE_X;
+            tile_y   = WALL_TILE_Y;
+        }
+        int tex_u_pc =
+            ((int)(length_cells >> FX_SHIFT)) * tile_x * tex_w;
+        if (tex_u_pc <= 0) tex_u_pc = tex_w;
+        int tex_u = (int)((u * tex_u_pc) >> FX_SHIFT);
+        int texX = tex_u & (tex_w - 1);
+
+        int lineHeight = (int)(((int32_t)SCREEN_H << FX_SHIFT) / z);
+        int wall_top = SCREEN_H / 2 - lineHeight / 2;
+        int wall_bot = SCREEN_H / 2 + lineHeight / 2;
+        int drawStart = wall_top < 0 ? 0 : wall_top;
+        int drawEnd   = wall_bot >= SCREEN_H ? SCREEN_H - 1 : wall_bot;
+
+        int wall_shade;
+        if (z < FX(2.5)) {
+            wall_shade = (int)((z * 2) / FX(2.5));
+        } else {
+            fx_t past = z - FX(2.5);
+            fx_t span = FOG_RAMP_DIST - FX(2.5);
+            wall_shade = 2 + (int)((past * 13) / span);
+        }
+        wall_shade += 1;
+        if (wall_shade < 0) wall_shade = 0;
+        if (wall_shade > SHADE_LEVELS - 1) wall_shade = SHADE_LEVELS - 1;
+
+        /* Two-stage LUT (matches main wall draw): 5-bucket palette
+         * byte → per-pixel loop is one byte lookup, no multiply or
+         * clamp. */
+        uint8_t lut5[5];
+        for (int vv = 0; vv < 5; vv++) {
+            int pattern = (vv * WALL_PATTERN_MAX) >> 4;
+            int s = wall_shade + pattern;
+            if (s >= SHADE_LEVELS) s = SHADE_LEVELS - 1;
+            lut5[vv] = (uint8_t)(WALL_BASE + s);
+        }
+        const uint8_t *wall_col = tex_data + texX * tex_h;
+        uint8_t shade_lut[WALL_TEX_HI_HEIGHT];
+        for (int ty = 0; ty < tex_h; ty++) {
+            shade_lut[ty] = lut5[wall_col[ty]];
+        }
+
+        fx_t texY_step =
+            ((fx_t)(tex_h * tile_y) << FX_SHIFT) / lineHeight;
+        fx_t tex_pos = (fx_t)(drawStart - wall_top) * texY_step;
+        int tex_h_mask = tex_h - 1;
+        uint8_t *p = fb + drawStart * SCREEN_W + x;
+        for (int y = drawStart; y <= drawEnd; y++) {
+            int texY = (tex_pos >> FX_SHIFT) & tex_h_mask;
+            *p = shade_lut[texY];
+            p += SCREEN_W;
+            tex_pos += texY_step;
+        }
+    }
+}
+
+/* Free-standing wallpaper partitions — thin rectangular volumes (~6"
+ * thick) rendered as 4 wall slices each. Two long faces show the
+ * wallpaper, two short end caps give the partition visible depth when
+ * viewed edge-on. Currently axis-aligned only.
+ *
+ * Math: transform endpoints to camera space; if either is behind the
+ * near plane, clip the segment along the line to the near plane;
+ * project both to screen X; for each column between them, interpolate
+ * 1/z linearly (perspective-correct) and recover z; from z get
+ * lineHeight, wall_top, wall_shade; texU is also interpolated
+ * perspective-correctly (u/z linear, then * z) so the chevron doesn't
+ * skew across the wall. */
+static void draw_partitions(uint8_t *fb,
+                            fx_t dirX, fx_t dirY, fx_t planeX, fx_t planeY) {
+    fx_t det = FX_MUL(planeX, dirY) - FX_MUL(dirX, planeY);
+    if (det == 0) return;
+    fx_t inv_det = FX_DIV(FX_ONE, det);
+
+    const fx_t HALF_THICK = FX(0.075);   /* 0.15 cell = ~6 inches */
+
+    for (int i = 0; i < NUM_PARTITIONS; i++) {
+        fx_t x1 = partitions[i].x1;
+        fx_t y1 = partitions[i].y1;
+        fx_t x2 = partitions[i].x2;
+        fx_t y2 = partitions[i].y2;
+        fx_t dx_w = x2 - x1;
+        fx_t dy_w = y2 - y1;
+
+        fx_t off_x = 0, off_y = 0;
+        if (dx_w == 0)         off_x = HALF_THICK; /* vertical → offset on X */
+        else if (dy_w == 0)    off_y = HALF_THICK; /* horizontal → offset on Y */
+
+        fx_t adx = dx_w < 0 ? -dx_w : dx_w;
+        fx_t ady = dy_w < 0 ? -dy_w : dy_w;
+        fx_t length_long  = adx > ady ? adx : ady;
+        fx_t length_short = HALF_THICK + HALF_THICK;
+
+        /* Long face A. */
+        draw_partition_segment(fb, inv_det, dirX, dirY, planeX, planeY,
+                               x1 - off_x, y1 - off_y,
+                               x2 - off_x, y2 - off_y,
+                               length_long);
+        /* Long face B. */
+        draw_partition_segment(fb, inv_det, dirX, dirY, planeX, planeY,
+                               x1 + off_x, y1 + off_y,
+                               x2 + off_x, y2 + off_y,
+                               length_long);
+        /* End cap at endpoint 1. */
+        draw_partition_segment(fb, inv_det, dirX, dirY, planeX, planeY,
+                               x1 - off_x, y1 - off_y,
+                               x1 + off_x, y1 + off_y,
+                               length_short);
+        /* End cap at endpoint 2. */
+        draw_partition_segment(fb, inv_det, dirX, dirY, planeX, planeY,
+                               x2 - off_x, y2 - off_y,
+                               x2 + off_x, y2 + off_y,
+                               length_short);
     }
 }
 
@@ -823,22 +1064,38 @@ void raycast_draw_carpet(int col_start, int col_end) {
         fx_t worldY = py + FX_MUL(rowDist, leftDirY);
         fx_t stepX  = FX_MUL(rowDist, rightDirX - leftDirX) / SCREEN_W;
         fx_t stepY  = FX_MUL(rowDist, rightDirY - leftDirY) / SCREEN_W;
-        fx_t stepX4 = stepX << 2;
-        fx_t stepY4 = stepY << 2;
         uint8_t dark_c = (uint8_t)(FLOOR_BASE + base_shade + 2);
+
+        /* Distance-based screen-stamp step (LOD). Each carpet stain is
+         * defined in world space — the screen step is just how often we
+         * sample. At distance, fewer screen pixels cover the same world
+         * area so we can sample sparser without losing visible density.
+         *   base_shade 0-3 (close):  every 4th  px (densest, normal pass)
+         *   base_shade 4-7 (mid):    every 8th  px
+         *   base_shade 8+  (far):    every 16th px
+         * Saves ~40% of carpet pass work on a typical scene where most
+         * rows are mid/far range. */
+        int x_step = 4;
+        if      (base_shade >= 8) x_step = 16;
+        else if (base_shade >= 4) x_step = 8;
+        fx_t stepWX = stepX * x_step;
+        fx_t stepWY = stepY * x_step;
+
         /* Pre-advance worldX/Y to col_start so this CPU only does the
-         * 4-pixel iterations covering its column range. col_start is
-         * assumed a multiple of 4 (SCREEN_W/2 = 160 → ✓). */
-        int skip = col_start >> 2;
-        worldX += stepX4 * skip;
-        worldY += stepY4 * skip;
-        for (int x = col_start; x < col_end; x += 4) {
+         * iterations covering its column range. col_start is a multiple
+         * of 4; we round it down to a multiple of x_step too. */
+        int x_start = (col_start / x_step) * x_step;
+        if (x_start < col_start) x_start += x_step;
+        int skip = x_start / x_step;
+        worldX += stepWX * skip;
+        worldY += stepWY * skip;
+        for (int x = x_start; x < col_end; x += x_step) {
             int wx = (int)(worldX >> 13) & 0xFF;
             int wy = (int)(worldY >> 13) & 0xFF;
             int hash = (wx * 73 + wy * 31) & 0xF;
             if (hash < 6) fb[y * SCREEN_W + x] = dark_c;
-            worldX += stepX4;
-            worldY += stepY4;
+            worldX += stepWX;
+            worldY += stepWY;
         }
     }
 }
@@ -1091,6 +1348,13 @@ void raycast_draw_walls(int col_start, int col_end) {
          * the strip reads as the wallpaper's background yellow with the
          * chevron motif simply stopping at the molding line. */
         uint8_t base_color = (uint8_t)(WALL_BASE + wall_shade);
+        /* 1-pixel darker line at the wall/molding boundary suggests
+         * the shadow gap of a recessed baseboard — a small depth cue
+         * that reads as the molding standing slightly proud of the
+         * wall. Two shades darker than the molding base. */
+        int shadow_shade = wall_shade + 2;
+        if (shadow_shade > SHADE_LEVELS - 1) shadow_shade = SHADE_LEVELS - 1;
+        uint8_t shadow_color = (uint8_t)(WALL_BASE + shadow_shade);
 
         fx_t tex_step = (fx_t)divu_read();
         fx_t tex_pos  = (fx_t)(drawStart - wall_top) * tex_step;
@@ -1176,7 +1440,15 @@ void raycast_draw_walls(int col_start, int col_end) {
                 tex_pos += tex_step;
             }
         }
-        for (int by = wall_end + 1; by <= drawEnd; by++) {
+        /* Top row of the molding gets the shadow-line color, rest of
+         * the strip stays at base_color. */
+        int by = wall_end + 1;
+        if (by <= drawEnd) {
+            *p = shadow_color;
+            p += SCREEN_W;
+            by++;
+        }
+        for (; by <= drawEnd; by++) {
             *p = base_color;
             p += SCREEN_W;
         }
@@ -1276,6 +1548,7 @@ void raycast_render(void) {
      * into the same screen rows. The light z-test handles walls; the
      * draw-order handles sprites. */
     draw_lights(fb, dirX, dirY, planeX, planeY);
+    draw_partitions(fb, dirX, dirY, planeX, planeY);
     draw_standups(fb, dirX, dirY, planeX, planeY);
 
     /* Vertical head bob via framebuffer line table.

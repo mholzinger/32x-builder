@@ -24,7 +24,9 @@ typedef struct {
 } player_t;
 
 extern player_t player;
-extern const uint8_t world_map[MAP_H][MAP_W];
+/* Non-const so procgen can overwrite it at boot. The hand-tuned default
+ * still lives in the .data section initializer in raycast.c. */
+extern uint8_t world_map[MAP_H][MAP_W];
 
 void raycast_init(void);
 void raycast_render(void);

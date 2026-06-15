@@ -3,6 +3,7 @@
 #include "raycast.h"
 #include "font.h"
 #include "shared.h"
+#include "procgen.h"
 
 static uint32_t lastTick = 0;
 static uint16_t currentFB = 0;
@@ -103,6 +104,126 @@ int m_main(void) {
     Hw32xDelay(1);    /* wait for first vblank — palette is writable now */
     raycast_init();
     prof_init();
+
+    /* Cardboard box title screen. Box body fills the center, two top
+     * flaps animate from closed (covering the top) to open (folded
+     * up and away) revealing the title text inside. The "fold" is
+     * stylized — flap height shrinks linearly from full to zero — but
+     * reads as opening once corrugation lines and a tape strip suggest
+     * the cardboard surface. */
+    {
+        const int box_x1 = 60,  box_x2 = 260;
+        const int box_y1 = 60,  box_y2 = 180;
+        const int box_mid_x  = (box_x1 + box_x2) / 2;
+        const int flap_full_h = 40;
+        const int OPEN_FRAMES = 60;
+
+        /* Cardboard palette indices — reuse FLOOR_BASE brown shades.
+         * +1 = light kraft, +3 = mid, +6 = dark edge/seam. */
+        const uint8_t CB_BODY     = 17 + 2;
+        const uint8_t CB_FLAP_L   = 17 + 1;
+        const uint8_t CB_FLAP_R   = 17 + 3;
+        const uint8_t CB_EDGE     = 17 + 6;
+        const uint8_t CB_CORRUGAT = 17 + 4;
+        const uint8_t BG_DARK     = 46;
+
+        uint16_t prev_pad = 0xFFFF;
+        uint32_t frame = 0;
+        int menu_selection = 0;  /* 0 = JUMP IN, 1 = NOCLIP PROCEDURAL */
+        for (;;) {
+            HwMdReadPad(0);
+            uint16_t pad = MARS_SYS_COMM8;
+            uint16_t pressed = (uint16_t)(pad & ~prev_pad);
+            prev_pad = pad;
+
+            /* After the flaps have opened, run the start menu: UP/DOWN
+             * toggles between the two options, START commits. Pressing
+             * START before the box is open is ignored so the user
+             * actually sees the animation. */
+            if (frame > OPEN_FRAMES) {
+                if (pressed & SEGA_CTRL_UP)    menu_selection = 0;
+                if (pressed & SEGA_CTRL_DOWN)  menu_selection = 1;
+                if (pressed & SEGA_CTRL_START) break;
+            }
+
+            uint8_t *fb = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
+
+            /* Dark room background. */
+            for (int y = 0; y < SCREEN_H; y++) {
+                uint8_t *row = fb + y * SCREEN_W;
+                for (int x = 0; x < SCREEN_W; x++) row[x] = BG_DARK;
+            }
+
+            /* Box body. */
+            for (int y = box_y1; y < box_y2; y++) {
+                uint8_t *row = fb + y * SCREEN_W;
+                for (int x = box_x1; x < box_x2; x++) row[x] = CB_BODY;
+            }
+            /* Subtle horizontal corrugation lines — every 6 rows. */
+            for (int y = box_y1 + 6; y < box_y2 - 2; y += 6) {
+                uint8_t *row = fb + y * SCREEN_W;
+                for (int x = box_x1 + 1; x < box_x2 - 1; x++) row[x] = CB_CORRUGAT;
+            }
+            /* Vertical tape strip down the centre — gives the box its
+             * "this thing was sealed and just opened" feel. */
+            for (int y = box_y1; y < box_y2; y++) {
+                fb[y * SCREEN_W + box_mid_x - 1] = CB_EDGE;
+                fb[y * SCREEN_W + box_mid_x    ] = CB_EDGE;
+            }
+            /* Box outer edge. */
+            for (int x = box_x1; x < box_x2; x++) {
+                fb[box_y1       * SCREEN_W + x] = CB_EDGE;
+                fb[(box_y2 - 1) * SCREEN_W + x] = CB_EDGE;
+            }
+            for (int y = box_y1; y < box_y2; y++) {
+                fb[y * SCREEN_W + box_x1    ] = CB_EDGE;
+                fb[y * SCREEN_W + box_x2 - 1] = CB_EDGE;
+            }
+
+            /* Flaps shrinking from full height to zero over OPEN_FRAMES. */
+            int flap_h = (frame < OPEN_FRAMES)
+                ? flap_full_h - (int)((flap_full_h * frame) / OPEN_FRAMES)
+                : 0;
+            for (int y = box_y1 + 1; y < box_y1 + flap_h; y++) {
+                uint8_t *row = fb + y * SCREEN_W;
+                for (int x = box_x1 + 1; x < box_mid_x; x++) row[x] = CB_FLAP_L;
+                for (int x = box_mid_x + 1; x < box_x2 - 1; x++) row[x] = CB_FLAP_R;
+            }
+
+            /* Once the flaps are out of the way, draw the title +
+             * two-option menu inside the box. */
+            if (frame >= OPEN_FRAMES) {
+                const int mid_y = (box_y1 + box_y2) / 2;
+                font_draw_string(fb, (SCREEN_W - 13 * 8) / 2,
+                                 mid_y - 28, "BACKROOMS 32X", 49);
+                font_draw_string(fb, box_x1 + 14, mid_y - 4,
+                                 (menu_selection == 0)
+                                   ? "> NOCLIP FIXED MAP"
+                                   : "  NOCLIP FIXED MAP", 49);
+                font_draw_string(fb, box_x1 + 14, mid_y + 8,
+                                 (menu_selection == 1)
+                                   ? "> NOCLIP PROCEDURAL"
+                                   : "  NOCLIP PROCEDURAL", 49);
+            }
+
+            swapBuffers();
+            frame++;
+        }
+        /* Branch on selection. NOCLIP PROCEDURAL overwrites world_map
+         * via xorshift32 seeded from `frame` — every press time gives
+         * a different layout. JUMP IN leaves the hand-tuned default
+         * map alone. */
+        if (menu_selection == 1) {
+            procgen_run(frame);
+        }
+        /* Wait until START is released so the in-game pause menu's
+         * edge-detect doesn't see the same press and pop open. */
+        for (;;) {
+            HwMdReadPad(0);
+            if (!(MARS_SYS_COMM8 & SEGA_CTRL_START)) break;
+            swapBuffers();
+        }
+    }
 
     for (;;) {
         /* Read the joypad up-front so the menu can both react to

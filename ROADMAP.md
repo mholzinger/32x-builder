@@ -7,33 +7,14 @@ revisit.
 ## Visual / atmospheric
 
 ### Ceiling lights as actual grid-tile illumination
-**Status:** unresolved (multiple attempts, none reading right)
-
-The intent is for "lit" ceiling fixtures to BE specific tiles of the
-existing drop-ceiling grid, not separate overlay sprites. The user wants
-to pick any random tile in the perspective-correct ceiling grid and have
-it light up — so the lit area tracks the same vanishing-point as the
-surrounding grid lines.
-
-What we've tried:
-- 2:1 billboard panels with center at the ceiling row (felt floating)
-- Flat 8:1 panels with bottom edge at the ceiling row (still felt like
-  hanging overlay)
-- 4-corner projection with bbox fill (no visible difference from user
-  POV — likely needs actual scanline polygon fill instead of bbox)
-
-Probable correct approach: project the 4 corners of the actual ceiling
-tile to screen, then fill the resulting trapezoid via scanline edge
-walking (left-edge + right-edge interpolation between top and bottom
-rows). The bounding-box approximation isn't good enough; we need the
-trapezoid edges to converge toward the vanishing point so the lit area
-visually feels like an axis-aligned tile in the same plane as the
-ceiling grid pattern.
-
-Alternative: full per-pixel floorcast of just the ceiling tiles flagged
-as illuminated, with the existing per-row grid-line code extended to
-also stamp bright pixels inside designated tile cells. Cost would be
-roughly the same as the floor-side carpet wear pass (~2-3ms).
+**Status:** ✅ done — scanline trapezoid fill from 4 projected corners
+of each axis-aligned ceiling tile. Per-edge slope precomputed once,
+per-row left/right reconstructed by linear interpolation, fill row
+with z-test against walls. Plus a 2-bulb fluorescent troffer pattern
+inside each tile (dim outer frame, two bright bulb bands, medium
+gap), and a grid of fixtures populated at init from `world_map` at
+every 2nd cell. Per-light flicker stays as a brightness offset on top
+of the bulb pattern, gated by the LIGHTING_FLICKER toggle in the menu.
 
 ### SH-2 dual-CPU split
 **Status:** ✅ done — multiple iterations. Current architecture is the
@@ -197,8 +178,10 @@ Single dark rectangle on one wall hinting at "the way out."
   Per-cell hash + shared frame counter make distant dark cells
   occasionally flicker to dim-yellow ("a fluorescent panel trying
   to start in the haze"). Lives in `draw_walls`.
-- ✅ watcher figure — the silhouette standup that vanishes when you
-  approach within 3 cells (NE of the SE lounge). See `standups[]`.
+- Watcher figure REMOVED — the silhouette standup that vanished on
+  approach was alluding to something we hadn't built. The infra
+  (`standup_t.silhouette` field + draw_standups branch + per-standup
+  vanish-on-distance check) is still in place for future reuse.
 - Open: occasional 1-frame full-screen palette shift (chromatic
   glitch)
 - Open: corridor that loops you back where you started (loop-warp

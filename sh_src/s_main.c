@@ -3,6 +3,12 @@
 #include "shared.h"
 #include "sound.h"
 
+static inline uint16_t slave_frt_read(void) {
+    uint8_t hi = SH2_FRT_FRCH;
+    uint8_t lo = SH2_FRT_FRCL;
+    return ((uint16_t)hi << 8) | lo;
+}
+
 /* Slave SH-2 entry point. The crt0 jumps here once the master clears
  * the slave's S_OK wait at COMM4 — see m_main.c for the release fix.
  *
@@ -17,6 +23,12 @@ void s_main(void) {
      * slav_dma_irq) re-arms it forever. The polling loop below then
      * runs unaffected — SH-2 interrupts preempt it cleanly. */
     amb_sound_init();
+
+    /* Slave-side FRT init for profiling parity with master. Φ/32
+     * prescaler = ~720kHz, 1.39μs per tick — same as m_main.c. */
+    SH2_FRT_TIER  = 0x01;
+    SH2_FRT_TCR   = 0x01;
+    SH2_FRT_FTCSR = 0;
 
     for (;;) {
         /* Throttled COMM4 poll. A tight poll (read-compare-branch
@@ -41,15 +53,18 @@ void s_main(void) {
             continue;
         }
         switch (cmd) {
-        case MARS_CMD_HALF:
+        case MARS_CMD_HALF: {
             /* Slave owns the right half of the screen. Clears, draws
              * the floor/ceiling grid + wear + walls — no overlap with
              * master, so no synchronization mid-frame. */
+            uint16_t t0 = slave_frt_read();
             raycast_clear_half(SCREEN_W / 2, SCREEN_W);
             raycast_draw_ceiling_grid(SCREEN_W / 2, SCREEN_W);
             raycast_draw_carpet(SCREEN_W / 2, SCREEN_W);
             raycast_draw_walls(SCREEN_W / 2, SCREEN_W);
+            SHARED_UC->slave_render_ticks = (uint16_t)(slave_frt_read() - t0);
             break;
+        }
         }
         SLAVE_HEARTBEAT++;
         MARS_SYS_COMM4 = MARS_CMD_NONE;   /* ACK */

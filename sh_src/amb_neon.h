@@ -4,9 +4,10 @@
 #define AMB_NEON_H
 #include <stdint.h>
 
-#define AMB_NEON_SAMPLE_COUNT 22050
-#define AMB_NEON_SAMPLE_RATE  11025
+#define AMB_NEON_SAMPLE_COUNT 32000
+#define AMB_NEON_SAMPLE_RATE  16000
+#define AMB_NEON_SAMPLE_BITS  16
 
-extern const uint16_t amb_neon_samples[22050];
+extern const uint16_t amb_neon_samples[32000];
 
 #endif

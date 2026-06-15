@@ -4,10 +4,10 @@
 #define AMB_STEP_H
 #include <stdint.h>
 
-#define AMB_STEP_SAMPLE_COUNT 18000
-#define AMB_STEP_SAMPLE_RATE  6000
-#define AMB_STEP_SAMPLE_BITS  8
+#define AMB_STEP_SAMPLE_COUNT 33075
+#define AMB_STEP_SAMPLE_RATE  11025
+#define AMB_STEP_SAMPLE_BITS  16
 
-extern const int8_t amb_step_samples[18000];
+extern const uint16_t amb_step_samples[33075];
 
 #endif

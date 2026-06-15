@@ -18,12 +18,24 @@
  * applied to the squared distance. */
 #define HELLO_FADE_RADIUS_SQ 64   /* 8 cells */
 
-/* PWM duty-cycle compare range — d32xr's standard 10-bit-in-16-bit
- * envelope. The DC center is (MAX+MIN)/2 = 517. Speaker at silence
- * holds this value. */
-#define SAMPLE_MIN 2
-#define SAMPLE_MAX 1032
-#define SAMPLE_CENTER ((SAMPLE_MAX + SAMPLE_MIN) / 2)
+/* PWM duty-cycle compare range. Widened from the old [2..1032] (half-
+ * span 515) to [8..1430] (half-span 711) so the per-sample mix sum has
+ * ~38% more headroom before clipping. At our 16kHz output rate
+ * PWM_CYCLE = 1438; we use 1430 of those ticks leaving 8 ticks
+ * (~0.6%) of safety margin. Keeps buzz/neon levels intact (they're
+ * the constant ambient bed) while giving room for hello+step to mix
+ * in without summing past the rails. */
+#define SAMPLE_MIN 8
+#define SAMPLE_MAX 1430
+#define SAMPLE_CENTER ((SAMPLE_MAX + SAMPLE_MIN) / 2)   /* 719 */
+
+/* Soft-clip thresholds — about 80% of the symmetric budget around
+ * SAMPLE_CENTER. Above SOFT_HIGH or below SOFT_LOW the mix sum is
+ * compressed 4:1 toward the rails (smooth harmonic warmth) instead
+ * of hard-clipped (harsh digital crunch). The hard clip at
+ * SAMPLE_MIN/MAX remains as a final backstop. */
+#define SOFT_HIGH 1290   /* SAMPLE_CENTER + 571 (~80% of 711 budget) */
+#define SOFT_LOW   148   /* SAMPLE_CENTER - 571 */
 
 /* Step A of the slave-fills-buffer refactor — allocate ping-pong
  * SDRAM buffers that the slave will write into (with optional gain /
@@ -99,7 +111,7 @@ void amb_dma_handler(void) {
     amb_current_buf_idx ^= 1;
 
     /* Point DMA at the new current buffer. */
-    SH2_DMA_SAR1  = (uint32_t)amb_pwm_buf[amb_current_buf_idx];
+    SH2_DMA_SAR1  = (uint32_t)(uintptr_t)amb_pwm_buf[amb_current_buf_idx];
     SH2_DMA_TCR1  = AMB_SAMPLES_PER_BUF;
     SH2_DMA_CHCR1 = 0x14E5;
 }
@@ -234,22 +246,30 @@ void amb_pump(void) {
 
     static uint32_t buzz_pos = 0;
     for (int i = 0; i < AMB_SAMPLES_PER_BUF; i++) {
-        /* Buzz with envelope. */
+        /* Buzz with envelope. >>9 (was >>8) halves the contribution so
+         * the source's fade-in/out events sit underneath neon rather
+         * than overpowering it. Buzz is the atmospheric bed, not the
+         * lead. */
         int buzz = (int)amb_buzz_samples[buzz_pos];
-        int delta = ((buzz - SAMPLE_CENTER) * buzz_env_amp) >> 8;
+        int delta = ((buzz - SAMPLE_CENTER) * buzz_env_amp) >> 9;
 
-        /* Neon sting at half amplitude when active. */
+        /* Neon sting at quarter amplitude (was >>1). Source peak is
+         * ±633 of the ±711 budget — at >>1 it dominated the mix and
+         * blew through the soft-clip headroom; at >>2 it sits around
+         * ±158, in line with buzz/hello/step. */
         if (neon_active) {
             int neon = (int)amb_neon_samples[neon_pos];
-            delta += (neon - SAMPLE_CENTER) >> 1;
+            delta += (neon - SAMPLE_CENTER) >> 2;
             neon_pos++;
             if (neon_pos >= AMB_NEON_SAMPLE_COUNT) neon_active = 0;
         }
 
         /* Hello looping continuously, volume by distance to neanderthal.
          * int8_t samples expand to centered ~10-bit range via << 2.
-         * hello_pos_fx advances at fractional rate so the 4 kHz source
-         * plays correctly at the 11 kHz output. */
+         * Restored to >>8 (unity) since the buzz drop opened up enough
+         * headroom — hello carries the voyager voice and audibility
+         * matters more than peak budgeting for it. Worst-case overlap
+         * (close + walking + neon) goes through the soft-clipper. */
         if (hello_amp > 0) {
             uint32_t hello_idx = hello_pos_fx >> 16;
             int hello = (int)amb_hello_samples[hello_idx] << 2;
@@ -258,23 +278,31 @@ void amb_pump(void) {
         hello_pos_fx += HELLO_STEP_FX;
         if ((hello_pos_fx >> 16) >= AMB_HELLO_SAMPLE_COUNT) hello_pos_fx = 0;
 
-        /* Carpet footstep — only advance + mix when player is moving.
-         * step_volume gives independent mix control (separate from
-         * amb_volume so the menu can adjust ambient and footsteps
-         * independently). 128 ≈ the old hard-coded `>> 1` baseline. */
+        /* Carpet footstep — bypasses master `vol` (amb_volume) below.
+         * >>9 (was >>8) halves its contribution so it shares the
+         * budget evenly with buzz/neon/hello. Source baked 11kHz/16-bit. */
+        int step_delta = 0;
         if (SHARED_UC->is_walking) {
             uint32_t step_idx = step_pos_fx >> 16;
-            int step = (int)amb_step_samples[step_idx] << 2;
+            int step = (int)amb_step_samples[step_idx] - SAMPLE_CENTER;
             int step_vol = (int)SHARED_UC->step_volume;
-            delta += (step * step_vol) >> 8;
+            step_delta = (step * step_vol) >> 9;
             step_pos_fx += STEP_STEP_FX;
             if ((step_pos_fx >> 16) >= AMB_STEP_SAMPLE_COUNT) step_pos_fx = 0;
         }
 
-        /* Runtime gain (>> 7, 128 = unity), re-center, clip. */
-        int s = ((delta * vol) >> 7) + SAMPLE_CENTER;
-        if (s < SAMPLE_MIN) s = SAMPLE_MIN;
+        /* Master gain on ambient sources; step added post-master. */
+        int s = ((delta * vol) >> 7) + step_delta + SAMPLE_CENTER;
+
+        /* Soft clip — piecewise linear 4:1 compression above/below
+         * the SOFT_HIGH/SOFT_LOW thresholds (about 80% of the budget
+         * each way), with the hard clip as a backstop for catastrophic
+         * peaks. Sounds like tube saturation instead of harsh digital
+         * clipping when the mix sum overshoots. */
+        if (s > SOFT_HIGH) s = SOFT_HIGH + ((s - SOFT_HIGH) >> 2);
+        if (s < SOFT_LOW)  s = SOFT_LOW  - ((SOFT_LOW  - s) >> 2);
         if (s > SAMPLE_MAX) s = SAMPLE_MAX;
+        if (s < SAMPLE_MIN) s = SAMPLE_MIN;
         amb_pwm_buf[buf_idx][i] = (uint16_t)s;
 
         buzz_pos++;
@@ -290,7 +318,7 @@ void amb_sound_init(void) {
      * Set here on the slave at boot for robustness against whether
      * crt0 actually copies .data from ROM to SDRAM at startup. */
     SHARED_UC->amb_volume  = 128;
-    SHARED_UC->step_volume = 112;   /* user-tuned baseline */
+    SHARED_UC->step_volume = 140;   /* 25% above the 11kHz/16-bit re-bake baseline */
 
     /* Step A: initialize the ping-pong state and prefill both buffers
      * with silence (DC center). Steps B+C swap to using these instead
@@ -304,7 +332,7 @@ void amb_sound_init(void) {
     Mars_InitPWM(AMB_BUZZ_SAMPLE_RATE, SAMPLE_MIN, SAMPLE_MAX);
 
     /* DMA destination = PWM mono register, fixed. */
-    SH2_DMA_DAR1  = (uint32_t)&MARS_PWM_MONO;
+    SH2_DMA_DAR1  = (uint32_t)(uintptr_t)&MARS_PWM_MONO;
     SH2_DMA_DRCR1 = 0;                /* external DREQ source = PWM */
     SH2_DMA_DMAOR = 1;                /* master enable for the DMAC */
 
@@ -325,7 +353,7 @@ void amb_sound_init(void) {
      * (DC center), so the first ~46 ms is silent until the pump (step
      * C) gets going. After that, completions are handled by the IRQ
      * → amb_dma_handler swap chain. */
-    SH2_DMA_SAR1  = (uint32_t)amb_pwm_buf[0];
+    SH2_DMA_SAR1  = (uint32_t)(uintptr_t)amb_pwm_buf[0];
     SH2_DMA_TCR1  = AMB_SAMPLES_PER_BUF;
     SH2_DMA_CHCR1 = 0x14E5;
 }

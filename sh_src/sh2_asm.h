@@ -78,6 +78,22 @@ static inline uint32_t divu_read(void) {
     return result;
 }
 
+/* Top 32 bits of a 32×32→64-bit signed product. Maps to one DMULS.L
+ * + STS MACH (~4 cycles) instead of GCC's software 64-bit multiply
+ * which it falls back to when it doesn't recognize the
+ * `(int)(((int64_t)a * b) >> 32)` idiom. Drops the ceiling_grid
+ * per-grid-crossing math from ~30 cycles to ~4 — at 5000+ crossings
+ * per frame that's ~6 ms saved per CPU. */
+static inline int32_t mul_hi32_s(int32_t a, int32_t b) {
+    int32_t hi;
+    __asm__ (
+        "dmuls.l %1, %2\n\t"
+        "sts mach, %0\n\t"
+        : "=r"(hi) : "r"(a), "r"(b) : "mach", "macl"
+    );
+    return hi;
+}
+
 /* SH-2 test-and-set for cross-CPU mutex. tas.b @Rn reads the byte,
  * sets T = 1 if it was 0 (we got the lock), sets T = 0 if it was
  * non-zero (someone else holds it), and always sets the byte's MSB

@@ -93,12 +93,16 @@ const uint8_t world_map[MAP_H][MAP_W] = {
 #define TEX_W WALL_TEX_WIDTH
 #define TEX_H WALL_TEX_HEIGHT
 
-/* Liminal fog: hard view-distance cap. Walls past this distance don't get
- * rendered (column falls back to the floor/ceiling haze). Doubles as a
- * Backrooms aesthetic (haze hides the geometry beyond) AND a perf knob
- * (fewer wall pixels per frame on long sightlines). */
-#define MAX_VIEW_DIST     FX(6)
-#define MAX_VIEW_DIST_INT 6
+/* Liminal fog. DDA walks rays out to MAX_VIEW_DIST then bails — walls
+ * beyond that simply aren't hit. The shade ramp uses the shorter
+ * FOG_RAMP_DIST so walls reach full-fog shade by ~6 cells; anything
+ * the DDA finds between FOG_RAMP_DIST and MAX_VIEW_DIST renders at
+ * shade 15 (indistinguishable from the floor/ceiling fog), giving the
+ * Backrooms "emerges from the greenish darkness" effect rather than a
+ * hard pop-in at the cutoff. */
+#define FOG_RAMP_DIST     FX(6)
+#define MAX_VIEW_DIST     FX(10)
+#define MAX_VIEW_DIST_INT 10
 
 /* Drop-ceiling grid density — number of panel boundaries per 1-unit map
  * cell. Higher = denser grid. The cost is identical at any density; we
@@ -154,20 +158,30 @@ static const standup_t standups[] = {
  * most aren't" pattern is what makes the lobby reference photo read
  * as actual drop-ceiling lighting rather than "lights everywhere". */
 typedef struct { fx_t x, y; } light_t;
-static const light_t lights[] = {
-    /* Down the spawn corridor — three lights stretching north from
-     * spawn give the iconic "fluorescent panels recede toward vanishing
-     * point" Backrooms shot. */
-    { FX(16.5), FX(26.5) },   /* close to spawn */
-    { FX(16.5), FX(21.5) },
-    { FX(16.5), FX(15.5) },   /* far end of corridor, in central band */
-    /* One per surrounding zone, drawing the eye outward. */
-    { FX(6.5),  FX(6.5)  },   /* NW office cubicles */
-    { FX(24.5), FX(5.5)  },   /* NE inside the nested rooms */
-    { FX(24.5), FX(22.5) },   /* SE lounge */
-    { FX(6.5),  FX(23.5) },   /* SW maze */
-};
-#define NUM_LIGHTS (int)(sizeof(lights) / sizeof(lights[0]))
+
+/* Grid of recessed fluorescent fixtures populated by init_lights() at
+ * boot — one panel every 2 cells in both axes, skipping cells that
+ * are inside walls. Matches the regular cadence of the Sketchfab
+ * Backrooms reference where the drop ceiling holds a fixture roughly
+ * every other panel run. 200 slots is enough for the densest possible
+ * 32×32 walkable map (~250 cells / 4 = ~62 fixtures in practice). */
+#define MAX_LIGHTS 200
+static light_t lights[MAX_LIGHTS];
+static int num_lights = 0;
+#define NUM_LIGHTS num_lights
+
+static void init_lights(void) {
+    num_lights = 0;
+    for (int my = 1; my < MAP_H - 1; my += 2) {
+        for (int mx = 1; mx < MAP_W - 1; mx += 2) {
+            if (world_map[my][mx] != 0) continue;
+            if (num_lights >= MAX_LIGHTS) return;
+            lights[num_lights].x = FX(mx) + FX(0.5);
+            lights[num_lights].y = FX(my) + FX(0.5);
+            num_lights++;
+        }
+    }
+}
 
 /* How many times the wallpaper tile repeats per 1-unit map cell.
  * TEX_W/H must be powers of 2 so the wrap can be a cheap bitmask.
@@ -202,10 +216,13 @@ static void build_shading_tables(void) {
         if (y < mid)      yy = mid - y;
         else if (y > mid) yy = y - mid;
         else              yy = 1;          /* avoid div-by-zero at horizon */
-        /* Classic raycaster row distance: rowDist = mid / yy.
-         * Pre-clamp to shade range; visually compresses far rows into the
-         * darkest shade (the "Backrooms haze" near the horizon). */
-        int shade = mid / yy - 1;
+        /* Compressed perspective shade ramp. True mid/yy keeps the
+         * close ceiling/floor at shade 0 across most of the screen
+         * and only ramps to fog in the last ~10 rows at the horizon.
+         * Multiplying by 3/2 makes the fade visible across the full
+         * vertical extent — matches the cadence of the wall_shade
+         * ramp which hits full fog at perpDist 6. */
+        int shade = ((mid * 3) / (yy * 2)) - 1;
         if (shade < 0) shade = 0;
         if (shade >= SHADE_LEVELS) shade = SHADE_LEVELS - 1;
         row_color[y] = (y <= mid) ? (CEIL_BASE + shade)
@@ -229,9 +246,13 @@ static void build_shading_tables(void) {
  *
  * Note: this isn't a perf knob — it's just palette base values at init.
  * Changing these has zero runtime cost. */
-#define FOG_R 0
-#define FOG_G 0
-#define FOG_B 0
+/* Mid-grey fog. Equal RGB so the far distance reads as neutral rather
+ * than tinted any direction. RGB(8,8,8) ≈ 26% brightness — distinctly
+ * "in the haze" but still a clearly visible surface rather than a hole
+ * punched in the world. Distance shade 15 lands at ≈ RGB(9, 9, 8). */
+#define FOG_R 8
+#define FOG_G 8
+#define FOG_B 8
 
 /* Linear blend of bright base (weight: SHADE_LEVELS - i) toward fog (weight: i). */
 #define MIX(bright, fog, i) (((bright) * (SHADE_LEVELS - (i)) + (fog) * (i)) / SHADE_LEVELS)
@@ -262,9 +283,9 @@ static void build_palette(void) {
      * walls (30,27,13) but unmistakably in the same warm yellow palette. */
     for (int i = 0; i < SHADE_LEVELS; i++) {
         Hw32xSetBGColor(CEIL_BASE + i,
-                        MIX(27, FOG_R, i),
-                        MIX(25, FOG_G, i),
-                        MIX(14, FOG_B, i));
+                        MIX(25, FOG_R, i),
+                        MIX(23, FOG_G, i),
+                        MIX(16, FOG_B, i));
     }
     /* Fluorescent lights: 4 brightness states for flicker (full / 75 / 50 / 25%). */
     Hw32xSetBGColor(LIGHT_BASE + 0, 31, 31, 28);
@@ -296,6 +317,7 @@ static inline uint8_t *fb_pixels(void) {
 void raycast_init(void) {
     build_palette();
     build_shading_tables();
+    init_lights();
     /* Precompute cameraX[col] = 2*col/SCREEN_W - 1 in FX. */
     for (int col = 0; col < SCREEN_W; col++) {
         cameraX_table[col] = ((fx_t)col << (FX_SHIFT + 1)) / SCREEN_W - FX_ONE;
@@ -306,6 +328,14 @@ void raycast_init(void) {
  * mimics a dying fluorescent's flicker. Must be called from inside
  * vblank (after the COMM12 tick wait) to avoid mid-frame CRAM tearing. */
 void raycast_shimmer(void) {
+    /* Gated by LIGHTING_SHIMMER. When off, leave CRAM at the original
+     * build_palette values — the WALL_BASE/CEIL_BASE entries stop
+     * pulsing each frame. */
+    if (!(SHARED_UC->lighting_flags & LIGHTING_SHIMMER)) {
+        Hw32xSetBGColor(WALL_BASE, 30, 25, 6);
+        Hw32xSetBGColor(CEIL_BASE, 26, 26, 26);
+        return;
+    }
     static uint32_t frame_count = 0;
     frame_count++;
     /* LCG, top bits are the most uncorrelated. */
@@ -531,7 +561,12 @@ static void draw_lights(uint8_t *fb,
      * corners to screen and fill the bounding rectangle, so the lit
      * area tracks the same perspective as the surrounding ceiling
      * grid lines instead of being a separate billboard sprite. */
-    const fx_t TILE_HALF = FX(0.25);   /* 0.5-unit panel = 2 small grid cells */
+    /* One actual ceiling panel. CEIL_GRID_DENSITY = 4 means 4 panels
+     * per 1-unit cell side, so a single panel is 0.25 units wide and
+     * TILE_HALF = 0.125 (half-extent in each axis). Matches the
+     * "single recessed fluorescent in one drop-ceiling tile" look of
+     * the Backrooms reference renders. */
+    const fx_t TILE_HALF = FX(0.125);
 
     for (int i = 0; i < NUM_LIGHTS; i++) {
         fx_t lx = lights[i].x;
@@ -545,11 +580,15 @@ static void draw_lights(uint8_t *fb,
         if (centerY < FX(0.5)) continue;
         if (centerY >= MAX_VIEW_DIST) continue;
 
-        /* Project all 4 corners. */
+        /* Project all 4 corners of the axis-aligned ceiling tile,
+         * saving (sx, sy) for each so we can do proper scanline
+         * trapezoid fill instead of bounding-box. The bbox lit area
+         * was reading as a hovering rectangular sprite; this fill
+         * tracks the same perspective as the surrounding ceiling
+         * grid lines so the lit area looks like a real tile. */
         fx_t corner_dx[4] = { -TILE_HALF, +TILE_HALF, +TILE_HALF, -TILE_HALF };
         fx_t corner_dy[4] = { -TILE_HALF, -TILE_HALF, +TILE_HALF, +TILE_HALF };
-
-        int min_x = SCREEN_W, max_x = -1;
+        int corner_sx[4], corner_sy[4];
         int min_y = SCREEN_H, max_y = -1;
         int valid = 1;
         for (int k = 0; k < 4; k++) {
@@ -560,39 +599,87 @@ static void draw_lights(uint8_t *fb,
             if (tY < FX(0.2)) { valid = 0; break; }
 
             fx_t ratio = FX_DIV(tX, tY);
-            int sx = (SCREEN_W >> 1)
-                   + (int)(((int32_t)(SCREEN_W >> 1) * ratio) >> FX_SHIFT);
+            corner_sx[k] = (SCREEN_W >> 1)
+                  + (int)(((int32_t)(SCREEN_W >> 1) * ratio) >> FX_SHIFT);
             int yoff = (int)(((int32_t)(SCREEN_H >> 1) << FX_SHIFT) / tY);
-            int sy = (SCREEN_H >> 1) - yoff;
+            corner_sy[k] = (SCREEN_H >> 1) - yoff;
 
-            if (sx < min_x) min_x = sx;
-            if (sx > max_x) max_x = sx;
-            if (sy < min_y) min_y = sy;
-            if (sy > max_y) max_y = sy;
+            if (corner_sy[k] < min_y) min_y = corner_sy[k];
+            if (corner_sy[k] > max_y) max_y = corner_sy[k];
         }
         if (!valid) continue;
-
-        if (min_x < 0)         min_x = 0;
-        if (max_x >= SCREEN_W) max_x = SCREEN_W - 1;
         if (min_y < 0)         min_y = 0;
         if (max_y >= SCREEN_H) max_y = SCREEN_H - 1;
-        if (max_x < min_x || max_y < min_y) continue;
+        if (max_y < min_y) continue;
 
-        /* Per-light flicker (unchanged). */
-        uint32_t r = light_frame * 1103515245u + i * 12347u;
-        int roll = (r >> 24) & 0x1F;
-        uint8_t color;
-        if      (roll < 2)  color = LIGHT_BASE + 2;
-        else if (roll < 5)  color = LIGHT_BASE + 1;
-        else                color = LIGHT_BASE + 0;
+        /* Precompute per-edge slope (dx per dy, fixed-point). Each
+         * scanline reads two edges and reconstructs x via slope * (y -
+         * y_start) — no division in the scanline loop. */
+        fx_t edge_dx[4];
+        for (int e = 0; e < 4; e++) {
+            int e1 = (e + 1) & 3;
+            int dy = corner_sy[e1] - corner_sy[e];
+            edge_dx[e] = (dy != 0)
+                ? ((fx_t)(corner_sx[e1] - corner_sx[e]) << FX_SHIFT) / dy
+                : 0;
+        }
 
-        /* Paint the bounding rectangle, z-tested against walls per column. */
-        for (int x = min_x; x <= max_x; x++) {
-            if (centerY >= WALL_DIST(x)) continue;
-            uint8_t *p = fb + min_y * SCREEN_W + x;
-            for (int y = min_y; y <= max_y; y++) {
-                *p = color;
-                p += SCREEN_W;
+        /* Per-light flicker — converts a random roll into a brightness
+         * offset added to the per-row pattern below. 0 = full bright,
+         * +1 = 75%, +2 = 50% (dim glitch). Gated by LIGHTING_FLICKER:
+         * with the bit clear, every panel stays at full brightness. */
+        int flicker_off = 0;
+        if (SHARED_UC->lighting_flags & LIGHTING_FLICKER) {
+            uint32_t r = light_frame * 1103515245u + i * 12347u;
+            int roll = (r >> 24) & 0x1F;
+            if      (roll < 2)  flicker_off = 2;
+            else if (roll < 5)  flicker_off = 1;
+        }
+
+        /* Two-bulb fluorescent troffer pattern: divide the panel
+         * vertically into 16 bands. Outer 2 bands top + bottom = dim
+         * frame, bands 2-5 and 10-13 = bright bulbs, middle 4 bands =
+         * dimmer gap between the bulbs. Suggests a real fixture with
+         * two parallel tubes behind a diffuser. */
+        int panel_h = max_y - min_y + 1;
+
+        /* Scanline fill: at each row, find the two edges that span
+         * this y and reconstruct left/right x from precomputed slopes.
+         * Z-test per column against walls so foreground walls occlude
+         * the lit area cleanly. */
+        for (int y = min_y; y <= max_y; y++) {
+            int xs[2];
+            int n = 0;
+            for (int e = 0; e < 4 && n < 2; e++) {
+                int e1 = (e + 1) & 3;
+                int lo = corner_sy[e] < corner_sy[e1] ? corner_sy[e] : corner_sy[e1];
+                int hi = corner_sy[e] < corner_sy[e1] ? corner_sy[e1] : corner_sy[e];
+                if (y < lo || y > hi) continue;
+                if (corner_sy[e] == corner_sy[e1]) continue;
+                xs[n++] = corner_sx[e]
+                       + (int)(((fx_t)(y - corner_sy[e]) * edge_dx[e]) >> FX_SHIFT);
+            }
+            if (n < 2) continue;
+            int lx_s = xs[0] < xs[1] ? xs[0] : xs[1];
+            int rx_s = xs[0] > xs[1] ? xs[0] : xs[1];
+            if (lx_s < 0)         lx_s = 0;
+            if (rx_s >= SCREEN_W) rx_s = SCREEN_W - 1;
+
+            /* Pick row brightness from the bulb pattern, then add
+             * flicker offset and clamp to the 4-entry light ramp. */
+            int frac = ((y - min_y) << 4) / panel_h;
+            int base_off;
+            if      (frac < 2 || frac >= 14) base_off = 2;
+            else if (frac < 6 || frac >= 10) base_off = 0;
+            else                             base_off = 1;
+            int idx = base_off + flicker_off;
+            if (idx > 3) idx = 3;
+            uint8_t color = (uint8_t)(LIGHT_BASE + idx);
+
+            uint8_t *p = fb + y * SCREEN_W + lx_s;
+            for (int x = lx_s; x <= rx_s; x++) {
+                if (centerY < WALL_DIST(x)) *p = color;
+                p++;
             }
         }
     }
@@ -670,7 +757,7 @@ void raycast_draw_ceiling_grid(int col_start, int col_end) {
                 fx_t scale = FX_DIV((fx_t)SCREEN_W << FX_SHIFT, dX);
                 for (int target = lo + 1; target <= hi; target++) {
                     fx_t num = ((fx_t)target << FX_SHIFT) - wxL_s;
-                    int col = (int)(((int64_t)num * scale) >> (FX_SHIFT * 2));
+                    int col = mul_hi32_s(num, scale);
                     if (col >= col_start && col < col_end) row_p[col] = grid_c;
                 }
             }
@@ -688,7 +775,7 @@ void raycast_draw_ceiling_grid(int col_start, int col_end) {
                 fx_t scale = FX_DIV((fx_t)SCREEN_W << FX_SHIFT, dY);
                 for (int target = lo + 1; target <= hi; target++) {
                     fx_t num = ((fx_t)target << FX_SHIFT) - wyL_s;
-                    int col = (int)(((int64_t)num * scale) >> (FX_SHIFT * 2));
+                    int col = mul_hi32_s(num, scale);
                     if (col >= col_start && col < col_end) row_p[col] = grid_c;
                 }
             }
@@ -836,7 +923,10 @@ void raycast_draw_walls(int col_start, int col_end) {
                                     : (sideDistY - deltaDistY);
         if (perpDist < FX(0.1)) perpDist = FX(0.1);
         WALL_DIST(col) = perpDist;
-        if (perpDist >= MAX_VIEW_DIST) continue;
+        /* No hard cutoff at MAX_VIEW_DIST — let walls render through
+         * fog. The shade ramp clamps them to shade 15 past FOG_RAMP_DIST
+         * so they're already fog-colored before they would have popped
+         * in/out abruptly. */
 
         /* DIVU latency hide #1: start lineHeight = (SCREEN_H << 16) /
          * perpDist, then do wall_shade + wall_hit + texX in parallel
@@ -856,9 +946,13 @@ void raycast_draw_walls(int col_start, int col_end) {
             wall_shade = (int)((perpDist * 2) / FX(2.5));
         } else {
             fx_t past = perpDist - FX(2.5);
-            fx_t span = MAX_VIEW_DIST - FX(2.5);
+            fx_t span = FOG_RAMP_DIST - FX(2.5);
             wall_shade = 2 + (int)((past * 13) / span);
         }
+        /* Past FOG_RAMP_DIST the formula keeps going up; clamp here
+         * so the LOD/shade_lut math sees a valid index. Everything in
+         * the 6..10 distance band renders at shade 15. */
+        if (wall_shade > SHADE_LEVELS - 1) wall_shade = SHADE_LEVELS - 1;
         /* Bump all walls one shade darker so the wall reads as the
          * muted yellow of an actual Backrooms hallway instead of the
          * brightest palette entry. Was previously applied as a side==1
@@ -867,6 +961,33 @@ void raycast_draw_walls(int col_start, int col_end) {
          * chevron sits in the same perceptual region everywhere. */
         wall_shade += 1;
         if (wall_shade < 0) wall_shade = 0;
+        /* Final clamp so the baseboard color lookup (WALL_BASE +
+         * wall_shade) and any downstream shade-index user can't walk
+         * off the end of the wall palette into FLOOR_BASE — that bug
+         * was painting distant baseboards as bright carpet yellow. */
+        if (wall_shade > SHADE_LEVELS - 1) wall_shade = SHADE_LEVELS - 1;
+
+        /* Distant fluorescent strobe burst. Each cell past
+         * FOG_RAMP_DIST has its own pseudo-random phase. Most of the
+         * time it sits dark (shade 15). Phase 0..5 of every 256-frame
+         * cycle (~2.3% per cell) it enters a 6-frame "burst" where it
+         * flickers on/off at a per-frame coin flip — reads as a
+         * fluorescent panel struggling to start, not a single-frame
+         * pop. Cell offset (cell_seed >> 4) staggers which cells fire
+         * when, so distant scenes get a steady drip of flickers from
+         * different positions over time. */
+        if (perpDist >= FOG_RAMP_DIST
+            && (SHARED_UC->lighting_flags & LIGHTING_STROBE)) {
+            uint32_t cell_seed = (uint32_t)mapX * 12347u
+                               + (uint32_t)mapY * 7919u;
+            uint32_t phase = (SHARED_UC->frame_count + (cell_seed >> 4))
+                             & 0xFF;
+            if (phase < 6) {
+                uint32_t flicker = SHARED_UC->frame_count * 1103515245u
+                                 + cell_seed;
+                if (flicker & 0x800000) wall_shade = 12;
+            }
+        }
 
         /* Per-column LOD: hi-res chevron when the wall hit is close
          * enough to read the motif, lo-res noise otherwise. Adjacent
@@ -894,7 +1015,12 @@ void raycast_draw_walls(int col_start, int col_end) {
             ? (py + FX_MUL(perpDist, rayDirY))
             : (px + FX_MUL(perpDist, rayDirX));
         wall_hit -= (fx_t)FX_INT(wall_hit) << FX_SHIFT;
-        int texX = (int)(((int64_t)wall_hit * (tex_w * tile_x)) >> FX_SHIFT)
+        /* wall_hit ∈ [0, FX_ONE), tex_w*tile_x ≤ 1024 → product ≤ 67M
+         * which doesn't fit in int32 signed but does fit in uint32. The
+         * uint32 cast lets SH-2 use a single MUL.L (~3 cycles) instead
+         * of the int64 software multiply (~40 cycles). Mask wraps. */
+        int texX = (int)(((uint32_t)wall_hit * (uint32_t)(tex_w * tile_x))
+                          >> FX_SHIFT)
                    & tex_w_mask;
 
         int lineHeight = (int)divu_read();
@@ -927,12 +1053,24 @@ void raycast_draw_walls(int col_start, int col_end) {
          * contiguous tex_h-byte strip this loop walks. Sized for the
          * largest possible TEX_H (hi-res 64), tiny stack cost. */
         const uint8_t *wall_col = tex_data + texX * tex_h;
-        uint8_t shade_lut[WALL_TEX_HI_HEIGHT];
-        for (int ty = 0; ty < tex_h; ty++) {
-            int pattern = (wall_col[ty] * detail_factor) >> 4;
+
+        /* Two-stage LUT build. wall_tex values are 0..4 (5 buckets
+         * from bake_wall.py --levels 5). Precompute the final palette
+         * byte for each bucket once per column, then the per-ty loop
+         * becomes a pure table indirection — no multiply, shift, or
+         * clamp per ty. At hi-res LOD (tex_h=64) this cuts ~5 cycles
+         * × 64 ty ≈ 320 cycles per column × 160 cols per CPU ≈ ~2ms
+         * per CPU per frame on wall-heavy scenes. */
+        uint8_t lut5[5];
+        for (int v = 0; v < 5; v++) {
+            int pattern = (v * detail_factor) >> 4;
             int s = wall_shade + pattern;
             if (s >= SHADE_LEVELS) s = SHADE_LEVELS - 1;
-            shade_lut[ty] = (uint8_t)(WALL_BASE + s);
+            lut5[v] = (uint8_t)(WALL_BASE + s);
+        }
+        uint8_t shade_lut[WALL_TEX_HI_HEIGHT];
+        for (int ty = 0; ty < tex_h; ty++) {
+            shade_lut[ty] = lut5[wall_col[ty]];
         }
 
         /* Baseboard molding: bottom ~3% of the wall in world space gets
@@ -957,37 +1095,86 @@ void raycast_draw_walls(int col_start, int col_end) {
         fx_t tex_step = (fx_t)divu_read();
         fx_t tex_pos  = (fx_t)(drawStart - wall_top) * tex_step;
         uint8_t *p = (uint8_t *)fb + col + drawStart * SCREEN_W;
-        /* 4x unrolled wall pixel loop. Per-iteration overhead (cmp/bra,
-         * y inc) is amortized over 4 textured writes; the 4 shade_lut
-         * loads can pipeline before any stores commit so the SH-2's
-         * narrow issue window stays busy. Tail loop catches the
-         * remaining 0-3 pixels.
+        /* Hand-rolled SH-2 asm wall column inner loop. 4 pixels per
+         * iteration, no spills, indexed byte load via @(R0,Rm), DT-
+         * driven count-down for one cmp/bra per 4 pixels.
+         *
+         * Per pixel: mov+shlr16+and+mov.b(load)+add+mov.b(store)+add
+         * = 7 instructions. 4 pixels + dt + bf = 30 instructions per
+         * 4-pixel iter. GCC's auto-unrolled C version was generating
+         * around 36-40 with some spills; the asm version both keeps
+         * tex_pos/p/lut/step/mask in registers across the unroll AND
+         * schedules the load-use chains tightly so SH-2's narrow
+         * pipeline stays full.
          *
          * Preserves the original post-loop state of p and tex_pos
          * (advances exactly (wall_end - drawStart + 1) writes) so the
          * baseboard loop below picks up at the right framebuffer row. */
-        int y = drawStart;
-        int y_end4 = wall_end - 3;
-        while (y <= y_end4) {
-            uint8_t a = shade_lut[(tex_pos >> FX_SHIFT) & tex_h_mask];
-            tex_pos += tex_step;
-            uint8_t b = shade_lut[(tex_pos >> FX_SHIFT) & tex_h_mask];
-            tex_pos += tex_step;
-            uint8_t c = shade_lut[(tex_pos >> FX_SHIFT) & tex_h_mask];
-            tex_pos += tex_step;
-            uint8_t d = shade_lut[(tex_pos >> FX_SHIFT) & tex_h_mask];
-            tex_pos += tex_step;
-            *p = a; p += SCREEN_W;
-            *p = b; p += SCREEN_W;
-            *p = c; p += SCREEN_W;
-            *p = d; p += SCREEN_W;
-            y += 4;
-        }
-        while (y <= wall_end) {
-            *p = shade_lut[(tex_pos >> FX_SHIFT) & tex_h_mask];
-            p += SCREEN_W;
-            tex_pos += tex_step;
-            y++;
+        int total = wall_end - drawStart + 1;
+        if (total > 0) {
+            int iters4 = total >> 2;
+            int tail   = total & 3;
+            if (iters4 > 0) {
+                /* clang LSP runs with host-arch register widths and
+                 * flags every 32-bit fx_t operand below as
+                 * "size doesn't match register width". sh-elf-gcc
+                 * (32-bit SH-2 registers) sees no mismatch. Silence
+                 * the LSP-only noise here. */
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wasm-operand-widths"
+#endif
+                __asm__ __volatile__ (
+                    "1:\n\t"
+                    /* pixel A */
+                    "mov   %[tp], r0\n\t"
+                    "shlr16 r0\n\t"
+                    "and   %[mask], r0\n\t"
+                    "mov.b @(r0,%[lut]), r1\n\t"
+                    "add   %[step], %[tp]\n\t"
+                    "mov.b r1, @%[p]\n\t"
+                    "add   %[sw], %[p]\n\t"
+                    /* pixel B */
+                    "mov   %[tp], r0\n\t"
+                    "shlr16 r0\n\t"
+                    "and   %[mask], r0\n\t"
+                    "mov.b @(r0,%[lut]), r1\n\t"
+                    "add   %[step], %[tp]\n\t"
+                    "mov.b r1, @%[p]\n\t"
+                    "add   %[sw], %[p]\n\t"
+                    /* pixel C */
+                    "mov   %[tp], r0\n\t"
+                    "shlr16 r0\n\t"
+                    "and   %[mask], r0\n\t"
+                    "mov.b @(r0,%[lut]), r1\n\t"
+                    "add   %[step], %[tp]\n\t"
+                    "mov.b r1, @%[p]\n\t"
+                    "add   %[sw], %[p]\n\t"
+                    /* pixel D */
+                    "mov   %[tp], r0\n\t"
+                    "shlr16 r0\n\t"
+                    "and   %[mask], r0\n\t"
+                    "mov.b @(r0,%[lut]), r1\n\t"
+                    "add   %[step], %[tp]\n\t"
+                    "mov.b r1, @%[p]\n\t"
+                    "add   %[sw], %[p]\n\t"
+                    /* DT decrements iters4 and sets T when zero. */
+                    "dt    %[it4]\n\t"
+                    "bf    1b\n\t"
+                    : [tp] "+r"(tex_pos), [p] "+r"(p), [it4] "+r"(iters4)
+                    : [step] "r"(tex_step), [mask] "r"(tex_h_mask),
+                      [lut] "r"(shade_lut), [sw] "r"((int)SCREEN_W)
+                    : "r0", "r1", "memory"
+                );
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+            }
+            while (tail-- > 0) {
+                *p = shade_lut[(tex_pos >> FX_SHIFT) & tex_h_mask];
+                p += SCREEN_W;
+                tex_pos += tex_step;
+            }
         }
         for (int by = wall_end + 1; by <= drawEnd; by++) {
             *p = base_color;
@@ -1000,10 +1187,12 @@ void raycast_draw_walls(int col_start, int col_end) {
  * placeholder. Compiler dead-code-eliminates it once raycast_render
  * stops calling fixed-range walls. */
 
-/* Profile: how many FRT ticks did this frame's master spend spinning
- * on the slave-done waits? Master code in m_main.c reads this each
- * frame and overlays it next to the frame-time counter. */
+/* Profile counters. Both written by raycast_render, read by m_main.c
+ * for the on-screen overlay. half = master's parallel work
+ * (clear+ceiling+carpet+walls of its column range); idle = time
+ * spent spinning on the slave-done sync after that. */
 volatile uint16_t prof_master_idle_ticks = 0;
+volatile uint16_t prof_master_half_ticks = 0;
 static inline uint16_t prof_frt_read(void) {
     uint8_t hi = SH2_FRT_FRCH;
     uint8_t lo = SH2_FRT_FRCL;
@@ -1030,6 +1219,7 @@ void raycast_clear_half(int col_start, int col_end) {
 
 void raycast_render(void) {
     uint8_t *fb = fb_pixels();
+    uint16_t prof_start = prof_frt_read();
 
     /* Vertical head bob is applied below via the framebuffer line table —
      * no position translation needed (lateral sway felt like drunk
@@ -1062,6 +1252,7 @@ void raycast_render(void) {
     raycast_draw_walls(0, SCREEN_W / 2);
 
     uint16_t idle_start = prof_frt_read();
+    prof_master_half_ticks = (uint16_t)(idle_start - prof_start);
     while (MARS_SYS_COMM4 != MARS_CMD_NONE) {
         /* Throttle the master-side ACK wait to reduce 68K-bridge
          * pressure — bare-loop polling at ~5M reads/sec was lining
@@ -1080,8 +1271,12 @@ void raycast_render(void) {
      * the next swapBuffers() makes them visible via the VDP page flip. */
     __asm__ __volatile__("" ::: "memory");
 
-    draw_standups(fb, dirX, dirY, planeX, planeY);
+    /* Lights first, then standups — so foreground sprites (like the
+     * neanderthal) overpaint any ceiling-panel pixels that project
+     * into the same screen rows. The light z-test handles walls; the
+     * draw-order handles sprites. */
     draw_lights(fb, dirX, dirY, planeX, planeY);
+    draw_standups(fb, dirX, dirY, planeX, planeY);
 
     /* Vertical head bob via framebuffer line table.
      *

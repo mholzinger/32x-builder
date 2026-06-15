@@ -2,6 +2,7 @@
 #include "menu.h"
 #include "raycast.h"
 #include "font.h"
+#include "shared.h"
 
 static uint32_t lastTick = 0;
 static uint16_t currentFB = 0;
@@ -15,9 +16,10 @@ static uint16_t currentFB = 0;
  * we're done with the optimization pass. */
 static uint16_t prof_prev_frt = 0;
 static uint16_t prof_smoothed = 0;
-static uint16_t prof_idle_smoothed = 0;
+static uint16_t prof_slave_smoothed = 0;
+static uint16_t prof_half_smoothed = 0;
 
-extern volatile uint16_t prof_master_idle_ticks;  /* written by raycast_render */
+extern volatile uint16_t prof_master_half_ticks;  /* written by raycast_render */
 
 static inline uint16_t prof_read_frt(void) {
     /* Hitachi SH-2 FRT quirk: reading FRCH latches FRCL into a
@@ -40,11 +42,14 @@ static void prof_sample_and_draw(uint8_t *fb) {
     prof_prev_frt = now;
     /* EMA: 7/8 old + 1/8 new — ~8-frame time constant. */
     prof_smoothed = (uint16_t)((prof_smoothed - (prof_smoothed >> 3)) + (delta >> 3));
-    uint16_t idle = prof_master_idle_ticks;
-    prof_idle_smoothed = (uint16_t)((prof_idle_smoothed - (prof_idle_smoothed >> 3)) + (idle >> 3));
+    uint16_t slave = SHARED_UC->slave_render_ticks;
+    prof_slave_smoothed = (uint16_t)((prof_slave_smoothed - (prof_slave_smoothed >> 3)) + (slave >> 3));
+    uint16_t half = prof_master_half_ticks;
+    prof_half_smoothed = (uint16_t)((prof_half_smoothed - (prof_half_smoothed >> 3)) + (half >> 3));
 
-    /* "T:NNNNN I:NNNNN" — total frame ticks and master idle ticks. */
-    char text[16];
+    /* "T:NNNNN H:NNNNN S:NNNNN" — frame total, master half-render,
+     * slave half-render. Higher of H/S is the parallel bottleneck. */
+    char text[24];
     text[0] = 'T'; text[1] = ':';
     uint16_t v = prof_smoothed;
     text[6] = '0' + (v % 10); v /= 10;
@@ -52,17 +57,24 @@ static void prof_sample_and_draw(uint8_t *fb) {
     text[4] = '0' + (v % 10); v /= 10;
     text[3] = '0' + (v % 10); v /= 10;
     text[2] = '0' + v;
-    text[7] = ' '; text[8] = 'I'; text[9] = ':';
-    v = prof_idle_smoothed;
+    text[7] = ' '; text[8] = 'H'; text[9] = ':';
+    v = prof_half_smoothed;
     text[14] = '0' + (v % 10); v /= 10;
     text[13] = '0' + (v % 10); v /= 10;
     text[12] = '0' + (v % 10); v /= 10;
     text[11] = '0' + (v % 10); v /= 10;
     text[10] = '0' + v;
-    text[15] = 0;
+    text[15] = ' '; text[16] = 'S'; text[17] = ':';
+    v = prof_slave_smoothed;
+    text[22] = '0' + (v % 10); v /= 10;
+    text[21] = '0' + (v % 10); v /= 10;
+    text[20] = '0' + (v % 10); v /= 10;
+    text[19] = '0' + (v % 10); v /= 10;
+    text[18] = '0' + v;
+    text[23] = 0;
     /* Top-right corner. LIGHT_BASE[0] (palette idx 49) is the brightest
      * fixture-white, reads on every background. */
-    font_draw_string(fb, SCREEN_W - 8 * 15 - 4, 4, text, 49);
+    font_draw_string(fb, SCREEN_W - 8 * 23 - 4, 4, text, 49);
 }
 
 static void swapBuffers(void) {
@@ -103,6 +115,9 @@ int m_main(void) {
         if (!menu_is_active()) {
             player_update();
         }
+        /* Tick the shared frame counter before render so both CPUs
+         * read the same value when computing the distant-wall strobe. */
+        SHARED_UC->frame_count++;
         raycast_render();
         uint8_t *fb_text = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
         menu_render(fb_text);

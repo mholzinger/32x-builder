@@ -36,80 +36,12 @@ also stamp bright pixels inside designated tile cells. Cost would be
 roughly the same as the floor-side carpet wear pass (~2-3ms).
 
 ### SH-2 dual-CPU split
-**Status:** ready to retry — root causes of both prior failures now
-identified by deep research into d32xr (Doom 32X) and the 32XDK wiki.
-
-Goal: move wall column rendering or ceiling grid work onto the slave
-SH-2 (currently spinning in `for(;;)`) to parallelize ~5ms of work per
-frame.
-
-#### What went wrong before
-
-Attempt 1 (`dea2383`, black screen): we put shared state in SDRAM but
-accessed it via normal C pointers, which the linker placed in the
-*cached* `0x06xxxxxx` alias. The master's writes hit its own cache and
-were never visible to the slave; the slave read zeros and crashed.
-Possible secondary cause: both CPUs writing the same SDRAM word →
-documented hardware lockup per 32XDK wiki "Bugs and quirks".
-
-Attempt 2 (`9fd44f5`, no controller input): we used **COMM0** as the
-M↔S doorbell. COMM0–COMM3 are reserved for the **68K↔Master** channel
-(controllers, system services). Polling/clearing COMM0 from the slave
-destroyed the 68K's outgoing controller-poll command before the master
-could read it. `Mars_GetPad()` returned stale values forever.
-
-#### Correct architecture (verified against d32xr `marsnew.c`)
-
-**COMM register partition (don't violate):**
-- COMM0–COMM3 = 68K ↔ Master. *Never touch from slave.*
-- COMM4 = Master → Slave command (doorbell)
-- COMM6 = Master → Slave argument word
-
-Master writes a non-zero command code to COMM4; slave's polling loop
-sees it, executes, writes 0 back. Master uses `while (MARS_SYS_COMM4
-!= 0);` to wait for ACK before issuing the next command.
-
-**Shared-state cache rule:** any byte that both CPUs touch must be
-accessed via the cache-through alias. Take any cached pointer and
-OR with `0x20000000`:
-
-```c
-#define UNCACHED(p) ((typeof(p))((uintptr_t)(p) | 0x20000000))
-```
-
-The slave is already running from boot via its own reset vector — no
-"start slave" call is needed. The crt0 handshake (M_OK / S_OK / G_OK)
-already brings both CPUs up before `m_main()` / `s_main()` run.
-
-**Framebuffer ownership:** partition by region (master = cols 0–159,
-slave = cols 160–319, or master = walls, slave = ceiling). Both CPUs
-can write `0x24000000` directly with ~6–10% bus-contention tax. The
-hard rule: no byte may be written by both CPUs.
-
-#### Recommended first split — ceiling grid
-
-Read-only inputs (just player angle/position), writes a disjoint Y
-range from walls, pure compute, no game state mutation. Master signals
-`MARS_SECCMD_CEILING` on COMM4 → master draws walls → both wait for
-each other → flip framebuffer.
-
-#### Sources
-
-Definitive references in case we lose context again:
-- viciious/d32xr `marsnew.c::Mars_Secondary()` — the slave loop
-- viciious/d32xr `mars.h` — `Mars_R_SecWait`, `MARS_SECCMD_*` enum,
-  cache-flush macros, master-side inlines
-- viciious/d32xr `mars_ringbuf.h` — the `| 0x20000000` uncached-alias
-  pattern, literal
-- viciious/d32xr `crt0.s` — dual vector tables, M_OK/S_OK handshake
-- viciious/yatssd `32x.h` — MMIO address constants
-- matiaszanolli/sega-vr-disasm `analysis/68K_SH2_COMMUNICATION.md` —
-  the COMM partition diagram
-- viciious/32XDK wiki "Bugs and quirks" — the
-  "simultaneous-writes-to-same-SDRAM-word locks the system" rule
-- https://www.chibiakumas.com/sh2/32x.php — Keith S Smith's tutorial
-  series (not directly readable from sandbox but cited in the d32xr
-  community thread)
+**Status:** ✅ done — multiple iterations. Current architecture is the
+column-split: each CPU owns a vertical half of the screen and does its
+own clear + ceiling grid + carpet + walls in parallel; one COMM4 sync
+per frame before sprites/lights. Shared state uses the `| 0x20000000`
+cache-through alias as planned. The hand-rolled SH-2 asm wall pixel
+loop (see Perf section) sits inside this split.
 
 ## Level / geometry
 
@@ -126,23 +58,21 @@ with pillars, SW twisty maze, SE lounge with stub walls) all meeting
 at the spawn. Plays well on real hardware.
 
 ### In-game settings menu
-**Status:** planned — audio volume the primary motivator.
+**Status:** ✅ done — START opens a nix-terminal-style overlay with
+AMBIENCE and FOOTSTEPS sliders (0–100). Implementation in
+`sh_src/menu.c` + hand-rolled 8×8 bitmap font in `sh_src/font.c`. The
+audio decoupling (ambient slider scales buzz/neon/hello but not steps)
+ships with this. Still in the not-done pile from the original spec:
+turn/walk speed, view distance, head bob amplitude — none are blocking
+anyone, easy to add later.
 
-Accessible via START (pause). Settings to expose:
-- **Audio volume** — applies a runtime gain to the PWM samples
-  before they're DMA'd. Simplest: pre-multiply each sample as we
-  fill the buffer (when we move from straight ROM-DMA to a slave-
-  generated buffer for the synthesis route). For ROM-DMA-only,
-  rebuild with `--volume N` at build time.
-- **Turn / walk speed** — currently hardcoded constants.
-- **View distance / fog cutoff** — currently `MAX_VIEW_DIST = 6`.
-- **Head bob amplitude** — currently `±2` pixels.
-- **Toggle for the SH-2 sanity-check indicator square** (when we
-  eventually re-enable that overlay for debug builds).
-
-Storage: SRAM-backed if the cart has SRAM, otherwise per-boot. The
-start menu (below) is the natural pre-game container for the same
-options.
+### Sega 32X boot logo
+**Status:** designed by research agent, not implemented. Candidate
+catalog in the session transcript; recommended option is **Candidate
+2: palette-cycle shimmer** — static 32X panel (orange/yellow rounded
+rect + blue SEGA + red 32X), animated yellow border via CRAM rotation
+(same trick `raycast_shimmer()` already uses on the lights). ~190 LOC,
+~70KB ROM. Natural pairing with the start menu below.
 
 ### Start menu / map selection
 **Status:** planned
@@ -263,22 +193,33 @@ the recommendation maps cleanly to the existing infrastructure with
 Single dark rectangle on one wall hinting at "the way out."
 
 ### Mind-bending anomalies
-- Occasional 1-frame "glitch" (palette shift, brief static overlay)
-- Corridor that loops you back where you started
-- Watcher figure that appears briefly when you turn
+- ✅ partial — distant fluorescent strobe on walls past `FOG_RAMP_DIST`.
+  Per-cell hash + shared frame counter make distant dark cells
+  occasionally flicker to dim-yellow ("a fluorescent panel trying
+  to start in the haze"). Lives in `draw_walls`.
+- ✅ watcher figure — the silhouette standup that vanishes when you
+  approach within 3 cells (NE of the SE lounge). See `standups[]`.
+- Open: occasional 1-frame full-screen palette shift (chromatic
+  glitch)
+- Open: corridor that loops you back where you started (loop-warp
+  zone)
 
 ## Audio
 
 ### PWM ambient fluorescent drone
-Foundational before any music. The 32X has two PWM channels — even a
-simple low sawtooth + filtered noise gives the iconic "the lights are
-buzzing" presence that anchors the whole place.
+✅ done — slave SH-2 mixes a 30s buzz loop + occasional neon sting on
+the PWM mono channel via DMA1 ping-pong buffers. Plus the Voyager
+Golden Record neanderthal-positional hello (distance-attenuated) and
+carpet footsteps gated on `is_walking`. See `sh_src/sound.c`.
 
 ### Footstep sounds on carpet
-Triggered when player position advances.
+✅ done — shipped with the audio buildout. Sample baked from
+`sound/ES_Footsteps...`; runtime `step_volume` is independent of the
+ambient slider.
 
 ### Kane Parsons-style ambient score
 After ambient drone is in place. Slow swells, sub-bass, distant rumbles.
+Still pending — would layer over the existing buzz/hum bed.
 
 ## Performance
 
@@ -295,97 +236,52 @@ SH-2s. We've already borrowed:
 
 #### Ranked adopt-list (from the deep-mine research agent)
 
-**1. SH-2 hardware DIVU latency-hiding for `1/perpDist`.**
-The SH-2 has a hardware divider at `0xFFFFFF00`. Fire-and-forget the
-64/32 divide, do other work for 39 cycles, then read the quotient.
-At the top of every wall column we need `1/perpDist` for the texture
-step — start the DIVU, do all ~30 instructions of lighting / clip-
-bound / texture-offset setup during the divide, read the result at
-the end. Reference: d32xr `r_phase6.c:190-247`. Expected: ~0.5-1ms/
-frame savings on 320 columns.
+**1. SH-2 hardware DIVU latency-hiding for `1/perpDist`.** ✅ done.
+Wired up via `divu_start_u32` / `divu_read` in `sh_src/sh2_asm.h`.
+Wall column code starts the divide, then computes `wall_shade` +
+texture coordinate setup during the 39-cycle latency.
 
-```c
-__asm volatile (
-   "mov #-128, %1\n\t"
-   "add %1, %1     /* %1 is now 0xFFFFFF00 */\n\t"
-   "mov.l %2, @(0, %1)   /* divisor */\n\t"
-   "mov #0, %0\n\t"
-   "mov.l %0, @(16, %1)  /* dividend high = 0 */\n\t"
-   "mov #-1, %0\n\t"
-   "mov.l %0, @(20, %1)  /* dividend low = 0xFFFFFFFF; starts divide */\n\t"
-   : "=&r" (t), "=&r" (divunit) : "r" (scalefrac));
-/* ...do column setup work here for 39+ cycles... */
-__asm volatile (
-    "mov #-128, %0\n\t"
-    "add %0, %0\n\t"
-    "mov.l @(20, %0), %0  /* read quotient */\n\t"
-    : "=r" (iscale));
-```
+**2. Hand-roll SH-2 asm wall column inner draw loop.** ✅ done.
+4-pixel-per-iter inline asm block in `draw_walls` — keeps `tex_pos`,
+`p`, `shade_lut`, `step`, `mask` in registers, uses indexed byte load
+via `@(R0,Rm)` and `dt`/`bf` for the count-down. Measured on
+hardware: master half-render time dropped from 44000→33500 FRT ticks
+(24%), slave from 44000→25000 (43%). Frame crossed a vsync boundary
+in the wall scene (15fps → ~20fps).
 
-**2. Hand-roll SH-2 asm wall column inner draw loop.**
-The single biggest win. d32xr's `sh2_draw.s:56-74` is ~8 cycles per
-pixel; our C compiles to ~15-20. For ~30K visible wall pixels per
-frame, the asm saves ~9ms — **this one change likely puts us under
-16.7ms (60 fps)**. Techniques inside the asm:
-- 2× unrolling with odd-count peel (so the loop body always
-  processes exactly 2 pixels)
-- `swap.w` extracts `frac >> 16` in 1 cycle (vs `shlr16` = 2)
-- `dt Rn` decrement-and-test sets the T-bit; `bf` consumes it →
-  one-instruction loop terminator
-- GBR-relative colormap fetch: `mov.l @(disp,gbr),r0` in 1
-  instruction with no literal pool
-
-**3. Work-stealing wall split via COMM6.**
-Replace our fixed col 0-159 / 160-319 split with a single atomic
-next-column counter in COMM6. Each CPU does
-`R_Lock(); int c = next_col++; R_Unlock(); if (c >= 320) break; draw(c);`.
-Naturally load-balances — eliminates the case where one half of the
-screen has more close walls and the other CPU sits idle. Reference:
-d32xr `R_GetNextPlane` / `R_LockPln`.
+**3. Work-stealing wall split via COMM6.** ✅ done, then reverted.
+Implemented per d32xr's pattern. Reverted in favor of the column-
+ownership split (each CPU owns a half), which has no per-column TAS
+overhead and gives natural load balance since walls cluster predict-
+ably with view direction. Kept the COMM6 infrastructure in shared.h
+for future use.
 
 **4. GBR thread-local-storage for per-CPU state.**
-SH-2 has a GBR register usable as a base pointer for 8-bit
-displacement loads. d32xr keeps a per-CPU `mars_tls_t` struct
-(colormap, fb, validcount, etc.) and sets GBR = `&mars_tls_pri` on
-master, `&mars_tls_sec` on slave at boot. Then hot paths fetch
-fields via single `mov.l @(disp,gbr),r0`. Eliminates stack-passed
-arguments in the column-draw inner loop. Reference: `marsnew.c:471,
-doomdef.h:1354-1370`.
+Still open. Now unblocked by #2 — the inline asm in `draw_walls` would
+benefit. Would let each CPU's `shade_lut`/`screen_w`/`tex_h_mask`
+fetches become single `mov.l @(disp,gbr),r0` instead of stack-passed
+arguments. Estimated ~5% additional inner-loop win.
 
-**5. Compact sine LUT.**
-Our 32-bit `sin_table.h` is 4KB and blows the entire 4KB L1 cache.
-d32xr uses a `uint16_t[256]` quarter-wave with quadrant folding:
-```c
-q = angle / (FINEANGLES / 4);
-if (q & 1) angle = ~angle;       /* reflect symmetric quadrants */
-res = quarter_table[angle & mask];
-return q >= 2 ? -res : res;
-```
-512 bytes total. Reference: d32xr `tables.c:2604-2619`.
+**5. Compact sine LUT.** ✅ done. `sh_src/sin_table.h` is a
+`uint16_t[256]` quarter-wave; `COS_FX`/`SIN_FX` macros do the
+quadrant folding via `swap.w` + sign flip.
 
-**6. Cache-line invalidate macro.**
-`*((volatile uintptr_t *)(addr | 0x40000000)) = 0` invalidates one
-cache line in ~2 cycles. Currently we sidestep cache entirely with
-the `| 0x20000000` alias, but cached + selective-invalidate is
-faster when we know reads dominate writes. Reference: d32xr
-`marshw.h:75`.
+**6. Cache-line invalidate macro.** ✅ done. `Mars_ClearCacheLine`
+and `Mars_ClearCacheLines` in `sh_src/sh2_asm.h`.
 
-**7. SH-2 DMA + completion-interrupt audio mixer.**
-Entire PWM audio blueprint is in `marssound.c` + `sh2_mixer.s`. Two
-SDRAM ping-pong buffers, slave mixes one while DMA1 drains the
-other into the PWM stereo register, completion IRQ swaps. ~1.5ms/
-frame for 8 channels at 22 kHz. When we add audio, copy this
-wholesale.
+**7. SH-2 DMA + completion-interrupt audio mixer.** ✅ done.
+`sh_src/sound.c` mixes a ping-pong `amb_pwm_buf[2][256]` on the slave;
+DMA1 streams the active buffer to `MARS_PWM_MONO`; `amb_dma_handler`
+swaps + re-arms. Mixes buzz + neon + positional hello + footsteps.
 
 **8. Other clever tricks worth piecemeal adoption:**
-- Materialize `0xFFFFFF00` in 2 instructions: `mov #-128, r1; add r1, r1`.
-  Avoids 4-byte literal pool entry + data fetch.
-- `muls.w` (1 cycle, 16×16→32) instead of `dmuls.l` (2 cycle, 32×32→64)
-  when 32-bit result precision is enough (e.g. BSP sign tests).
-- 4bpp textures with pre-swapped nibbles so the per-pixel
-  unpacking is one shift + mask, no conditional.
-- Sort drawables by texture identity to keep the 16-byte cache
-  line hot across consecutive draws.
+- `0xFFFFFF00` 2-instruction materialization — used in `divu_*` helpers
+- `muls.w` over `dmuls.l` — opportunistic; `mul_hi32_s` helper uses
+  `dmuls.l` where 64-bit precision is actually needed
+- 4bpp textures with pre-swapped nibbles — not adopted; our 8bpp
+  framebuffer already fits the use case
+- Sort drawables by texture identity — not adopted; standup count
+  is small enough that the cache hit pattern doesn't dominate
 
 #### Critical correction from the research
 
@@ -401,14 +297,17 @@ cached alias for speed, only the reader side needs occasional
 `Mars_ClearCacheLine` calls.
 
 ### Texture mipmaps for walls
-Multiple wallpaper texture resolutions per distance band. Close walls
-sample 32×32, mid-distance 16×16, far 8×8. Cuts cache pressure on the
-SH-2's tiny cache and looks crisper close-up.
+✅ partial — distance-based LOD swap between 16×16 lo-res and 64×64
+hi-res wall_tex, threshold `WALL_LOD_THRESHOLD = FX(2)`. Hi-res is
+column-major for cache-friendly per-stripe scans. Same LOD pattern
+also applies to the neanderthal sprite (32×64 lo-res ↔ 128×256
+hi-res column-major, threshold `FX(3)`). Three or more bands could be
+added later; not currently a bottleneck.
 
 ### Floor-cast carpet at proper LOD
-Currently every-4th-column stamp. Could compress further with a sparser
-near-row pattern and skip floor pixels at horizon-band entirely (already
-half-done — we skip max-dark rows).
+Still open — currently every-4th-column stamp covers the full bottom
+half. Could compress further with a sparser near-row pattern and skip
+the horizon-band entirely (already half-done — we skip max-dark rows).
 
 ## Tools / infra
 
@@ -422,3 +321,20 @@ commits push to GitHub.
 ### Blender floor-plan extractor
 ✅ done — `tools/extract_floorplan.py` runs in headless Blender and
 emits both an ASCII visualization and a ready-to-paste C array.
+
+### Wallpaper + sprite baker tools
+✅ done — `tools/bake_wall.py` and `tools/bake_neander.py` quantize
+PNGs to palette-indexed C headers. Both emit column-major output by
+default for SH-2 cache friendliness.
+
+### `make deploy-tv` to second MiSTer
+✅ done — `make deploy-tv` SSHes the TV MiSTer (`mister.tv.local`)
+and probes `/media/usb0` then `/media/usb1` for the S32X dir before
+scp'ing, so USB renumber doesn't break the push.
+
+### FRT-based on-screen profiler
+✅ done — top-right overlay shows `T:NNNNN H:NNNNN S:NNNNN` (frame
+total, master half-render time, slave half-render time) sampled from
+SH-2 free-running timer at Φ/32 (1.39μs per tick). Both CPUs init
+their own FRT; slave publishes its delta via `SHARED_UC->slave_render_ticks`.
+Remove the overlay before shipping a release build.

@@ -68,7 +68,26 @@ typedef struct {
      * menu. 0..255, 128 = current half-amp baseline, 256 would be
      * full but capped at 255. Applied as a >> 8 scale in the pump. */
     volatile uint8_t step_volume;
+    /* Profile counter: slave's own FRT ticks spent processing CMD_HALF.
+     * Slave initializes its FRT to match master's prescaler (Φ/32) and
+     * writes its render delta here at the end of each command. Master
+     * reads via cache-through for the on-screen overlay so we can see
+     * if slave is the long pole regardless of the master's idle wait. */
+    volatile uint16_t slave_render_ticks;
+    /* Master-incremented per-frame counter. Used by draw_walls on both
+     * CPUs so the fluorescent-strobe RNG produces the same per-cell
+     * flash pattern across the column split — flashes that straddle
+     * the master/slave boundary look continuous. */
+    volatile uint32_t frame_count;
+    /* Per-effect enable bits, gated by the in-game menu's LIGHTING
+     * tab. Default 0x07 = all on. Each raycaster effect early-outs
+     * (or behaves as if at base value) when its bit is clear. */
+    volatile uint8_t lighting_flags;
 } shared_t;
+
+#define LIGHTING_FLICKER  0x01   /* per-panel random brightness rolls */
+#define LIGHTING_STROBE   0x02   /* distant fog-wall fluorescent bursts */
+#define LIGHTING_SHIMMER  0x04   /* CRAM palette rotation on bright entries */
 
 extern shared_t shared;
 

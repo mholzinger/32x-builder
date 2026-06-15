@@ -23,20 +23,30 @@ Usage:
 
 import argparse
 import pathlib
+import random
 import struct
 import subprocess
 import sys
 
-SAMPLE_MIN = 2
-SAMPLE_MAX = 1032
-SAMPLE_CENTER = (SAMPLE_MAX + SAMPLE_MIN) // 2     # 517
-SAMPLE_HALFSPAN = (SAMPLE_MAX - SAMPLE_MIN) // 2   # 515
+SAMPLE_MIN = 8
+SAMPLE_MAX = 1430
+SAMPLE_CENTER = (SAMPLE_MAX + SAMPLE_MIN) // 2     # 719
+SAMPLE_HALFSPAN = (SAMPLE_MAX - SAMPLE_MIN) // 2   # 711
 
 
 def ffmpeg_to_mono_pcm(wav_path: pathlib.Path, rate: int,
                       start: float, length: float, volume: float) -> bytes:
-    """Trim, mono-mix, resample, gain-adjust; return raw s16le PCM."""
-    af_chain = f"volume={volume}"
+    """Trim, mono-mix, resample with pre-emphasis, gain-adjust; return
+    raw s16le PCM.
+
+    Pre-emphasis: a +3 dB high-shelf above 3 kHz compensates for the
+    bandwidth our 16 kHz output rate can't reproduce — the perceptual
+    high-frequency content of the original survives the downsample and
+    anti-alias filter, leaving the bake sounding less "muffled" than a
+    naive resample.
+    """
+    # Pre-emphasis FIRST (in source-rate domain), then volume gain.
+    af_chain = f"highshelf=f=3000:g=3,volume={volume}"
     cmd = [
         "ffmpeg", "-y", "-v", "error",
         "-i", str(wav_path),
@@ -53,10 +63,20 @@ def ffmpeg_to_mono_pcm(wav_path: pathlib.Path, rate: int,
 
 
 def pcm_to_pwm_words(pcm_bytes: bytes) -> list[int]:
-    """Output uint16_t in the PWM duty-cycle range [SAMPLE_MIN, SAMPLE_MAX]."""
+    """Output uint16_t in the PWM duty-cycle range [SAMPLE_MIN, SAMPLE_MAX]
+    with TPDF dithering. Triangular dither (sum of two uniform RNGs in
+    [-0.5, 0.5]) decorrelates the quantization error so the noise
+    floor sounds like steady hiss instead of harmonic spurs — well
+    worth the seed-fixed reproducibility cost on a 64 KB / 600 KB
+    bake."""
+    rng = random.Random(0)  # seeded for byte-identical bakes
     words = []
     for (s,) in struct.iter_unpack("<h", pcm_bytes):
-        v = SAMPLE_CENTER + (s * SAMPLE_HALFSPAN) // 32768
+        # Quantize from int16 [-32768, 32767] to the PWM half-span.
+        # 1 PWM LSB ≈ 23 int16 LSBs, so dither at ±1 PWM unit needs
+        # ±23 int16 units. TPDF in [-23, +23]:
+        dither = (rng.random() + rng.random() - 1.0) * 23
+        v = SAMPLE_CENTER + round((s + dither) * SAMPLE_HALFSPAN / 32768)
         if v < SAMPLE_MIN: v = SAMPLE_MIN
         if v > SAMPLE_MAX: v = SAMPLE_MAX
         words.append(v)
@@ -64,14 +84,17 @@ def pcm_to_pwm_words(pcm_bytes: bytes) -> list[int]:
 
 
 def pcm_to_int8(pcm_bytes: bytes) -> list[int]:
-    """Output int8_t (-128..127) — signed offset from PWM center, must
-    be left-shifted by 2 at runtime to expand back into the ~10-bit
-    PWM range. 50% storage of the uint16 path, ~6 dB more quantization
-    noise (8-bit dynamic range vs 10-bit), which on speech sources
-    just sounds like vintage analog grain."""
+    """Output int8_t (-128..127) with TPDF dithering. The shift from
+    int16 (16-bit) to int8 (8-bit) discards 8 bits; without dither the
+    truncation creates obvious banding on quiet content. Dithered, the
+    quantization error becomes pleasant low-level hiss. The runtime
+    << 2 expansion preserves the dither character."""
+    rng = random.Random(0)
     out = []
     for (s,) in struct.iter_unpack("<h", pcm_bytes):
-        v = s >> 8       # int16 → int8 (truncate)
+        # 1 int8 LSB = 256 int16 LSBs; TPDF at ±128 (half of 256):
+        dither = (rng.random() + rng.random() - 1.0) * 128
+        v = round((s + dither) / 256)
         if v < -128: v = -128
         if v > 127:  v = 127
         out.append(v)

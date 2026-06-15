@@ -8,13 +8,6 @@
 #include "neander_tex.h"
 #include "neander_tex_hi.h"
 
-/* SH-2 dual-CPU sanity check: top-right 8x8 indicator. Green when the
- * slave's heartbeat counter advanced this frame (slave is running and
- * its uncached SDRAM writes reach us), red otherwise. Will be removed
- * once we move past Step 0 of the SH-2 split work. */
-#define DEBUG_ALIVE_IDX 254
-#define DEBUG_DEAD_IDX  255
-
 /* Player spawn — south end of the col-16 spine corridor in the
  * hand-tuned 32x32 Backrooms map. Walls flank tightly at cols 15/17
  * for the iconic "infinite hallway" first frame. The corridor opens
@@ -289,9 +282,6 @@ static void build_palette(void) {
     Hw32xSetBGColor(NEANDER_BASE + 5, 19, 16, 13);
     Hw32xSetBGColor(NEANDER_BASE + 6, 23, 20, 17);
     Hw32xSetBGColor(NEANDER_BASE + 7, 26, 22, 19);
-    /* SH-2 sanity-check indicator colors. */
-    Hw32xSetBGColor(DEBUG_ALIVE_IDX,  0, 31,  0);   /* bright green */
-    Hw32xSetBGColor(DEBUG_DEAD_IDX,  31,  0,  0);   /* bright red */
 }
 
 /* Byte pointer to the start of pixel data in the current back framebuffer.
@@ -301,25 +291,6 @@ static void build_palette(void) {
  * end-of-render commits any reordered stores before the VDP sees them. */
 static inline uint8_t *fb_pixels(void) {
     return (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
-}
-
-void raycast_debug_overlay(void) {
-    /* Single 8x8 indicator in the top-right corner: green if the
-     * slave's heartbeat counter advanced since the last frame, red
-     * if it stalled. Now that COMM4 is the doorbell rather than a
-     * free-running counter, the only general "slave alive" signal
-     * is the heartbeat in shared SDRAM (incremented every iteration
-     * of the slave's dispatch loop). */
-    static uint32_t last_hb = 0;
-    uint32_t hb = SLAVE_HEARTBEAT;
-    uint8_t color = (hb != last_hb) ? DEBUG_ALIVE_IDX : DEBUG_DEAD_IDX;
-    last_hb = hb;
-
-    uint8_t *fb = fb_pixels();
-    for (int dy = 0; dy < 8; dy++) {
-        uint8_t *row = fb + (dy + 4) * SCREEN_W + (SCREEN_W - 12);
-        for (int dx = 0; dx < 8; dx++) row[dx] = color;
-    }
 }
 
 void raycast_init(void) {
@@ -638,7 +609,7 @@ static void draw_lights(uint8_t *fb,
  * Disjoint from the carpet pass (bottom half) so they run in parallel
  * without races. Walls overwrite grid pixels where they intersect,
  * matching the previous sequential behavior. */
-void raycast_draw_ceiling_grid(void) {
+void raycast_draw_ceiling_grid(int col_start, int col_end) {
     fx_t px = SHARED_UC->player.x;
     fx_t py = SHARED_UC->player.y;
     uint8_t angle = (uint8_t)SHARED_UC->player.angle;
@@ -700,11 +671,11 @@ void raycast_draw_ceiling_grid(void) {
                 for (int target = lo + 1; target <= hi; target++) {
                     fx_t num = ((fx_t)target << FX_SHIFT) - wxL_s;
                     int col = (int)(((int64_t)num * scale) >> (FX_SHIFT * 2));
-                    if (col >= 0 && col < SCREEN_W) row_p[col] = grid_c;
+                    if (col >= col_start && col < col_end) row_p[col] = grid_c;
                 }
             }
         } else if (has_prev && FX_INT(wxL_s) != FX_INT(prev_wxL_s)) {
-            for (int col = 0; col < SCREEN_W; col++) row_p[col] = grid_c;
+            for (int col = col_start; col < col_end; col++) row_p[col] = grid_c;
         }
 
         /* World-Y grid lines: per-pixel crossings when there's spread,
@@ -718,11 +689,11 @@ void raycast_draw_ceiling_grid(void) {
                 for (int target = lo + 1; target <= hi; target++) {
                     fx_t num = ((fx_t)target << FX_SHIFT) - wyL_s;
                     int col = (int)(((int64_t)num * scale) >> (FX_SHIFT * 2));
-                    if (col >= 0 && col < SCREEN_W) row_p[col] = grid_c;
+                    if (col >= col_start && col < col_end) row_p[col] = grid_c;
                 }
             }
         } else if (has_prev && FX_INT(wyL_s) != FX_INT(prev_wyL_s)) {
-            for (int col = 0; col < SCREEN_W; col++) row_p[col] = grid_c;
+            for (int col = col_start; col < col_end; col++) row_p[col] = grid_c;
         }
 
         prev_wxL_s = wxL_s;
@@ -736,7 +707,7 @@ void raycast_draw_ceiling_grid(void) {
  * from the shared snapshot so the slave can run it alongside the
  * ceiling grid pass on the top half (disjoint framebuffer regions,
  * no race). */
-void raycast_draw_carpet(void) {
+void raycast_draw_carpet(int col_start, int col_end) {
     fx_t px = SHARED_UC->player.x;
     fx_t py = SHARED_UC->player.y;
     uint8_t angle = (uint8_t)SHARED_UC->player.angle;
@@ -768,7 +739,13 @@ void raycast_draw_carpet(void) {
         fx_t stepX4 = stepX << 2;
         fx_t stepY4 = stepY << 2;
         uint8_t dark_c = (uint8_t)(FLOOR_BASE + base_shade + 2);
-        for (int x = 0; x < SCREEN_W; x += 4) {
+        /* Pre-advance worldX/Y to col_start so this CPU only does the
+         * 4-pixel iterations covering its column range. col_start is
+         * assumed a multiple of 4 (SCREEN_W/2 = 160 → ✓). */
+        int skip = col_start >> 2;
+        worldX += stepX4 * skip;
+        worldY += stepY4 * skip;
+        for (int x = col_start; x < col_end; x += 4) {
             int wx = (int)(worldX >> 13) & 0xFF;
             int wy = (int)(worldY >> 13) & 0xFF;
             int hash = (wx * 73 + wy * 31) & 0xF;
@@ -868,12 +845,18 @@ void raycast_draw_walls(int col_start, int col_end) {
         divu_start_u32((uint32_t)(SCREEN_H << FX_SHIFT),
                        (uint32_t)perpDist);
 
+        /* Inflection at FX(2.5) (was 3.5) so mid-distance walls darken
+         * sooner into the fog. The close ramp (0..2.5) is unchanged at
+         * the rounding level so the wallpaper region stays bright; the
+         * far ramp now covers a longer span (2.5..6 instead of 3.5..6),
+         * pulling perpDist 3-5 walls down 2-3 shade levels — they read
+         * as "in the fog" instead of "lit yellow far away". */
         int wall_shade;
-        if (perpDist < FX(3.5)) {
-            wall_shade = (int)((perpDist * 2) / FX(3.5));
+        if (perpDist < FX(2.5)) {
+            wall_shade = (int)((perpDist * 2) / FX(2.5));
         } else {
-            fx_t past = perpDist - FX(3.5);
-            fx_t span = MAX_VIEW_DIST - FX(3.5);
+            fx_t past = perpDist - FX(2.5);
+            fx_t span = MAX_VIEW_DIST - FX(2.5);
             wall_shade = 2 + (int)((past * 13) / span);
         }
         /* Bump all walls one shade darker so the wall reads as the
@@ -952,13 +935,63 @@ void raycast_draw_walls(int col_start, int col_end) {
             shade_lut[ty] = (uint8_t)(WALL_BASE + s);
         }
 
+        /* Baseboard molding: bottom ~3% of the wall in world space gets
+         * a darker flat-shade band, the iconic Backrooms wood-trim look.
+         * Anchored to wall_bot (unclipped) so the strip sits at the same
+         * world height regardless of whether the wall extends off-screen.
+         * Split the inner pixel loop in two so the per-pixel hot path
+         * stays branch-free: wall portion runs the textured loop, then
+         * the baseboard portion writes the flat color. */
+        int base_h = lineHeight >> 5;
+        if (base_h < 1) base_h = 1;
+        int base_y = wall_bot - base_h;
+        int wall_end;
+        if      (base_y > drawEnd)    wall_end = drawEnd;
+        else if (base_y <= drawStart) wall_end = drawStart - 1;
+        else                          wall_end = base_y - 1;
+        /* Molding color = wall_shade with no chevron pattern offset, so
+         * the strip reads as the wallpaper's background yellow with the
+         * chevron motif simply stopping at the molding line. */
+        uint8_t base_color = (uint8_t)(WALL_BASE + wall_shade);
+
         fx_t tex_step = (fx_t)divu_read();
         fx_t tex_pos  = (fx_t)(drawStart - wall_top) * tex_step;
         uint8_t *p = (uint8_t *)fb + col + drawStart * SCREEN_W;
-        for (int y = drawStart; y <= drawEnd; y++) {
+        /* 4x unrolled wall pixel loop. Per-iteration overhead (cmp/bra,
+         * y inc) is amortized over 4 textured writes; the 4 shade_lut
+         * loads can pipeline before any stores commit so the SH-2's
+         * narrow issue window stays busy. Tail loop catches the
+         * remaining 0-3 pixels.
+         *
+         * Preserves the original post-loop state of p and tex_pos
+         * (advances exactly (wall_end - drawStart + 1) writes) so the
+         * baseboard loop below picks up at the right framebuffer row. */
+        int y = drawStart;
+        int y_end4 = wall_end - 3;
+        while (y <= y_end4) {
+            uint8_t a = shade_lut[(tex_pos >> FX_SHIFT) & tex_h_mask];
+            tex_pos += tex_step;
+            uint8_t b = shade_lut[(tex_pos >> FX_SHIFT) & tex_h_mask];
+            tex_pos += tex_step;
+            uint8_t c = shade_lut[(tex_pos >> FX_SHIFT) & tex_h_mask];
+            tex_pos += tex_step;
+            uint8_t d = shade_lut[(tex_pos >> FX_SHIFT) & tex_h_mask];
+            tex_pos += tex_step;
+            *p = a; p += SCREEN_W;
+            *p = b; p += SCREEN_W;
+            *p = c; p += SCREEN_W;
+            *p = d; p += SCREEN_W;
+            y += 4;
+        }
+        while (y <= wall_end) {
             *p = shade_lut[(tex_pos >> FX_SHIFT) & tex_h_mask];
             p += SCREEN_W;
             tex_pos += tex_step;
+            y++;
+        }
+        for (int by = wall_end + 1; by <= drawEnd; by++) {
+            *p = base_color;
+            p += SCREEN_W;
         }
     }
 }
@@ -966,6 +999,34 @@ void raycast_draw_walls(int col_start, int col_end) {
 /* The other tex_pos reference in this file is in the old fixed-split
  * placeholder. Compiler dead-code-eliminates it once raycast_render
  * stops calling fixed-range walls. */
+
+/* Profile: how many FRT ticks did this frame's master spend spinning
+ * on the slave-done waits? Master code in m_main.c reads this each
+ * frame and overlays it next to the frame-time counter. */
+volatile uint16_t prof_master_idle_ticks = 0;
+static inline uint16_t prof_frt_read(void) {
+    uint8_t hi = SH2_FRT_FRCH;
+    uint8_t lo = SH2_FRT_FRCL;
+    return ((uint16_t)hi << 8) | lo;
+}
+
+/* Clear the framebuffer for a column range, using row_color[] for the
+ * per-row constant fill. Each CPU calls this on its own half so the
+ * clear runs in parallel and no row is touched twice. col_start must
+ * be a multiple of 4 (we use 32-bit stores = 4 pixels per write). */
+void raycast_clear_half(int col_start, int col_end) {
+    uint8_t *fb = fb_pixels();
+    uint32_t *fb32 = (uint32_t *)fb;
+    int col_words = (col_end - col_start) >> 2;
+    int col_word_start = col_start >> 2;
+    for (int y = 0; y < SCREEN_H; y++) {
+        uint8_t  c   = row_color[y];
+        uint32_t c32 = ((uint32_t)c << 24) | ((uint32_t)c << 16)
+                     | ((uint32_t)c <<  8) |  (uint32_t)c;
+        uint32_t *row = fb32 + y * (SCREEN_W / 4) + col_word_start;
+        for (int x = 0; x < col_words; x++) row[x] = c32;
+    }
+}
 
 void raycast_render(void) {
     uint8_t *fb = fb_pixels();
@@ -981,49 +1042,26 @@ void raycast_render(void) {
     fx_t planeX = FX_MUL(-dirY, FX(0.66));
     fx_t planeY = FX_MUL( dirX, FX(0.66));
 
-    /* Floor + ceiling: per-row solid color (32-bit aligned writes,
-     * 4 pixels per store). Fast clear. */
-    uint32_t *fb32 = (uint32_t *)fb;
-    for (int y = 0; y < SCREEN_H; y++) {
-        uint8_t  c   = row_color[y];
-        uint32_t c32 = ((uint32_t)c << 24) | ((uint32_t)c << 16)
-                     | ((uint32_t)c <<  8) |  (uint32_t)c;
-        uint32_t *row = fb32 + y * (SCREEN_W / 4);
-        for (int x = 0; x < SCREEN_W / 4; x++) row[x] = c32;
-    }
-
-    /* Dispatch the ceiling-grid + carpet pass to the slave. Slave reads
-     * player state from the cache-through shared snapshot we write
-     * just before raising COMM4. Both passes write into disjoint top
-     * and bottom halves of the framebuffer; while they run, master
-     * has no parallel work to do here so it goes straight to the
-     * COMM4 wait below before starting the wall split. */
+    /* Snapshot player state for the slave to read via cache-through.
+     * Must land before COMM4 wakes the slave so it sees the new frame. */
     SHARED_UC->player.x     = player.x;
     SHARED_UC->player.y     = player.y;
     SHARED_UC->player.angle = player.angle;
     SHARED_UC->is_walking   = is_walking;   /* gates carpet footsteps in pump */
-    MARS_SYS_COMM4 = MARS_CMD_CEILING;
 
-    /* Sync point: wait for the slave to finish the ceiling grid pass
-     * before dispatching its wall half. */
-    while (MARS_SYS_COMM4 != MARS_CMD_NONE) {
-        /* Throttle the master-side ACK wait to reduce 68K-bridge
-         * pressure — bare-loop polling at ~5M reads/sec was lining
-         * up with the 68K's joypad-read window often enough to drop
-         * COMM8 updates. ~30 cycles of NOPs per loop iteration brings
-         * the master poll rate down to a friendlier ~700K/sec while
-         * keeping latency well under one frame. */
-        __asm__ __volatile__("nop\n\tnop\n\tnop\n\tnop\n\t"
-                             "nop\n\tnop\n\tnop\n\tnop\n\t"
-                             "nop\n\tnop\n\tnop\n\tnop\n\t"
-                             "nop\n\tnop\n\tnop\n\tnop");
-    }
+    /* Single dispatch: slave does clear + ceiling + carpet + walls for
+     * cols 160..319, master does the same for cols 0..159 in parallel.
+     * Column ownership eliminates the previous CEILING→WALLS sequential
+     * dependency (master used to idle ~26ms waiting for slave's ceiling
+     * before walls could start). One sync point at the end. */
+    MARS_SYS_COMM4 = MARS_CMD_HALF;
 
-    /* Fixed wall-split dispatch — master draws cols 0..SCREEN_W/2 in
-     * parallel with slave drawing SCREEN_W/2..SCREEN_W. (Work-stealing
-     * via TAS was attempted and reverted; see raycast_draw_walls.) */
-    MARS_SYS_COMM4 = MARS_CMD_WALLS;
+    raycast_clear_half(0, SCREEN_W / 2);
+    raycast_draw_ceiling_grid(0, SCREEN_W / 2);
+    raycast_draw_carpet(0, SCREEN_W / 2);
     raycast_draw_walls(0, SCREEN_W / 2);
+
+    uint16_t idle_start = prof_frt_read();
     while (MARS_SYS_COMM4 != MARS_CMD_NONE) {
         /* Throttle the master-side ACK wait to reduce 68K-bridge
          * pressure — bare-loop polling at ~5M reads/sec was lining
@@ -1036,6 +1074,7 @@ void raycast_render(void) {
                              "nop\n\tnop\n\tnop\n\tnop\n\t"
                              "nop\n\tnop\n\tnop\n\tnop");
     }
+    prof_master_idle_ticks = (uint16_t)(prof_frt_read() - idle_start);
 
     /* Commit any reordered stores from the non-volatile draw loops before
      * the next swapBuffers() makes them visible via the VDP page flip. */

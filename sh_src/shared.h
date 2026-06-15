@@ -19,8 +19,7 @@
  * the named work, then writes 0 back. Master waits for the 0 before
  * proceeding past the sync point. */
 #define MARS_CMD_NONE     0
-#define MARS_CMD_CEILING  1
-#define MARS_CMD_WALLS    2   /* Slave draws wall columns 160..319 */
+#define MARS_CMD_HALF     1   /* Slave draws clear+ceiling+carpet+walls for cols 160..319 */
 
 /* Snapshot of the master's player state for the slave to render from.
  * Master writes this just before signaling CMD_CEILING; slave reads

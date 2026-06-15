@@ -41,13 +41,13 @@ void s_main(void) {
             continue;
         }
         switch (cmd) {
-        case MARS_CMD_CEILING:
-            /* Combined ceiling+carpet pass — disjoint top/bottom halves
-             * of the framebuffer. */
-            raycast_draw_ceiling_grid();
-            raycast_draw_carpet();
-            break;
-        case MARS_CMD_WALLS:
+        case MARS_CMD_HALF:
+            /* Slave owns the right half of the screen. Clears, draws
+             * the floor/ceiling grid + wear + walls — no overlap with
+             * master, so no synchronization mid-frame. */
+            raycast_clear_half(SCREEN_W / 2, SCREEN_W);
+            raycast_draw_ceiling_grid(SCREEN_W / 2, SCREEN_W);
+            raycast_draw_carpet(SCREEN_W / 2, SCREEN_W);
             raycast_draw_walls(SCREEN_W / 2, SCREEN_W);
             break;
         }

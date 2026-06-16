@@ -99,6 +99,14 @@ static box_drawlist_t box_dl;
 static fx_t    wverts[BOX_NVERTS][3];
 static cvert_t cverts[BOX_NVERTS];
 
+/* Per-logical-pixel coverage mask for near-to-far overdraw skip. Faces are
+ * drawn nearest-first; a pixel already marked here is skipped, so the
+ * nearest face wins every pixel (identical result to the old far-to-near
+ * painter's fill) while the wasted overdraw VDP writes vanish. Each CPU
+ * clears + writes only its own band's rows (disjoint, 16-byte aligned at
+ * the band split), so cached access stays coherent without the alias. */
+static uint8_t box_cover[LOG_H][LOG_W] __attribute__((aligned(16)));
+
 #if BOX_PROFILE
 static inline uint16_t frt_read(void) {
     uint8_t hi = SH2_FRT_FRCH, lo = SH2_FRT_FRCL;
@@ -341,21 +349,28 @@ static void fill_face(const int16_t *xs, const int16_t *ys,
          * indices); every other face runs the cardboard wear/tape path. */
         uint16_t *r0 = (uint16_t *)(fb + (yy << 1) * SCREEN_W);
         uint16_t *r1 = (uint16_t *)(fb + ((yy << 1) + 1) * SCREEN_W);
+        uint8_t *cov = box_cover[yy];
         if (label) {
             for (int x = sxL; x <= sxR; x++) {
-                uint8_t c = label_tex[(v >> LABEL_TSH) & LABEL_TMASK]
-                                     [(u >> LABEL_TSH) & LABEL_TMASK];
-                uint16_t cc = (uint16_t)((c << 8) | c);
-                r0[x] = cc;
-                r1[x] = cc;
+                if (!cov[x]) {
+                    uint8_t c = label_tex[(v >> LABEL_TSH) & LABEL_TMASK]
+                                         [(u >> LABEL_TSH) & LABEL_TMASK];
+                    uint16_t cc = (uint16_t)((c << 8) | c);
+                    r0[x] = cc;
+                    r1[x] = cc;
+                    cov[x] = 1;
+                }
                 u += du; v += dv;
             }
         } else {
             for (int x = sxL; x <= sxR; x++) {
-                uint8_t c = (uint8_t)detail_index(base_lvl, u, v, tape_mode);
-                uint16_t cc = (uint16_t)((c << 8) | c);
-                r0[x] = cc;
-                r1[x] = cc;
+                if (!cov[x]) {
+                    uint8_t c = (uint8_t)detail_index(base_lvl, u, v, tape_mode);
+                    uint16_t cc = (uint16_t)((c << 8) | c);
+                    r0[x] = cc;
+                    r1[x] = cc;
+                    cov[x] = 1;
+                }
                 u += du; v += dv;
             }
         }
@@ -375,14 +390,23 @@ void box3d_render_band(int band) {
     int words = ((ly1 - ly0) << 1) * SCREEN_W / 4;
     for (int i = 0; i < words; i++) p[i] = bg;
 
+    /* Clear this band's coverage rows (cached SDRAM — cheap vs the VDP
+     * framebuffer clear above). */
+    uint32_t *cov = (uint32_t *)&box_cover[ly0][0];
+    int cov_words = (ly1 - ly0) * LOG_W / 4;
+    for (int i = 0; i < cov_words; i++) cov[i] = 0;
+
 #if BOX_PROFILE
     if (band == 0) { g_clear_ticks = (uint16_t)(frt_read() - tprof); tprof = frt_read(); }
 #endif
 
-    /* Faces far-to-near (painter's). Per-face polygon is copied out of
-     * the cache-through draw-list into locals so per-scanline reads hit
+    /* Faces NEAR-to-far: order[] is far-to-near, so walk it in reverse.
+     * The nearest face draws first and marks coverage; farther faces skip
+     * already-covered pixels — pixel-identical to the old painter's fill,
+     * minus the wasted overdraw VDP writes. Per-face polygon is copied out
+     * of the cache-through draw-list into locals so per-scanline reads hit
      * cached memory. */
-    for (int i = 0; i < BOX_NFACES; i++) {
+    for (int i = BOX_NFACES - 1; i >= 0; i--) {
         int fi = BOX_DL->order[i];
         volatile box_poly_t *vp = &BOX_DL->poly[fi];
         int nv = vp->nv;
@@ -431,16 +455,24 @@ static void put5(char *s, uint16_t v) {
     s[1] = '0' + v % 10; v /= 10;
     s[0] = '0' + v % 10;
 }
-static void draw_perf(uint8_t *fb, uint16_t m, uint16_t s) {
+static void draw_perf(uint8_t *fb, uint16_t m, uint16_t s, uint16_t vbl) {
     char buf[16];
     buf[0] = 'M'; buf[1] = ':'; put5(buf + 2, m);
     buf[7] = ' '; buf[8] = 'S'; buf[9] = ':'; put5(buf + 10, s); buf[15] = 0;
     font_draw_string(fb, 4, 4, buf, BOX_TEXT_IDX);
-    /* Master-band breakdown: clear vs fill. */
+    /* Master-band breakdown: clear vs fill (FRT — zero if unemulated). */
     char b2[16];
     b2[0] = 'C'; b2[1] = ':'; put5(b2 + 2, g_clear_ticks);
     b2[7] = ' '; b2[8] = 'F'; b2[9] = ':'; put5(b2 + 10, g_fill_ticks); b2[15] = 0;
     font_draw_string(fb, 4, 13, b2, BOX_TEXT_IDX);
+    /* vblanks-per-frame + derived FPS — works even when the FRT doesn't
+     * (counts the vblank ticks the flip already waits on). 1=60, 2=30, 3=20. */
+    char b3[20];
+    uint16_t fps = vbl ? (uint16_t)(60 / vbl) : 0;
+    b3[0] = 'V'; b3[1] = ':'; put5(b3 + 2, vbl);
+    b3[7] = ' '; b3[8] = 'F'; b3[9] = 'P'; b3[10] = 'S'; b3[11] = ':';
+    put5(b3 + 12, fps); b3[17] = 0;
+    font_draw_string(fb, 4, 22, b3, BOX_TEXT_IDX);
 }
 #endif
 
@@ -511,6 +543,8 @@ void box3d_play(void) {
 #endif
     build_wear_lut();        /* CPU precompute (was in load_palette) */
     uint16_t prev_pad = 0xFFFF;
+    uint32_t prev_comm = MARS_SYS_COMM12;   /* vblank tick at last flip */
+    uint16_t last_vbl = 0;                  /* vblanks the prev frame took */
     /* Intro only (flaps open + dive to the box mouth). The trap-door fall
      * tail (BOX_INTRO_FRAMES..BOX_NFRAMES) plays later, on menu commit. */
     for (int f = 0; f < BOX_INTRO_FRAMES; f++) {
@@ -518,8 +552,9 @@ void box3d_play(void) {
         uint16_t t0 = frt_read();
         render_frame(f);
         uint16_t mdelta = (uint16_t)(frt_read() - t0);   /* pure render time */
-        draw_perf((uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200),
-                  mdelta, SHARED_UC->slave_render_ticks);
+        if (g_metrics_on)
+            draw_perf((uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200),
+                      mdelta, SHARED_UC->slave_render_ticks, last_vbl);
 #else
         render_frame(f);
 #endif
@@ -527,10 +562,15 @@ void box3d_play(void) {
          * after the box is already on the hidden page — clean hand-off. */
         if (f == 0) box3d_flip_load_palette();
         else        box3d_flip();
+        /* Vblanks consumed by this frame (render+flip) — emulator-safe FPS. */
+        uint32_t now_comm = MARS_SYS_COMM12;
+        last_vbl = (uint16_t)(now_comm - prev_comm);
+        prev_comm = now_comm;
         HwMdReadPad(0);
         uint16_t pad = MARS_SYS_COMM8;
         uint16_t pressed = (uint16_t)(pad & ~prev_pad);
         prev_pad = pad;
+        if (pressed & SEGA_CTRL_MODE)  g_metrics_on ^= 1;   /* toggle overlay */
         if (pressed & SEGA_CTRL_START) return;
     }
 }

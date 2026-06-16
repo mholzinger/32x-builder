@@ -14,6 +14,15 @@
 uint32_t lastTick = 0;
 uint16_t currentFB = 0;
 
+/* On-screen debug metrics — off by default, toggled by the six-button
+ * controller's MODE button (edge-detected once per frame from any loop). */
+uint8_t g_metrics_on = 0;
+static void metrics_mode_check(uint16_t pad) {
+    static uint16_t prev = 0xFFFF;
+    if ((pad & SEGA_CTRL_MODE) && !(prev & SEGA_CTRL_MODE)) g_metrics_on ^= 1;
+    prev = pad;
+}
+
 /* Frame-time profiler. Reads the SH-2 free-running timer at Φ/32
  * (~720kHz, 1.39μs per tick) once per frame and displays the delta
  * since the previous frame in the top-right corner. 60fps ≈ 12000
@@ -201,6 +210,7 @@ int m_main(void) {
             if ((pressed & SEGA_CTRL_UP)   && menu_selection > 0) menu_selection--;
             if ((pressed & SEGA_CTRL_DOWN) && menu_selection < 1) menu_selection++;
             if (pressed & LOBBY_COMMIT) break;   /* confirm, dismiss menu */
+            metrics_mode_check(pad);
             frame++;
 
             SHARED_UC->frame_count++;
@@ -216,7 +226,7 @@ int m_main(void) {
                                : "  NOCLIP PROCEDURAL ", 49);
             font_draw_string(fb_text, (SCREEN_W - 19 * 8) / 2, SCREEN_H - 20,
                              "ANY BUTTON: CONFIRM", 49);
-            pos_draw(fb_text);          /* X/Y/A readout for spawn tuning */
+            if (g_metrics_on) pos_draw(fb_text);   /* X/Y/A for spawn tuning */
             swapBuffers();
         }
     }
@@ -226,13 +236,14 @@ int m_main(void) {
     {
         for (;;) {
             HwMdReadPad(0);
+            metrics_mode_check(MARS_SYS_COMM8);
             player_update();
             /* Stepped into the black exit doorway (col 7, rows 2-4). */
             if (player.x > FX(7) && player.y > FX(1.5) && player.y < FX(5)) break;
             SHARED_UC->frame_count++;
             raycast_render();
             uint8_t *fb_text = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
-            pos_draw(fb_text);          /* live X/Y/A readout while you roam */
+            if (g_metrics_on) pos_draw(fb_text);   /* live X/Y/A while you roam */
             swapBuffers();
         }
     }
@@ -279,6 +290,7 @@ int m_main(void) {
         uint16_t pad = MARS_SYS_COMM8;
 
         menu_update(pad);
+        metrics_mode_check(pad);
         if (!menu_is_active()) {
             player_update();
         }
@@ -288,8 +300,10 @@ int m_main(void) {
         raycast_render();
         uint8_t *fb_text = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
         menu_render(fb_text);
-        prof_sample_and_draw(fb_text);
-        pos_draw(fb_text);
+        if (g_metrics_on) {
+            prof_sample_and_draw(fb_text);
+            pos_draw(fb_text);
+        }
         swapBuffers();
     }
     return 0;

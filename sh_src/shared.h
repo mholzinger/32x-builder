@@ -99,6 +99,11 @@ typedef struct {
 
 extern shared_t shared;
 
+/* On-screen debug metrics (X/Y/A, frame timers, box profiler) — off by
+ * default, toggled by the six-button controller's MODE button. Master-only
+ * (no cross-CPU access), so a plain global rather than a shared field. */
+extern uint8_t g_metrics_on;
+
 /* Cache-through pointer to the shared struct. Use on BOTH CPUs for
  * every read and write of any shared field. */
 #define SHARED_UC ((shared_t *)((uintptr_t)&shared | 0x20000000))

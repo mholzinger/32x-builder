@@ -4,9 +4,15 @@
 #include "font.h"
 #include "shared.h"
 #include "procgen.h"
+#include "box3d.h"
+#include "box_hero.h"
+#include "sound.h"
 
-static uint32_t lastTick = 0;
-static uint16_t currentFB = 0;
+/* Non-static so box3d.c can drive the same swap state during the
+ * title screen — keeps the front/back buffer bookkeeping in one
+ * place. */
+uint32_t lastTick = 0;
+uint16_t currentFB = 0;
 
 /* Frame-time profiler. Reads the SH-2 free-running timer at Φ/32
  * (~720kHz, 1.39μs per tick) once per frame and displays the delta
@@ -78,7 +84,48 @@ static void prof_sample_and_draw(uint8_t *fb) {
     font_draw_string(fb, SCREEN_W - 8 * 23 - 4, 4, text, 49);
 }
 
-static void swapBuffers(void) {
+/* Top-left position + angle overlay for debugging map locations.
+ * Line 1: "X:NN.N Y:NN.N" — integer cell + one decimal.
+ * Line 2: "A:NNN"          — raw uint8 angle.
+ * Two lines so A: doesn't collide with the top-right T/H/S timer. */
+static void pos_draw(uint8_t *fb) {
+    char line1[14];
+    char line2[6];
+    int32_t px = player.x;
+    int32_t py = player.y;
+    int px_i = (int)(px >> 16);
+    int px_f = (int)(((uint32_t)(px & 0xFFFF) * 10) >> 16);
+    int py_i = (int)(py >> 16);
+    int py_f = (int)(((uint32_t)(py & 0xFFFF) * 10) >> 16);
+    int angle = (int)player.angle;
+    if (px_i < 0)  px_i = 0;
+    if (px_i > 99) px_i = 99;
+    if (py_i < 0)  py_i = 0;
+    if (py_i > 99) py_i = 99;
+
+    line1[0] = 'X'; line1[1] = ':';
+    line1[2] = '0' + (px_i / 10);
+    line1[3] = '0' + (px_i % 10);
+    line1[4] = '.';
+    line1[5] = '0' + px_f;
+    line1[6] = ' '; line1[7] = 'Y'; line1[8] = ':';
+    line1[9]  = '0' + (py_i / 10);
+    line1[10] = '0' + (py_i % 10);
+    line1[11] = '.';
+    line1[12] = '0' + py_f;
+    line1[13] = 0;
+
+    line2[0] = 'A'; line2[1] = ':';
+    line2[4] = '0' + (angle % 10); angle /= 10;
+    line2[3] = '0' + (angle % 10); angle /= 10;
+    line2[2] = '0' + (angle % 10);
+    line2[5] = 0;
+
+    font_draw_string(fb, 4,  4, line1, 49);
+    font_draw_string(fb, 4, 16, line2, 49);
+}
+
+void swapBuffers(void) {
     while (lastTick == MARS_SYS_COMM12);
     /* In vblank now — safe palette-write window. */
     raycast_shimmer();
@@ -102,128 +149,78 @@ int m_main(void) {
 
     Hw32xInit(MARS_VDP_MODE_256, 0);
     Hw32xDelay(1);    /* wait for first vblank — palette is writable now */
-    raycast_init();
-    prof_init();
 
-    /* Cardboard box title screen. Box body fills the center, two top
-     * flaps animate from closed (covering the top) to open (folded
-     * up and away) revealing the title text inside. The "fold" is
-     * stylized — flap height shrinks linearly from full to zero — but
-     * reads as opening once corrugation lines and a tape strip suggest
-     * the cardboard surface. */
+    /* High-res "attic box" splash: the SEGA CORE label on the closed
+     * carton, held until START. Then we hand off to the live low-res 3D
+     * box for the open + dive. */
+    box_hero_show();
+
+    /* Cardboard box title screen — the box mesh + camera dive are
+     * imported from box_model.h and rendered live by box3d (see
+     * tools/export_box.py). It owns its own CRAM palette and a
+     * shimmer-free flip, and runs BEFORE raycast_init so the gameplay
+     * palette build reclaims CRAM after a map is chosen. */
+    box3d_play();   /* loads the box palette in vblank on its first frame */
+
+    /* Start menu over the final "inside the box" cinematic frame.
+     * UP/DOWN toggle the two options, START commits. The box is
+     * already open, so START is live immediately. */
+    int menu_selection = 0;  /* 0 = FIXED MAP, 1 = PROCEDURAL */
+    uint32_t frame = 0;
+    /* Any face button or Start commits the highlighted choice; UP/DOWN
+     * just move the cursor. */
+    const uint16_t MENU_COMMIT = SEGA_CTRL_START | SEGA_CTRL_A | SEGA_CTRL_B |
+                                 SEGA_CTRL_C | SEGA_CTRL_X | SEGA_CTRL_Y | SEGA_CTRL_Z;
     {
-        const int box_x1 = 60,  box_x2 = 260;
-        const int box_y1 = 60,  box_y2 = 180;
-        const int box_mid_x  = (box_x1 + box_x2) / 2;
-        const int flap_full_h = 40;
-        const int OPEN_FRAMES = 60;
-
-        /* Cardboard palette indices — reuse FLOOR_BASE brown shades.
-         * +1 = light kraft, +3 = mid, +6 = dark edge/seam. */
-        const uint8_t CB_BODY     = 17 + 2;
-        const uint8_t CB_FLAP_L   = 17 + 1;
-        const uint8_t CB_FLAP_R   = 17 + 3;
-        const uint8_t CB_EDGE     = 17 + 6;
-        const uint8_t CB_CORRUGAT = 17 + 4;
-        const uint8_t BG_DARK     = 46;
-
+        const int opt_x = (SCREEN_W - 19 * 8) / 2;
         uint16_t prev_pad = 0xFFFF;
-        uint32_t frame = 0;
-        int menu_selection = 0;  /* 0 = JUMP IN, 1 = NOCLIP PROCEDURAL */
         for (;;) {
             HwMdReadPad(0);
             uint16_t pad = MARS_SYS_COMM8;
             uint16_t pressed = (uint16_t)(pad & ~prev_pad);
             prev_pad = pad;
+            if (pressed & SEGA_CTRL_UP)    menu_selection = 0;
+            if (pressed & SEGA_CTRL_DOWN)  menu_selection = 1;
+            if (pressed & MENU_COMMIT) break;
 
-            /* After the flaps have opened, run the start menu: UP/DOWN
-             * toggles between the two options, START commits. Pressing
-             * START before the box is open is ignored so the user
-             * actually sees the animation. */
-            if (frame > OPEN_FRAMES) {
-                if (pressed & SEGA_CTRL_UP)    menu_selection = 0;
-                if (pressed & SEGA_CTRL_DOWN)  menu_selection = 1;
-                if (pressed & SEGA_CTRL_START) break;
-            }
-
+            box3d_show_final();
             uint8_t *fb = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
-
-            /* Dark room background. */
-            for (int y = 0; y < SCREEN_H; y++) {
-                uint8_t *row = fb + y * SCREEN_W;
-                for (int x = 0; x < SCREEN_W; x++) row[x] = BG_DARK;
-            }
-
-            /* Box body. */
-            for (int y = box_y1; y < box_y2; y++) {
-                uint8_t *row = fb + y * SCREEN_W;
-                for (int x = box_x1; x < box_x2; x++) row[x] = CB_BODY;
-            }
-            /* Subtle horizontal corrugation lines — every 6 rows. */
-            for (int y = box_y1 + 6; y < box_y2 - 2; y += 6) {
-                uint8_t *row = fb + y * SCREEN_W;
-                for (int x = box_x1 + 1; x < box_x2 - 1; x++) row[x] = CB_CORRUGAT;
-            }
-            /* Vertical tape strip down the centre — gives the box its
-             * "this thing was sealed and just opened" feel. */
-            for (int y = box_y1; y < box_y2; y++) {
-                fb[y * SCREEN_W + box_mid_x - 1] = CB_EDGE;
-                fb[y * SCREEN_W + box_mid_x    ] = CB_EDGE;
-            }
-            /* Box outer edge. */
-            for (int x = box_x1; x < box_x2; x++) {
-                fb[box_y1       * SCREEN_W + x] = CB_EDGE;
-                fb[(box_y2 - 1) * SCREEN_W + x] = CB_EDGE;
-            }
-            for (int y = box_y1; y < box_y2; y++) {
-                fb[y * SCREEN_W + box_x1    ] = CB_EDGE;
-                fb[y * SCREEN_W + box_x2 - 1] = CB_EDGE;
-            }
-
-            /* Flaps shrinking from full height to zero over OPEN_FRAMES. */
-            int flap_h = (frame < OPEN_FRAMES)
-                ? flap_full_h - (int)((flap_full_h * frame) / OPEN_FRAMES)
-                : 0;
-            for (int y = box_y1 + 1; y < box_y1 + flap_h; y++) {
-                uint8_t *row = fb + y * SCREEN_W;
-                for (int x = box_x1 + 1; x < box_mid_x; x++) row[x] = CB_FLAP_L;
-                for (int x = box_mid_x + 1; x < box_x2 - 1; x++) row[x] = CB_FLAP_R;
-            }
-
-            /* Once the flaps are out of the way, draw the title +
-             * two-option menu inside the box. */
-            if (frame >= OPEN_FRAMES) {
-                const int mid_y = (box_y1 + box_y2) / 2;
-                font_draw_string(fb, (SCREEN_W - 13 * 8) / 2,
-                                 mid_y - 28, "BACKROOMS 32X", 49);
-                font_draw_string(fb, box_x1 + 14, mid_y - 4,
-                                 (menu_selection == 0)
-                                   ? "> NOCLIP FIXED MAP"
-                                   : "  NOCLIP FIXED MAP", 49);
-                font_draw_string(fb, box_x1 + 14, mid_y + 8,
-                                 (menu_selection == 1)
-                                   ? "> NOCLIP PROCEDURAL"
-                                   : "  NOCLIP PROCEDURAL", 49);
-            }
-
-            swapBuffers();
+            font_draw_string(fb, (SCREEN_W - 13 * 8) / 2, 36,
+                             "BACKROOMS 32X", BOX_TEXT_IDX);
+            font_draw_string(fb, opt_x, 120,
+                             (menu_selection == 0)
+                               ? "> NOCLIP FIXED MAP "
+                               : "  NOCLIP FIXED MAP ", BOX_TEXT_IDX);
+            font_draw_string(fb, opt_x, 136,
+                             (menu_selection == 1)
+                               ? "> NOCLIP PROCEDURAL"
+                               : "  NOCLIP PROCEDURAL", BOX_TEXT_IDX);
+            box3d_flip();
             frame++;
         }
-        /* Branch on selection. NOCLIP PROCEDURAL overwrites world_map
-         * via xorshift32 seeded from `frame` — every press time gives
-         * a different layout. JUMP IN leaves the hand-tuned default
-         * map alone. */
-        if (menu_selection == 1) {
-            procgen_run(frame);
-        }
-        /* Wait until START is released so the in-game pause menu's
-         * edge-detect doesn't see the same press and pop open. */
-        for (;;) {
-            HwMdReadPad(0);
-            if (!(MARS_SYS_COMM8 & SEGA_CTRL_START)) break;
-            swapBuffers();
-        }
     }
+
+    /* Selection made — build the gameplay palette + world (reclaims
+     * CRAM from the cardboard palette). */
+    raycast_init();
+    prof_init();
+
+    /* NOCLIP PROCEDURAL overwrites world_map via xorshift32 seeded from
+     * `frame`; FIXED MAP leaves the hand-tuned default map alone. */
+    if (menu_selection == 1) {
+        procgen_run(frame);
+    }
+    /* Wait until the commit buttons are released so the in-game pause
+     * menu's edge-detect doesn't see the same press and pop open. */
+    for (;;) {
+        HwMdReadPad(0);
+        if (!(MARS_SYS_COMM8 & MENU_COMMIT)) break;
+        swapBuffers();
+    }
+
+    /* Game world is up — bring the backrooms ambience in (slave starts
+     * pumping from the top of the loop now). */
+    amb_set_active(1);
 
     for (;;) {
         /* Read the joypad up-front so the menu can both react to
@@ -243,6 +240,7 @@ int m_main(void) {
         uint8_t *fb_text = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
         menu_render(fb_text);
         prof_sample_and_draw(fb_text);
+        pos_draw(fb_text);
         swapBuffers();
     }
     return 0;

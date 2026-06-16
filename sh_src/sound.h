@@ -24,4 +24,9 @@ void amb_dma_handler(void);
  * immediately when no fill is needed. */
 void amb_pump(void);
 
+/* Master flips the ambient pump on when the game world loads. Until
+ * then amb_pump() is a no-op — no slave cycles, true silence — keeping
+ * the title quiet and the PWM free for title SFX. */
+void amb_set_active(int on);
+
 #endif

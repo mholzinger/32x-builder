@@ -28,6 +28,13 @@ extern player_t player;
  * still lives in the .data section initializer in raycast.c. */
 extern uint8_t world_map[MAP_H][MAP_W];
 
+/* Free-standing wallpaper partitions. Same data shape as in raycast.c.
+ * procgen writes into partitions[] / sets num_partitions at boot. */
+#define NUM_PARTITIONS_MAX  8
+typedef struct { fx_t x1, y1, x2, y2; } partition_t;
+extern partition_t partitions[NUM_PARTITIONS_MAX];
+extern int num_partitions;
+
 void raycast_init(void);
 void raycast_render(void);
 void player_update(void);

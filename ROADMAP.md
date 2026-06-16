@@ -123,6 +123,35 @@ template pool the cart can pick from. Lets us seed the procedural
 templates with actual AI imagination instead of hand-design. Pure
 roadmap dreaming; needs nothing else first.
 
+#### Procgen tuning knobs (post-redesign refinement)
+
+**Status:** deferred — set up after the building-blocks-based generator
+ships, to make the "feel" tunable without code changes.
+
+Once the new generator is in place (spine corridor + side rooms +
+clustered room pairs + pockets + partitions), build a small constants
+block at the top of `procgen.c` that lets us dial the procgen "feel"
+in one place:
+
+- `PROC_NUM_SIDE_ROOMS`        — how many rooms attach to the spine
+- `PROC_NUM_CLUSTER_PAIRS`     — connected room-pair count
+- `PROC_ROOM_SIZE_MIN/MAX`     — room dimensions in cells
+- `PROC_POCKET_DENSITY`        — fraction of corridor cells getting an alcove
+- `PROC_PARTITION_DENSITY`     — fraction of rooms ≥ 4×4 getting a partition
+- `PROC_CORRIDOR_WIDTH`        — 1 or 2 cells wide
+- `PROC_SPINE_ORIENTATION`     — horizontal / vertical / both
+- `PROC_PILLAR_BUDGET`         — explicit cap; default 0 (zero stray pillars)
+
+Eventually wire these into the in-game menu's TUNING tab so the
+player can A/B procgen feels without rebuilding. For now just expose
+them as compile-time `#define`s once the generator is shipping —
+makes A/B testing in iteration cycles ~one line of code each.
+
+Also worth adding when this lands: a "validate / re-roll" pass that
+checks min walkable cell count (e.g. >= 200), max isolated pillar
+count (e.g. <= 4), and floodfill reachability from spawn. Re-rolls
+the seed if any check fails. Cheap on a 1024-cell grid.
+
 ### Backrooms couch (8-angle directional billboard)
 **Status:** designed, not implemented. Deep-research agent landed a
 concrete recommendation.

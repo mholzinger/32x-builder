@@ -127,6 +127,48 @@ uint8_t world_map[MAP_H][MAP_W] = {
 static fx_t wall_dist[SCREEN_W];
 #define WALL_DIST(i) (((volatile fx_t *)((uintptr_t)wall_dist | 0x20000000))[i])
 
+/* Per-frame list of visible partition face segments, populated by
+ * partition_build_faces() once per frame on master and consumed by
+ * both CPUs in raycast_draw_walls via per-ray ray-segment intersection.
+ * Each face is a 2D line segment in world space; ua/ub are the texture-U
+ * world coordinates at the two endpoints. Cache-through aliased so the
+ * slave's reads are coherent with master's per-frame writes.
+ *
+ * Per-ray (not per-segment-projection) means each column independently
+ * tests against each visible face and takes the closest hit — exactly
+ * like the cell-wall DDA. No linear inv_z interpolation between
+ * endpoints, so no "wedge" artifact at glancing corners. Costs ~1.5ms
+ * per frame at 320 cols × 4 faces × ~20 cycles + saturated divides. */
+/* NUM_PARTITIONS_MAX declared in raycast.h so procgen sees the same cap. */
+#define MAX_PARTITION_FACES (NUM_PARTITIONS_MAX * 4)
+static fx_t pface_ax[MAX_PARTITION_FACES];
+static fx_t pface_ay[MAX_PARTITION_FACES];
+static fx_t pface_bx[MAX_PARTITION_FACES];
+static fx_t pface_by[MAX_PARTITION_FACES];
+static fx_t pface_ua[MAX_PARTITION_FACES];
+static fx_t pface_ub[MAX_PARTITION_FACES];
+static int  pface_count = 0;
+#define PFACE_AX(i)    (((volatile fx_t *)((uintptr_t)pface_ax | 0x20000000))[i])
+#define PFACE_AY(i)    (((volatile fx_t *)((uintptr_t)pface_ay | 0x20000000))[i])
+#define PFACE_BX(i)    (((volatile fx_t *)((uintptr_t)pface_bx | 0x20000000))[i])
+#define PFACE_BY(i)    (((volatile fx_t *)((uintptr_t)pface_by | 0x20000000))[i])
+#define PFACE_UA(i)    (((volatile fx_t *)((uintptr_t)pface_ua | 0x20000000))[i])
+#define PFACE_UB(i)    (((volatile fx_t *)((uintptr_t)pface_ub | 0x20000000))[i])
+#define PFACE_COUNT    (*(volatile int *)((uintptr_t)&pface_count | 0x20000000))
+
+/* Saturated fixed-point divide: same as FX_DIV but clamps to ±INT32_MAX
+ * instead of silently wrapping on overflow. Used in the per-ray ray-
+ * segment intersection where denominators can be very small at glancing
+ * angles (the same trap that originally pushed us to projection-based
+ * partition rendering). */
+static inline fx_t fx_div_sat(fx_t a, fx_t b) {
+    if (b == 0) return 0;
+    int64_t result = ((int64_t)a << FX_SHIFT) / b;
+    if (result > (int64_t)0x7FFFFFFFLL)         return (fx_t)0x7FFFFFFF;
+    if (result < (int64_t)0xFFFFFFFF80000000LL) return (fx_t)0x80000000;
+    return (fx_t)result;
+}
+
 /* Floor-standing cardboard cutouts. Each standup has a world position
  * and a facing direction. silhouette=1 renders as flat dark outline only
  * (the iconic "something is watching" Backrooms vibe) and disappears when
@@ -145,18 +187,19 @@ static const standup_t standups[] = {
 };
 
 /* Free-standing wallpaper partitions ("fake walls"). Defined by two
- * world-space endpoints — rendered as perspective-correct textured
- * line segments (1/z column interpolation), full ceiling-to-floor
- * height, both sides identical wallpaper. Same chevron and shade
- * ramp as the surrounding walls. Walkable-through. */
-typedef struct { fx_t x1, y1, x2, y2; } partition_t;
-static const partition_t partitions[] = {
+ * world-space endpoints — rendered via per-ray segment intersection
+ * (see partition_build_faces and the consumer in raycast_draw_walls),
+ * full ceiling-to-floor height. Mutable so procgen can populate them
+ * at boot; fixed-map mode keeps the hand-authored pair below.
+ * partition_t / NUM_PARTITIONS_MAX are declared in raycast.h. */
+partition_t partitions[NUM_PARTITIONS_MAX] = {
     /* SE lounge — 4-cell partition along Y=22. */
     { FX(22), FX(22), FX(26), FX(22) },
     /* Central band — 3-cell partition along X=20. */
     { FX(20), FX(11), FX(20), FX(14) },
 };
-#define NUM_PARTITIONS (int)(sizeof(partitions) / sizeof(partitions[0]))
+int num_partitions = 2;
+#define NUM_PARTITIONS num_partitions
 #define NUM_STANDUPS (int)(sizeof(standups) / sizeof(standups[0]))
 
 /* Illuminated drop-ceiling panels (the Backrooms iconic recessed
@@ -363,12 +406,17 @@ static int cell_passable(int x, int y) {
     return world_map[y][x] == 0;
 }
 
+/* Player's body radius in world cells — used by both wall and partition
+ * collision so the camera maintains a small visible gap from any
+ * surface. 0.25 = 25 cm ≈ 10". Larger feels sluggish, smaller lets
+ * the camera press up against a wall and break the immersion. */
+#define PLAYER_RADIUS FX(0.25)
+
 /* Returns 1 if (px, py) world position would intersect any partition's
  * thickened axis-aligned bounding box (rendered thickness + player
  * radius), 0 otherwise. */
 static int partition_collides(fx_t px, fx_t py) {
-    const fx_t PARTITION_HALF_THICK = FX(0.075);
-    const fx_t PLAYER_RADIUS        = FX(0.2);
+    const fx_t PARTITION_HALF_THICK = FX(0.15);   /* matches HALF_THICK in partition_project_all */
     fx_t margin = PARTITION_HALF_THICK + PLAYER_RADIUS;
     for (int i = 0; i < NUM_PARTITIONS; i++) {
         fx_t x1 = partitions[i].x1, x2 = partitions[i].x2;
@@ -384,7 +432,23 @@ static int partition_collides(fx_t px, fx_t py) {
 }
 
 static int position_clear(fx_t px, fx_t py) {
-    if (!cell_passable(FX_INT(px), FX_INT(py))) return 0;
+    /* Check all 4 corners of the player's bounding box against wall
+     * cells. The 4-CARDINAL check (N/S/E/W edges) missed diagonal
+     * corner clips — when player approaches an isolated 1-cell pillar
+     * from a diagonal, all 4 cardinal points land in walkable cells
+     * while the box's corner clips the pillar. Symptom was thin
+     * "phantom walls" that the player could walk through in hallways
+     * with isolated pillar columns. The 4-CORNER check catches this:
+     * each diagonal corner of the box is tested against the cell it
+     * lands in, so any pillar touching any corner blocks the move. */
+    int xL = FX_INT(px - PLAYER_RADIUS);
+    int xR = FX_INT(px + PLAYER_RADIUS);
+    int yT = FX_INT(py - PLAYER_RADIUS);
+    int yB = FX_INT(py + PLAYER_RADIUS);
+    if (!cell_passable(xL, yT)) return 0;
+    if (!cell_passable(xR, yT)) return 0;
+    if (!cell_passable(xL, yB)) return 0;
+    if (!cell_passable(xR, yB)) return 0;
     if (partition_collides(px, py)) return 0;
     return 1;
 }
@@ -396,12 +460,55 @@ static int position_clear(fx_t px, fx_t py) {
  * — the single biggest immersion bump per line of code. */
 static uint8_t bob_phase   = 0;
 static uint8_t is_walking  = 0;
+/* Eased manual pitch (signed pixels). C button drives it toward +40
+ * (look down) when held, eases back to 0 on release. Walking pitch bob
+ * (±1 from SIN_FX(bob_phase)) is added on top each frame. */
+static int     pitch_smooth_y = 0;
 
 /* Read controller, advance player by one frame. Axis-separated collision
  * gives natural sliding along walls. */
 void player_update(void) {
     HwMdReadPad(0);
     uint16_t pad = MARS_SYS_COMM8;
+
+    /* Hold C → look mode. D-pad UP/DOWN drive pitch in two phases:
+     *   Phase 1 — ease toward the comfortable angle ±40 at 25%/frame
+     *             (~11 frames / 183 ms to settle). Same exponential
+     *             ramp shape as the LEFT/RIGHT pivot at walk speed
+     *             (4 angle units/frame) so the gaze and pivot feel
+     *             paced the same.
+     *   Phase 2 — once you've reached ±40 and KEEP holding, linear
+     *             ramp at 1 px/frame from ±40 out to ±80. ~40 more
+     *             frames / 670 ms to fully extend. This is the
+     *             "extra" the player discovers if they really lean.
+     * Release direction (or C) → spring back to 0 at 25%/frame
+     * (symmetric to phase 1). Forward/back walking is suspended during
+     * the C hold since UP/DOWN are repurposed for pitch. Y-shear caps
+     * the convincing tilt at about ±80; past that walls visibly slide
+     * rather than tilt. */
+    int look_mode = (pad & SEGA_CTRL_C) != 0;
+    int up_held   = look_mode && (pad & SEGA_CTRL_UP)   != 0;
+    int down_held = look_mode && (pad & SEGA_CTRL_DOWN) != 0;
+    if (up_held && !down_held) {
+        if (pitch_smooth_y > -40) {
+            /* Phase 1: ease toward -40 at 25%/frame. */
+            pitch_smooth_y += (-40 - pitch_smooth_y) >> 2;
+        } else {
+            /* Phase 2: slow linear extension past -40. */
+            pitch_smooth_y -= 1;
+            if (pitch_smooth_y < -80) pitch_smooth_y = -80;
+        }
+    } else if (down_held && !up_held) {
+        if (pitch_smooth_y < 40) {
+            pitch_smooth_y += (40 - pitch_smooth_y) >> 2;
+        } else {
+            pitch_smooth_y += 1;
+            if (pitch_smooth_y > 80) pitch_smooth_y = 80;
+        }
+    } else {
+        /* No direction (or C released): ease toward 0 at 25%/frame. */
+        pitch_smooth_y += (0 - pitch_smooth_y) >> 2;
+    }
 
     /* Hold A to run — bumps walk speed and turn rate together so you can
      * quickly reorient while sprinting. */
@@ -424,12 +531,16 @@ void player_update(void) {
     fx_t rightY =  dirX;
 
     fx_t dx = 0, dy = 0;
+    /* Suspend walking forward/back while C is held — UP/DOWN are
+     * borrowed for look-up/look-down in look_mode (above). */
+    if (!look_mode) {
     if (pad & SEGA_CTRL_UP)   { dx += FX_MUL(dirX, walk); dy += FX_MUL(dirY, walk); }
     if (pad & SEGA_CTRL_DOWN) { dx -= FX_MUL(dirX, walk); dy -= FX_MUL(dirY, walk); }
     if (strafing) {
         if (pad & SEGA_CTRL_RIGHT) { dx += FX_MUL(rightX, walk); dy += FX_MUL(rightY, walk); }
         if (pad & SEGA_CTRL_LEFT)  { dx -= FX_MUL(rightX, walk); dy -= FX_MUL(rightY, walk); }
     }
+    }   /* end if (!look_mode) — UP/DOWN handled as look pitch above. */
 
     /* Axis-separated collision: try X first, then Y. */
     fx_t newX = player.x + dx;
@@ -453,6 +564,9 @@ static void draw_standups(uint8_t *fb,
     fx_t det = FX_MUL(planeX, dirY) - FX_MUL(dirX, planeY);
     if (det == 0) return;
     fx_t inv_det = FX_DIV(FX_ONE, det);
+    /* Standup feet sit on the floor → anchor floor_y to the shifted
+     * horizon so they slide with the wall/carpet when the camera pitches. */
+    int horizon_y = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
 
     for (int i = 0; i < NUM_STANDUPS; i++) {
         fx_t sx = standups[i].x - player.x;
@@ -482,8 +596,10 @@ static void draw_standups(uint8_t *fb,
         if (spriteWidth < 1) spriteWidth = 1;
         if (spriteHeight < 1) continue;
 
-        /* Floor row at this distance: SCREEN_H/2 + (SCREEN_H/2)/transformY. */
-        int floor_y = (SCREEN_H >> 1)
+        /* Floor row at this distance: horizon_y + (SCREEN_H/2)/transformY.
+         * horizon_y shifts with pitch (camera tilt); the SCREEN_H/2 inside
+         * the division is the focal constant and stays unshifted. */
+        int floor_y = horizon_y
                     + (int)(((int32_t)(SCREEN_H >> 1) << FX_SHIFT) / transformY);
         int drawEndY_u   = floor_y;
         int drawStartY_u = floor_y - spriteHeight;
@@ -576,212 +692,89 @@ static void draw_standups(uint8_t *fb,
     }
 }
 
-/* Render one textured line segment as a wall slice. Used by
- * draw_partitions which calls this 4 times per partition — once
- * per side of the partition's thin rectangle. */
-static void draw_partition_segment(uint8_t *fb, fx_t inv_det,
-                                   fx_t dirX, fx_t dirY,
-                                   fx_t planeX, fx_t planeY,
-                                   fx_t wx1, fx_t wy1, fx_t wx2, fx_t wy2,
-                                   fx_t length_cells) {
-    fx_t sx1 = wx1 - player.x;
-    fx_t sy1 = wy1 - player.y;
-    fx_t sx2 = wx2 - player.x;
-    fx_t sy2 = wy2 - player.y;
 
-    fx_t tx1 = FX_MUL(inv_det,
-                      FX_MUL( dirY,  sx1) - FX_MUL( dirX,  sy1));
-    fx_t ty1 = FX_MUL(inv_det,
-                      FX_MUL(-planeY, sx1) + FX_MUL( planeX, sy1));
-    fx_t tx2 = FX_MUL(inv_det,
-                      FX_MUL( dirY,  sx2) - FX_MUL( dirX,  sy2));
-    fx_t ty2 = FX_MUL(inv_det,
-                      FX_MUL(-planeY, sx2) + FX_MUL( planeX, sy2));
-
-    if (ty1 < FX(0.5) && ty2 < FX(0.5)) return;
-
-    fx_t u1 = 0;
-    fx_t u2 = FX_ONE;
-    if (ty1 < FX(0.5)) {
-        fx_t t = FX_DIV(FX(0.5) - ty1, ty2 - ty1);
-        tx1 += FX_MUL(t, tx2 - tx1);
-        u1  += FX_MUL(t, u2 - u1);
-        ty1  = FX(0.5);
-    }
-    if (ty2 < FX(0.5)) {
-        fx_t t = FX_DIV(FX(0.5) - ty2, ty1 - ty2);
-        tx2 += FX_MUL(t, tx1 - tx2);
-        u2  += FX_MUL(t, u1 - u2);
-        ty2  = FX(0.5);
-    }
-
-    int sxA = (SCREEN_W >> 1)
-            + (int)(((int32_t)(SCREEN_W >> 1) * FX_DIV(tx1, ty1)) >> FX_SHIFT);
-    int sxB = (SCREEN_W >> 1)
-            + (int)(((int32_t)(SCREEN_W >> 1) * FX_DIV(tx2, ty2)) >> FX_SHIFT);
-
-    fx_t tyL = ty1, tyR = ty2, uL = u1, uR = u2;
-    int sxL = sxA, sxR = sxB;
-    if (sxA > sxB) {
-        sxL = sxB; sxR = sxA;
-        tyL = ty2; tyR = ty1;
-        uL  = u2;  uR  = u1;
-    }
-    if (sxR < 0 || sxL >= SCREEN_W) return;
-    int sx_clamped_lo = sxL < 0 ? 0 : sxL;
-    int sx_clamped_hi = sxR >= SCREEN_W ? SCREEN_W - 1 : sxR;
-    int sx_range = sxR - sxL;
-    if (sx_range <= 0) return;
-
-    fx_t inv_zL = FX_DIV(FX_ONE, tyL);
-    fx_t inv_zR = FX_DIV(FX_ONE, tyR);
-    fx_t uoverz_L = FX_MUL(uL, inv_zL);
-    fx_t uoverz_R = FX_MUL(uR, inv_zR);
-
-    int tex_u_total =
-        ((int)(length_cells >> FX_SHIFT)) * WALL_TILE_X * WALL_TEX_WIDTH;
-    if (tex_u_total <= 0) tex_u_total = WALL_TEX_WIDTH;
-
-    for (int x = sx_clamped_lo; x <= sx_clamped_hi; x++) {
-        fx_t t = ((fx_t)(x - sxL) << FX_SHIFT) / sx_range;
-        fx_t inv_z = FX_MUL(FX_ONE - t, inv_zL) + FX_MUL(t, inv_zR);
-        if (inv_z <= 0) continue;
-        fx_t z = FX_DIV(FX_ONE, inv_z);
-        if (z >= WALL_DIST(x)) continue;
-
-        fx_t u_over_z = FX_MUL(FX_ONE - t, uoverz_L) + FX_MUL(t, uoverz_R);
-        fx_t u = FX_MUL(u_over_z, z);
-
-        /* LOD swap matching the main wall draw — hi-res 64×64 inside
-         * WALL_LOD_THRESHOLD, lo-res 16×16 otherwise. Both stored
-         * column-major. */
-        const uint8_t *tex_data;
-        int tex_w, tex_h, tile_x, tile_y;
-        if (z < WALL_LOD_THRESHOLD) {
-            tex_data = (const uint8_t *)wall_tex_hi;
-            tex_w    = WALL_TEX_HI_WIDTH;
-            tex_h    = WALL_TEX_HI_HEIGHT;
-            tile_x   = WALL_TILE_HI_X;
-            tile_y   = WALL_TILE_HI_Y;
-        } else {
-            tex_data = (const uint8_t *)wall_tex;
-            tex_w    = WALL_TEX_WIDTH;
-            tex_h    = WALL_TEX_HEIGHT;
-            tile_x   = WALL_TILE_X;
-            tile_y   = WALL_TILE_Y;
-        }
-        int tex_u_pc =
-            ((int)(length_cells >> FX_SHIFT)) * tile_x * tex_w;
-        if (tex_u_pc <= 0) tex_u_pc = tex_w;
-        int tex_u = (int)((u * tex_u_pc) >> FX_SHIFT);
-        int texX = tex_u & (tex_w - 1);
-
-        int lineHeight = (int)(((int32_t)SCREEN_H << FX_SHIFT) / z);
-        int wall_top = SCREEN_H / 2 - lineHeight / 2;
-        int wall_bot = SCREEN_H / 2 + lineHeight / 2;
-        int drawStart = wall_top < 0 ? 0 : wall_top;
-        int drawEnd   = wall_bot >= SCREEN_H ? SCREEN_H - 1 : wall_bot;
-
-        int wall_shade;
-        if (z < FX(2.5)) {
-            wall_shade = (int)((z * 2) / FX(2.5));
-        } else {
-            fx_t past = z - FX(2.5);
-            fx_t span = FOG_RAMP_DIST - FX(2.5);
-            wall_shade = 2 + (int)((past * 13) / span);
-        }
-        wall_shade += 1;
-        if (wall_shade < 0) wall_shade = 0;
-        if (wall_shade > SHADE_LEVELS - 1) wall_shade = SHADE_LEVELS - 1;
-
-        /* Two-stage LUT (matches main wall draw): 5-bucket palette
-         * byte → per-pixel loop is one byte lookup, no multiply or
-         * clamp. */
-        uint8_t lut5[5];
-        for (int vv = 0; vv < 5; vv++) {
-            int pattern = (vv * WALL_PATTERN_MAX) >> 4;
-            int s = wall_shade + pattern;
-            if (s >= SHADE_LEVELS) s = SHADE_LEVELS - 1;
-            lut5[vv] = (uint8_t)(WALL_BASE + s);
-        }
-        const uint8_t *wall_col = tex_data + texX * tex_h;
-        uint8_t shade_lut[WALL_TEX_HI_HEIGHT];
-        for (int ty = 0; ty < tex_h; ty++) {
-            shade_lut[ty] = lut5[wall_col[ty]];
-        }
-
-        fx_t texY_step =
-            ((fx_t)(tex_h * tile_y) << FX_SHIFT) / lineHeight;
-        fx_t tex_pos = (fx_t)(drawStart - wall_top) * texY_step;
-        int tex_h_mask = tex_h - 1;
-        uint8_t *p = fb + drawStart * SCREEN_W + x;
-        for (int y = drawStart; y <= drawEnd; y++) {
-            int texY = (tex_pos >> FX_SHIFT) & tex_h_mask;
-            *p = shade_lut[texY];
-            p += SCREEN_W;
-            tex_pos += texY_step;
-        }
-    }
-}
-
-/* Free-standing wallpaper partitions — thin rectangular volumes (~6"
- * thick) rendered as 4 wall slices each. Two long faces show the
- * wallpaper, two short end caps give the partition visible depth when
- * viewed edge-on. Currently axis-aligned only.
+/* Doom-style segment projection — borrowed from r_phase2.c (32X Doom
+ * Resurrection / d32xr) and r_segs.c (PC Doom). Transforms a wall
+ * segment's two endpoints to camera space, near-plane clips, projects
+ * to a screen-X range, and walks every column in that range writing
+ * (inv_z, u_over_z) into PART_INV_Z[] / PART_U_OVER_Z[] if the segment
+ * is closer than any previously projected partition for this column.
  *
- * Math: transform endpoints to camera space; if either is behind the
- * near plane, clip the segment along the line to the near plane;
- * project both to screen X; for each column between them, interpolate
- * 1/z linearly (perspective-correct) and recover z; from z get
- * lineHeight, wall_top, wall_shade; texU is also interpolated
- * perspective-correctly (u/z linear, then * z) so the chevron doesn't
- * skew across the wall. */
-static void draw_partitions(uint8_t *fb,
-                            fx_t dirX, fx_t dirY, fx_t planeX, fx_t planeY) {
-    fx_t det = FX_MUL(planeX, dirY) - FX_MUL(dirX, planeY);
-    if (det == 0) return;
-    fx_t inv_det = FX_DIV(FX_ONE, det);
-
-    const fx_t HALF_THICK = FX(0.075);   /* 0.15 cell = ~6 inches */
+ * The structural cure for the gap bug: NO per-column division by a
+ * ray direction. The only per-segment divides (FX_DIV by ty1/ty2 for
+ * the screen-X projection, and inv_z_step/u_step) operate on values
+ * bounded by the near-plane clip (ty >= FX(0.5)), so int32 fixed-point
+ * never overflows.
+ *
+ * u1_world/u2_world are the long-axis world coordinates at the segment
+ * endpoints — passing the partition's X for horizontal segments (Y for
+ * vertical) gives chevron-continuous tiling around the 4 sides. */
+/* Build the visible-faces list once per frame. Each partition is a
+ * thin axis-aligned rectangle (~0.3 cells thick). From any vantage,
+ * the player can see at most 2 of its 4 faces. We pick those and
+ * write them as line segments into pface_* arrays for the per-ray
+ * intersection in raycast_draw_walls to consume.
+ *
+ * This replaces the previous Doom-style segment-projection approach
+ * (which linearly interpolated inv_z between projected endpoints and
+ * produced a "wedge" artifact at glancing close-corner poses). The
+ * per-ray approach mirrors how regular cell walls work — each column
+ * independently finds its closest hit, no cross-column interpolation,
+ * no wedge by construction.
+ *
+ * Runs ONCE on the master before MARS_SYS_COMM4 wakes the slave; both
+ * CPUs then read the populated arrays during their draw_walls half. */
+static void partition_build_faces(void) {
+    const fx_t HALF_THICK = FX(0.15);    /* 0.3 cell ≈ 1' */
+    int n = 0;
 
     for (int i = 0; i < NUM_PARTITIONS; i++) {
-        fx_t x1 = partitions[i].x1;
-        fx_t y1 = partitions[i].y1;
-        fx_t x2 = partitions[i].x2;
-        fx_t y2 = partitions[i].y2;
-        fx_t dx_w = x2 - x1;
-        fx_t dy_w = y2 - y1;
+        fx_t px1 = partitions[i].x1, py1 = partitions[i].y1;
+        fx_t px2 = partitions[i].x2, py2 = partitions[i].y2;
+        fx_t pdx = px2 - px1, pdy = py2 - py1;
 
-        fx_t off_x = 0, off_y = 0;
-        if (dx_w == 0)         off_x = HALF_THICK; /* vertical → offset on X */
-        else if (dy_w == 0)    off_y = HALF_THICK; /* horizontal → offset on Y */
+        /* Thick-rectangle AABB extents. */
+        fx_t xmin = px1 < px2 ? px1 : px2;
+        fx_t xmax = px1 > px2 ? px1 : px2;
+        fx_t ymin = py1 < py2 ? py1 : py2;
+        fx_t ymax = py1 > py2 ? py1 : py2;
+        if (pdx == 0) { xmin -= HALF_THICK; xmax += HALF_THICK; }
+        if (pdy == 0) { ymin -= HALF_THICK; ymax += HALF_THICK; }
 
-        fx_t adx = dx_w < 0 ? -dx_w : dx_w;
-        fx_t ady = dy_w < 0 ? -dy_w : dy_w;
-        fx_t length_long  = adx > ady ? adx : ady;
-        fx_t length_short = HALF_THICK + HALF_THICK;
+        int show_west  = player.x < xmin;
+        int show_east  = player.x > xmax;
+        int show_north = player.y < ymin;
+        int show_south = player.y > ymax;
+        if (!(show_west || show_east || show_north || show_south)) continue;
 
-        /* Long face A. */
-        draw_partition_segment(fb, inv_det, dirX, dirY, planeX, planeY,
-                               x1 - off_x, y1 - off_y,
-                               x2 - off_x, y2 - off_y,
-                               length_long);
-        /* Long face B. */
-        draw_partition_segment(fb, inv_det, dirX, dirY, planeX, planeY,
-                               x1 + off_x, y1 + off_y,
-                               x2 + off_x, y2 + off_y,
-                               length_long);
-        /* End cap at endpoint 1. */
-        draw_partition_segment(fb, inv_det, dirX, dirY, planeX, planeY,
-                               x1 - off_x, y1 - off_y,
-                               x1 + off_x, y1 + off_y,
-                               length_short);
-        /* End cap at endpoint 2. */
-        draw_partition_segment(fb, inv_det, dirX, dirY, planeX, planeY,
-                               x2 - off_x, y2 - off_y,
-                               x2 + off_x, y2 + off_y,
-                               length_short);
+        if (show_west && n < MAX_PARTITION_FACES) {
+            /* West face: x = xmin, y from ymin..ymax. U = world Y. */
+            PFACE_AX(n) = xmin; PFACE_AY(n) = ymin;
+            PFACE_BX(n) = xmin; PFACE_BY(n) = ymax;
+            PFACE_UA(n) = ymin; PFACE_UB(n) = ymax;
+            n++;
+        }
+        if (show_east && n < MAX_PARTITION_FACES) {
+            PFACE_AX(n) = xmax; PFACE_AY(n) = ymin;
+            PFACE_BX(n) = xmax; PFACE_BY(n) = ymax;
+            PFACE_UA(n) = ymin; PFACE_UB(n) = ymax;
+            n++;
+        }
+        if (show_north && n < MAX_PARTITION_FACES) {
+            /* North face: y = ymin, x from xmin..xmax. U = world X. */
+            PFACE_AX(n) = xmin; PFACE_AY(n) = ymin;
+            PFACE_BX(n) = xmax; PFACE_BY(n) = ymin;
+            PFACE_UA(n) = xmin; PFACE_UB(n) = xmax;
+            n++;
+        }
+        if (show_south && n < MAX_PARTITION_FACES) {
+            PFACE_AX(n) = xmin; PFACE_AY(n) = ymax;
+            PFACE_BX(n) = xmax; PFACE_BY(n) = ymax;
+            PFACE_UA(n) = xmin; PFACE_UB(n) = xmax;
+            n++;
+        }
     }
+    PFACE_COUNT = n;
 }
 
 /* Project each ceiling light to screen space, paint a small bright bar
@@ -792,6 +785,9 @@ static void draw_lights(uint8_t *fb,
     fx_t det = FX_MUL(planeX, dirY) - FX_MUL(dirX, planeY);
     if (det == 0) return;
     fx_t inv_det = FX_DIV(FX_ONE, det);
+    /* Ceiling tiles project against the shifted horizon so they stay
+     * on the ceiling when the camera pitches up or down. */
+    int horizon_y = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
 
     static uint32_t light_frame = 0;
     light_frame++;
@@ -843,7 +839,7 @@ static void draw_lights(uint8_t *fb,
             corner_sx[k] = (SCREEN_W >> 1)
                   + (int)(((int32_t)(SCREEN_W >> 1) * ratio) >> FX_SHIFT);
             int yoff = (int)(((int32_t)(SCREEN_H >> 1) << FX_SHIFT) / tY);
-            corner_sy[k] = (SCREEN_H >> 1) - yoff;
+            corner_sy[k] = horizon_y - yoff;
 
             if (corner_sy[k] < min_y) min_y = corner_sy[k];
             if (corner_sy[k] > max_y) max_y = corner_sy[k];
@@ -952,7 +948,14 @@ void raycast_draw_ceiling_grid(int col_start, int col_end) {
     fx_t rightDirY = dirY + planeY;
 
     uint8_t *fb = fb_pixels();
-    int mid = SCREEN_H / 2;
+    /* horizon_y shifts with pitch; focal_const stays unshifted so
+     * depth math stays calibrated regardless of head tilt. */
+    int horizon_y   = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
+    const int focal_const = SCREEN_H / 2;
+    /* Same trick as the carpet: rebase row_color sampling so the
+     * ceiling fog gradient and grid-line shade follow the shifted
+     * horizon instead of staying glued to absolute screen Y. */
+    int sample_bias = SCREEN_H / 2 - horizon_y;
 
     /* For band detection when dX or dY is exactly 0 (facing cardinal):
      * we track wxL_s / wyL_s across rows and emit a full-width band
@@ -961,10 +964,10 @@ void raycast_draw_ceiling_grid(int col_start, int col_end) {
     fx_t prev_wyL_s = 0;
     int  has_prev   = 0;
 
-    for (int y = 0; y < mid; y++) {
-        int p = mid - y;
+    for (int y = 0; y < horizon_y && y < SCREEN_H; y++) {
+        int p = horizon_y - y;
         /* rowDist always positive; DIVU is ~3× faster than software. */
-        fx_t rowDist = (fx_t)divu_u32((uint32_t)((fx_t)mid << FX_SHIFT),
+        fx_t rowDist = (fx_t)divu_u32((uint32_t)((fx_t)focal_const << FX_SHIFT),
                                       (uint32_t)p);
         fx_t wxL = px + FX_MUL(rowDist, leftDirX);
         fx_t wxR = px + FX_MUL(rowDist, rightDirX);
@@ -976,7 +979,10 @@ void raycast_draw_ceiling_grid(int col_start, int col_end) {
         fx_t wyL_s = wyL * CEIL_GRID_DENSITY;
         fx_t wyR_s = wyR * CEIL_GRID_DENSITY;
 
-        int base_shade = row_color[y] - CEIL_BASE;
+        int sy = y + sample_bias;
+        if (sy < 0)         sy = 0;
+        if (sy >= SCREEN_H) sy = SCREEN_H - 1;
+        int base_shade = row_color[sy] - CEIL_BASE;
         if (base_shade >= SHADE_LEVELS - 1) {
             /* Skip drawing but keep prev_* coherent for next row's band test. */
             prev_wxL_s = wxL_s; prev_wyL_s = wyL_s; has_prev = 1;
@@ -1050,15 +1056,31 @@ void raycast_draw_carpet(int col_start, int col_end) {
     fx_t rightDirY = dirY + planeY;
 
     uint8_t *fb = fb_pixels();
-    int mid = SCREEN_H / 2;
-    for (int y = mid + 1; y < SCREEN_H; y++) {
-        uint8_t base_c = row_color[y];
+    /* horizon_y is the on-screen dividing line between ceiling and floor;
+     * shifts with pitch. focal_const stays at SCREEN_H/2 (the
+     * camera-height·focal-length product in the perspective formula) so
+     * depth-per-row remains calibrated when the camera pitches. */
+    int horizon_y   = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
+    const int focal_const = SCREEN_H / 2;
+    /* sample_bias rebases row_color sampling so its color gradient
+     * (and the stain-LOD derived from base_shade) travels with the
+     * shifted horizon. Without this the gradient stayed glued to
+     * absolute Y while the geometry math moved — visible as static
+     * stain density bands and a non-perspective color band when
+     * tilting up or down. */
+    int sample_bias = SCREEN_H / 2 - horizon_y;
+    for (int y = horizon_y + 1; y < SCREEN_H; y++) {
+        if (y < 0) continue;        /* extreme positive pitch */
+        int sy = y + sample_bias;
+        if (sy < 0)         sy = 0;
+        if (sy >= SCREEN_H) sy = SCREEN_H - 1;
+        uint8_t base_c = row_color[sy];
         int base_shade = base_c - FLOOR_BASE;
         if (base_shade >= SHADE_LEVELS - 2) continue;
 
-        int p = y - mid;
-        /* rowDist always positive (y > mid); DIVU. */
-        fx_t rowDist = (fx_t)divu_u32((uint32_t)((fx_t)mid << FX_SHIFT),
+        int p = y - horizon_y;
+        /* rowDist always positive (y > horizon_y); DIVU. */
+        fx_t rowDist = (fx_t)divu_u32((uint32_t)((fx_t)focal_const << FX_SHIFT),
                                       (uint32_t)p);
         fx_t worldX = px + FX_MUL(rowDist, leftDirX);
         fx_t worldY = py + FX_MUL(rowDist, leftDirY);
@@ -1127,6 +1149,9 @@ void raycast_draw_walls(int col_start, int col_end) {
      * SCREEN_W static split until we have a low-contention work-
      * stealing pattern (e.g. master pre-chunking into 8-column
      * batches and the slave just reading a written-once index). */
+    /* Load pitch once — read via cache-through alias so master's
+     * latest write is visible. Walls center on the shifted horizon. */
+    int horizon_y = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
     for (int col = col_start; col < col_end; col++) {
         WALL_DIST(col) = 0x7FFFFFFF;
         fx_t cameraX = cameraX_table[col];
@@ -1174,11 +1199,68 @@ void raycast_draw_walls(int col_start, int col_end) {
             if (world_map[mapY][mapX]) { hit = 1; break; }
             if (sideDistX > MAX_VIEW_DIST && sideDistY > MAX_VIEW_DIST) break;
         }
-        if (!hit) continue;
+        /* Do NOT continue on !hit yet — even when the DDA bails because
+         * the nearest wall is past MAX_VIEW_DIST, a partition can still
+         * be right in front of the player. Initialize perpDist to
+         * effectively-infinity in that case so the partition override
+         * below has something to beat. The !hit && !partition_hit case
+         * gets skipped after the override test. */
+        fx_t perpDist;
+        if (hit) {
+            perpDist = (side == 0) ? (sideDistX - deltaDistX)
+                                   : (sideDistY - deltaDistY);
+            if (perpDist < FX(0.1)) perpDist = FX(0.1);
+        } else {
+            perpDist = 0x7FFFFFFF;
+        }
 
-        fx_t perpDist = (side == 0) ? (sideDistX - deltaDistX)
-                                    : (sideDistY - deltaDistY);
-        if (perpDist < FX(0.1)) perpDist = FX(0.1);
+        /* Per-ray partition intersection. Test this column's ray against
+         * each visible partition face (line segment in world space) using
+         * standard 2D ray-segment intersection. Take the closest hit. No
+         * cross-column interpolation, so no wedge artifact possible — each
+         * column gets its own independent t (= perpDist, since dot(rayDir,
+         * dir) = 1 by construction of rayDir = dir + cameraX*plane).
+         *
+         * Saturated divide guards against denom underflow at glancing
+         * angles where the wall DDA would similarly lose precision — same
+         * trap that originally pushed us to projection. */
+        int  partition_hit       = 0;
+        fx_t partition_wallhit_w = 0;
+        int  n_faces = PFACE_COUNT;
+        for (int fi = 0; fi < n_faces; fi++) {
+            fx_t ax = PFACE_AX(fi);
+            fx_t ay = PFACE_AY(fi);
+            fx_t bx = PFACE_BX(fi);
+            fx_t by = PFACE_BY(fi);
+            fx_t dxs = bx - ax;
+            fx_t dys = by - ay;
+            fx_t cx  = ax - px;
+            fx_t cy  = ay - py;
+
+            fx_t denom = FX_MUL(rayDirY, dxs) - FX_MUL(rayDirX, dys);
+            if (denom == 0) continue;
+
+            fx_t t_num = FX_MUL(cy, dxs) - FX_MUL(cx, dys);
+            fx_t t = fx_div_sat(t_num, denom);
+            if (t <= FX(0.1)) continue;
+            if (t >= perpDist) continue;
+
+            fx_t s_num = FX_MUL(rayDirX, cy) - FX_MUL(rayDirY, cx);
+            fx_t s = fx_div_sat(s_num, denom);
+            if (s < 0 || s > FX_ONE) continue;
+
+            perpDist = t;
+            fx_t ua = PFACE_UA(fi);
+            fx_t ub = PFACE_UB(fi);
+            partition_wallhit_w = ua + FX_MUL(s, ub - ua);
+            partition_hit = 1;
+            side = 0;
+        }
+
+        /* No wall AND no partition in range — leave the column as the
+         * sky/ceiling/floor that earlier passes painted. */
+        if (!hit && !partition_hit) continue;
+
         WALL_DIST(col) = perpDist;
         /* No hard cutoff at MAX_VIEW_DIST — let walls render through
          * fog. The shade ramp clamps them to shade 15 past FOG_RAMP_DIST
@@ -1268,9 +1350,11 @@ void raycast_draw_walls(int col_start, int col_end) {
         const int tex_w_mask = tex_w - 1;
         const int tex_h_mask = tex_h - 1;
 
-        fx_t wall_hit = (side == 0)
-            ? (py + FX_MUL(perpDist, rayDirY))
-            : (px + FX_MUL(perpDist, rayDirX));
+        fx_t wall_hit = partition_hit
+            ? partition_wallhit_w
+            : (side == 0)
+                ? (py + FX_MUL(perpDist, rayDirY))
+                : (px + FX_MUL(perpDist, rayDirX));
         wall_hit -= (fx_t)FX_INT(wall_hit) << FX_SHIFT;
         /* wall_hit ∈ [0, FX_ONE), tex_w*tile_x ≤ 1024 → product ≤ 67M
          * which doesn't fit in int32 signed but does fit in uint32. The
@@ -1282,8 +1366,8 @@ void raycast_draw_walls(int col_start, int col_end) {
 
         int lineHeight = (int)divu_read();
 
-        int wall_top  = SCREEN_H / 2 - lineHeight / 2;
-        int wall_bot  = SCREEN_H / 2 + lineHeight / 2;
+        int wall_top  = horizon_y - lineHeight / 2;
+        int wall_bot  = horizon_y + lineHeight / 2;
         int drawStart = wall_top < 0 ? 0 : wall_top;
         int drawEnd   = wall_bot >= SCREEN_H ? SCREEN_H - 1 : wall_bot;
 
@@ -1480,8 +1564,20 @@ void raycast_clear_half(int col_start, int col_end) {
     uint32_t *fb32 = (uint32_t *)fb;
     int col_words = (col_end - col_start) >> 2;
     int col_word_start = col_start >> 2;
+    /* Background fill must follow the shifted horizon — otherwise the
+     * ceiling-vs-floor color split stays pinned at SCREEN_H/2 while the
+     * wall draws and grid overlays move with pitch, producing a visible
+     * band of "ceiling gray" below the walls (when looking down) or
+     * "floor orange" above them (looking up). Sample row_color at
+     * (y - horizon_y + SCREEN_H/2) so the table's ceiling/floor gradient
+     * stays centered on the shifted horizon. */
+    int horizon_y   = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
+    int sample_bias = SCREEN_H / 2 - horizon_y;     /* = pitch_y */
     for (int y = 0; y < SCREEN_H; y++) {
-        uint8_t  c   = row_color[y];
+        int sy = y + sample_bias;
+        if (sy < 0)         sy = 0;
+        if (sy >= SCREEN_H) sy = SCREEN_H - 1;
+        uint8_t  c   = row_color[sy];
         uint32_t c32 = ((uint32_t)c << 24) | ((uint32_t)c << 16)
                      | ((uint32_t)c <<  8) |  (uint32_t)c;
         uint32_t *row = fb32 + y * (SCREEN_W / 4) + col_word_start;
@@ -1510,6 +1606,32 @@ void raycast_render(void) {
     SHARED_UC->player.y     = player.y;
     SHARED_UC->player.angle = player.angle;
     SHARED_UC->is_walking   = is_walking;   /* gates carpet footsteps in pump */
+
+    /* Camera pitch — eased manual hold-C tilt (pitch_smooth_y) plus
+     * the ±1 walking pitch bob from bob_phase. The bob couples to the
+     * same phase as the vertical line-table bob so foot-strike dips
+     * both pitch AND vertical image in lockstep. Clamp the combined
+     * value to int8_t before publishing to SHARED_UC. */
+    int pitch_combined = pitch_smooth_y;
+    if (is_walking) {
+        pitch_combined += (int)((SIN_FX(bob_phase) * 1) >> FX_SHIFT);
+    }
+    if (pitch_combined > 127)  pitch_combined = 127;
+    if (pitch_combined < -128) pitch_combined = -128;
+    SHARED_UC->pitch_y = (int8_t)pitch_combined;
+
+    /* Build the visible-partition-faces list once. Master populates
+     * pface_* via cache-through alias; both halves of raycast_draw_walls
+     * read them when doing per-ray ray-segment intersection. Must finish
+     * BEFORE the slave wake below.
+     *
+     * Drain: a read-back of the last-written cache-through address
+     * serializes against all prior writes through the same alias bus
+     * path. Without it the MARS controller can forward COMM4=HALF
+     * before SDRAM writes are visible from slave's view. */
+    partition_build_faces();
+    (void)PFACE_COUNT;
+    __asm__ __volatile__("" ::: "memory");
 
     /* Single dispatch: slave does clear + ceiling + carpet + walls for
      * cols 160..319, master does the same for cols 0..159 in parallel.
@@ -1548,7 +1670,10 @@ void raycast_render(void) {
      * into the same screen rows. The light z-test handles walls; the
      * draw-order handles sprites. */
     draw_lights(fb, dirX, dirY, planeX, planeY);
-    draw_partitions(fb, dirX, dirY, planeX, planeY);
+    /* Partitions are now tested inline in the wall-column DDA — each
+     * ray does a ray-segment intersection against partitions[] and
+     * overrides perpDist if a partition is closer. Drops to the same
+     * column-rendering code path as regular walls. */
     draw_standups(fb, dirX, dirY, planeX, planeY);
 
     /* Vertical head bob via framebuffer line table.

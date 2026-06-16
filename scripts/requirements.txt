@@ -1,0 +1,4 @@
+# Blender's internal Python handles 'bpy' and 'math' natively.
+# The package below is only required if you are writing/linting code in an external IDE.
+
+fake-bpy-module-4.2

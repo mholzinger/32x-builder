@@ -2,6 +2,7 @@
 #include "raycast.h"
 #include "shared.h"
 #include "sound.h"
+#include "box3d.h"
 
 static inline uint16_t slave_frt_read(void) {
     uint8_t hi = SH2_FRT_FRCH;
@@ -62,6 +63,15 @@ void s_main(void) {
             raycast_draw_ceiling_grid(SCREEN_W / 2, SCREEN_W);
             raycast_draw_carpet(SCREEN_W / 2, SCREEN_W);
             raycast_draw_walls(SCREEN_W / 2, SCREEN_W);
+            SHARED_UC->slave_render_ticks = (uint16_t)(slave_frt_read() - t0);
+            break;
+        }
+        case MARS_CMD_BOX: {
+            /* Title screen: slave rasterizes the box's bottom band from
+             * the master-built shared draw-list. Disjoint framebuffer
+             * rows from the master's top band — no mid-frame sync. */
+            uint16_t t0 = slave_frt_read();
+            box3d_render_band(1);   /* bottom half */
             SHARED_UC->slave_render_ticks = (uint16_t)(slave_frt_read() - t0);
             break;
         }

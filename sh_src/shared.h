@@ -20,6 +20,7 @@
  * proceeding past the sync point. */
 #define MARS_CMD_NONE     0
 #define MARS_CMD_HALF     1   /* Slave draws clear+ceiling+carpet+walls for cols 160..319 */
+#define MARS_CMD_BOX      2   /* Slave rasterizes the box title's bottom band (rows 112..223) */
 
 /* Snapshot of the master's player state for the slave to render from.
  * Master writes this just before signaling CMD_CEILING; slave reads
@@ -83,6 +84,13 @@ typedef struct {
      * tab. Default 0x07 = all on. Each raycaster effect early-outs
      * (or behaves as if at base value) when its bit is clear. */
     volatile uint8_t lighting_flags;
+    /* Camera pitch shift in screen pixels (positive = look down, horizon
+     * slides UP on screen). Written by master in raycast_render every
+     * frame, read by both CPUs' wall/floor/ceiling draws to position
+     * the horizon. Cheap y-shear: walls slide with the horizon, depth
+     * formula uses the unshifted SCREEN_H/2 as the focal-length
+     * constant so perspective stays calibrated. */
+    volatile int8_t pitch_y;
 } shared_t;
 
 #define LIGHTING_FLICKER  0x01   /* per-panel random brightness rolls */

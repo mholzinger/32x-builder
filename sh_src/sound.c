@@ -185,7 +185,18 @@ static int buzz_env_amp   = 256;
 static int buzz_env_phase = 0;
 static int buzz_env_timer = 0;
 
+/* Title-screen gate. The ambient pump stays fully idle (skipping its
+ * ~150us fill work) until the game world loads — so the title burns no
+ * slave cycles on audio, and the PWM is free for dedicated title SFX.
+ * Master flips it on via amb_set_active(); the slave reads it through
+ * the cache-through alias for coherency. */
+static uint8_t amb_active_storage = 0;
+#define AMB_ACTIVE (*(volatile uint8_t *)((uintptr_t)&amb_active_storage | 0x20000000))
+
+void amb_set_active(int on) { AMB_ACTIVE = (uint8_t)(on ? 1 : 0); }
+
 void amb_pump(void) {
+    if (!AMB_ACTIVE) return;        /* title: silent, zero fill cost */
     uint8_t needs = amb_buf_needs_fill;
     if (needs == 0) return;
 
@@ -319,6 +330,7 @@ void amb_sound_init(void) {
      * crt0 actually copies .data from ROM to SDRAM at startup. */
     SHARED_UC->amb_volume  = 128;
     SHARED_UC->step_volume = 140;   /* 25% above the 11kHz/16-bit re-bake baseline */
+    AMB_ACTIVE = 0;                 /* gated silent until the game starts */
 
     /* Step A: initialize the ping-pong state and prefill both buffers
      * with silence (DC center). Steps B+C swap to using these instead

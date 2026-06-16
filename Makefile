@@ -80,12 +80,9 @@ SHOBJS += $(SHCPPS:.cpp=.o)
 .PHONY: all release debug deploy deploy-tv
 
 # Override on command line: make deploy MISTER=root@othermister.local
-# Note: MiSTer's USB drives renumber on reboot — what was usb0 may become
-# usb1, usb2, etc. If `make deploy` errors with "No such file or directory",
-# ssh into the MiSTer and `find /media -name S32X -type d` to locate the
-# current path, then `make deploy MISTER_DIR=/media/usb<N>/Games/S32X`.
+# Both targets probe usb0 then usb1 over ssh before scp'ing, so USB
+# drive renumber doesn't break the push.
 MISTER     ?= root@mister.office.local
-MISTER_DIR ?= /media/usb1/Games/S32X
 MISTER_TV  ?= root@mister.tv.local
 
 all: release
@@ -94,10 +91,11 @@ release: MDEXTRA  = -O2 -fomit-frame-pointer -flto -fuse-linker-plugin
 release: SHEXTRA  = -Ofast -fomit-frame-pointer -flto -fuse-linker-plugin
 release: $(MDTARGET).bin $(MDTARGET).lst $(TARGET).32x $(TARGET).lst
 
-# Build + scp the .32x to the MiSTer's S32X folder.
+# Office MiSTer: probe usb0 then usb1 for the S32X dir.
 deploy: release
-	@echo "==> Copying $(TARGET).32x to $(MISTER):$(MISTER_DIR)/"
-	@scp $(TARGET).32x $(MISTER):$(MISTER_DIR)/backrooms.32x
+	@DIR=$$(ssh $(MISTER) 'for n in 0 1; do d=/media/usb$$n/Games/S32X; [ -d "$$d" ] && echo "$$d" && exit 0; done; exit 1') && \
+		echo "==> Copying $(TARGET).32x to $(MISTER):$$DIR/" && \
+		scp $(TARGET).32x $(MISTER):$$DIR/backrooms.32x
 
 # TV MiSTer: probe usb0 first (typical layout after a clean boot), fall
 # back to usb1 if the drives renumbered. Avoids the manual `find` dance

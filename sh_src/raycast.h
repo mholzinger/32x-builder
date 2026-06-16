@@ -36,6 +36,14 @@ extern partition_t partitions[NUM_PARTITIONS_MAX];
 extern int num_partitions;
 
 void raycast_init(void);
+/* Scale the gameplay palette to brightness 0..FADE_STEPS (full..black) for
+ * the lobby->map fade. Call inside vblank. */
+#define FADE_STEPS 16
+void raycast_set_brightness(int lvl);
+/* Fill world_map/partitions and park the player. Call before raycast_init
+ * (or before re-calling init_lights) so the lighting grid matches. */
+void raycast_load_fixed(void);
+void raycast_load_lobby(void);
 void raycast_render(void);
 void player_update(void);
 void raycast_shimmer(void);

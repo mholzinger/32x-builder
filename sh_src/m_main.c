@@ -162,15 +162,34 @@ int m_main(void) {
      * palette build reclaims CRAM after a map is chosen. */
     box3d_play();   /* loads the box palette in vblank on its first frame */
 
-    /* Start menu over the final "inside the box" cinematic frame.
-     * UP/DOWN toggle the two options, START commits. The box is
-     * already open, so START is live immediately. */
-    int menu_selection = 0;  /* 0 = FIXED MAP, 1 = PROCEDURAL */
-    uint32_t frame = 0;
-    /* Any face button or Start commits the highlighted choice; UP/DOWN
-     * just move the cursor. */
-    const uint16_t MENU_COMMIT = SEGA_CTRL_START | SEGA_CTRL_A | SEGA_CTRL_B |
-                                 SEGA_CTRL_C | SEGA_CTRL_X | SEGA_CTRL_Y | SEGA_CTRL_Z;
+    /* No button needed: the box intro flows straight into the trap-door
+     * fall and we plummet into the void. (box3d_play can still be skipped
+     * with START.) The map is chosen later, down in the lobby. */
+    box3d_play_fall();
+
+    /* Land in the lobby — the open carpeted room from the HobbyTown
+     * reference. Build the lobby map BEFORE raycast_init so init_lights
+     * lays the ceiling-fixture grid over it. */
+    raycast_load_lobby();
+    raycast_init();
+    prof_init();
+
+    /* Backrooms ambience comes in as we stand up in the lobby (slave
+     * starts pumping from the top of the loop now). */
+    amb_set_active(1);
+
+    /* --- Lobby: frozen menu, then walk in ---------------------------- *
+     * Phase A: the player is FROZEN at the photo vantage; only the text
+     * menu is live (UP/DOWN pick the level, any button confirms and
+     * dismisses the menu). Phase B: the menu is gone and the choice is
+     * locked — you wander the lobby and walk forward into the backrooms
+     * to enter the level you picked. */
+    int menu_selection = 0;       /* 0=FIXED 1=PROCEDURAL */
+    uint32_t frame = 0;           /* time-in-lobby — entropy for procgen */
+    const uint16_t LOBBY_COMMIT = SEGA_CTRL_START | SEGA_CTRL_A | SEGA_CTRL_B |
+                                  SEGA_CTRL_C | SEGA_CTRL_X | SEGA_CTRL_Y | SEGA_CTRL_Z;
+
+    /* Phase A — frozen menu over the still photo-perspective. */
     {
         const int opt_x = (SCREEN_W - 19 * 8) / 2;
         uint16_t prev_pad = 0xFFFF;
@@ -179,48 +198,79 @@ int m_main(void) {
             uint16_t pad = MARS_SYS_COMM8;
             uint16_t pressed = (uint16_t)(pad & ~prev_pad);
             prev_pad = pad;
-            if (pressed & SEGA_CTRL_UP)    menu_selection = 0;
-            if (pressed & SEGA_CTRL_DOWN)  menu_selection = 1;
-            if (pressed & MENU_COMMIT) break;
-
-            box3d_show_final();
-            uint8_t *fb = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
-            font_draw_string(fb, (SCREEN_W - 13 * 8) / 2, 36,
-                             "BACKROOMS 32X", BOX_TEXT_IDX);
-            font_draw_string(fb, opt_x, 120,
-                             (menu_selection == 0)
-                               ? "> NOCLIP FIXED MAP "
-                               : "  NOCLIP FIXED MAP ", BOX_TEXT_IDX);
-            font_draw_string(fb, opt_x, 136,
-                             (menu_selection == 1)
-                               ? "> NOCLIP PROCEDURAL"
-                               : "  NOCLIP PROCEDURAL", BOX_TEXT_IDX);
-            box3d_flip();
+            if ((pressed & SEGA_CTRL_UP)   && menu_selection > 0) menu_selection--;
+            if ((pressed & SEGA_CTRL_DOWN) && menu_selection < 1) menu_selection++;
+            if (pressed & LOBBY_COMMIT) break;   /* confirm, dismiss menu */
             frame++;
+
+            SHARED_UC->frame_count++;
+            raycast_render();                    /* stationary lobby view */
+            uint8_t *fb_text = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
+            font_draw_string(fb_text, opt_x, 24,
+                             (menu_selection == 0)
+                               ? "> NOCLIP FIXED MAP  "
+                               : "  NOCLIP FIXED MAP  ", 49);
+            font_draw_string(fb_text, opt_x, 40,
+                             (menu_selection == 1)
+                               ? "> NOCLIP PROCEDURAL "
+                               : "  NOCLIP PROCEDURAL ", 49);
+            font_draw_string(fb_text, (SCREEN_W - 19 * 8) / 2, SCREEN_H - 20,
+                             "ANY BUTTON: CONFIRM", 49);
+            pos_draw(fb_text);          /* X/Y/A readout for spawn tuning */
+            swapBuffers();
         }
     }
 
-    /* Selection made — build the gameplay palette + world (reclaims
-     * CRAM from the cardboard palette). */
-    raycast_init();
-    prof_init();
+    /* Phase B — menu dismissed, choice locked. Walk through the lobby and
+     * into the black doorway (col 7) on the east wall. No prompt. */
+    {
+        for (;;) {
+            HwMdReadPad(0);
+            player_update();
+            /* Stepped into the black exit doorway (col 7, rows 2-4). */
+            if (player.x > FX(7) && player.y > FX(1.5) && player.y < FX(5)) break;
+            SHARED_UC->frame_count++;
+            raycast_render();
+            uint8_t *fb_text = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
+            pos_draw(fb_text);          /* live X/Y/A readout while you roam */
+            swapBuffers();
+        }
+    }
 
-    /* NOCLIP PROCEDURAL overwrites world_map via xorshift32 seeded from
-     * `frame`; FIXED MAP leaves the hand-tuned default map alone. */
+    /* Walk-through transition: fade the lobby to black, swap in the chosen
+     * map behind the black, fade it up — reads as the lobby sealing off
+     * and the backrooms opening ahead. (Own vblank flip so it bypasses
+     * raycast_shimmer, which would reset the bright palette mid-fade.) */
+    for (int lvl = FADE_STEPS; lvl >= 0; lvl -= 2) {
+        SHARED_UC->frame_count++;
+        raycast_render();
+        while (lastTick == MARS_SYS_COMM12);
+        raycast_set_brightness(lvl);
+        MARS_VDP_FBCTL = currentFB ^ 1;
+        while ((MARS_VDP_FBCTL & MARS_VDP_FS) == currentFB);
+        currentFB ^= 1;
+        lastTick = MARS_SYS_COMM12;
+    }
+
     if (menu_selection == 1) {
-        procgen_run(frame);
+        procgen_run((uint32_t)frame * 1000003u + (uint32_t)player.x);
+        player.x = FX(16.5); player.y = FX(28.5); player.angle = 192;
+    } else {
+        raycast_load_fixed();
     }
-    /* Wait until the commit buttons are released so the in-game pause
-     * menu's edge-detect doesn't see the same press and pop open. */
-    for (;;) {
-        HwMdReadPad(0);
-        if (!(MARS_SYS_COMM8 & MENU_COMMIT)) break;
-        swapBuffers();
-    }
+    raycast_init();                 /* rebuilds full-bright palette... */
+    raycast_set_brightness(0);      /* ...but hold black until the fade-in */
 
-    /* Game world is up — bring the backrooms ambience in (slave starts
-     * pumping from the top of the loop now). */
-    amb_set_active(1);
+    for (int lvl = 0; lvl <= FADE_STEPS; lvl += 2) {
+        SHARED_UC->frame_count++;
+        raycast_render();
+        while (lastTick == MARS_SYS_COMM12);
+        raycast_set_brightness(lvl);
+        MARS_VDP_FBCTL = currentFB ^ 1;
+        while ((MARS_VDP_FBCTL & MARS_VDP_FS) == currentFB);
+        currentFB ^= 1;
+        lastTick = MARS_SYS_COMM12;
+    }
 
     for (;;) {
         /* Read the joypad up-front so the menu can both react to
@@ -229,7 +279,6 @@ int m_main(void) {
         uint16_t pad = MARS_SYS_COMM8;
 
         menu_update(pad);
-
         if (!menu_is_active()) {
             player_update();
         }

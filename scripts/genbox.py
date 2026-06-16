@@ -19,20 +19,27 @@ verts = [
     (-1.0,  2.0, 2.0), ( 1.0,  2.0, 2.0),  # North Flap Outer (Verts 8, 9)
     ( 1.0, -2.0, 2.0), (-1.0, -2.0, 2.0),  # South Flap Outer (Verts 10, 11)
     ( 2.0, -1.0, 2.0), ( 2.0,  1.0, 2.0),  # East Flap Outer  (Verts 12, 13)
-    (-2.0,  1.0, 2.0), (-2.0, -1.0, 2.0)   # West Flap Outer  (Verts 14, 15)
+    (-2.0,  1.0, 2.0), (-2.0, -1.0, 2.0),  # West Flap Outer  (Verts 14, 15)
+    # Trap-door floor panels, split at y=0 (separate verts so they hinge
+    # without dragging the walls). Front door 16-19, back door 20-23.
+    (-1.0, -1.0, 0.0), ( 1.0, -1.0, 0.0),  # Front door hinge edge (y=-1)  16,17
+    ( 1.0,  0.0, 0.0), (-1.0,  0.0, 0.0),  # Front door middle edge (y=0)  18,19
+    (-1.0,  0.0, 0.0), ( 1.0,  0.0, 0.0),  # Back door middle edge (y=0)   20,21
+    ( 1.0,  1.0, 0.0), (-1.0,  1.0, 0.0)   # Back door hinge edge (y=1)    22,23
 ]
 
 # Structural Face Matrix binding the indices together safely
 faces = [
-    (0, 3, 2, 1),  # Box Bottom
-    (0, 1, 5, 4),  # Box South Wall
+    (16, 19, 18, 17),  # Front trap door (replaces Box Bottom @ index 0)
+    (0, 1, 5, 4),  # Box South Wall   (index 1 = LABEL_FACE in box3d)
     (1, 2, 6, 5),  # Box East Wall
     (2, 3, 7, 6),  # Box North Wall
     (3, 0, 4, 7),  # Box West Wall
     (7, 6, 9, 8),  # North Flap (Connected to top rim 7, 6)
     (4, 5, 10, 11),# South Flap (Connected to top rim 4, 5)
     (5, 6, 13, 12),# East Flap  (Connected to top rim 5, 6)
-    (7, 4, 15, 14) # West Flap  (Connected to west rim 7, 4)
+    (7, 4, 15, 14),# West Flap  (Connected to west rim 7, 4)
+    (20, 23, 22, 21),  # Back trap door (appended @ index 9)
 ]
 
 # Create the Mesh Container
@@ -62,8 +69,17 @@ for v in shape_closed.data:
     elif v.co.x > 1.1: 
         v.co.x = 0.0
     # West Flap outer vertices (indices 14 and 15)
-    elif v.co.x < -1.1: 
+    elif v.co.x < -1.1:
         v.co.x = 0.0
+
+# 2b. Trap-door morph (Trap_Open): the floor splits at y=0 and both
+# panels swing down past vertical, opening the hole the camera falls
+# through. Only the inner (middle) edges move; the outer edges are hinges.
+shape_trap = box.shape_key_add(name="Trap_Open", from_mix=False)
+shape_trap.data[18].co = mathutils.Vector(( 1.0, -1.2, -1.0))   # front door middle
+shape_trap.data[19].co = mathutils.Vector((-1.0, -1.2, -1.0))
+shape_trap.data[20].co = mathutils.Vector((-1.0,  1.2, -1.0))   # back door middle
+shape_trap.data[21].co = mathutils.Vector(( 1.0,  1.2, -1.0))
 
 # 3. Liminal Space Environment Setup (Pure Black)
 bpy.context.scene.world.use_nodes = True
@@ -102,9 +118,23 @@ cam.rotation_euler = (0, 0, 0)
 cam.keyframe_insert(data_path="location", frame=65)
 cam.keyframe_insert(data_path="rotation_euler", frame=65)
 
-# Dive directly into the darkness inside the bottom box structure
-cam.location = (0, 0, 0.5)
+# Descend to the box mouth looking down at the floor — the whole trap
+# door is in frame (and this is the menu backdrop).
+cam.location = (0, 0, 2.5)
 cam.keyframe_insert(data_path="location", frame=90)
+
+# 4a. Fall phase (frames 90-120): the trap-door floor splits open beneath
+# the camera, then it plummets straight down through the hole into the void.
+shape_trap.value = 0.0
+shape_trap.keyframe_insert(data_path="value", frame=1)
+shape_trap.keyframe_insert(data_path="value", frame=92)    # shut through intro + menu
+shape_trap.value = 1.0
+shape_trap.keyframe_insert(data_path="value", frame=102)   # doors fully open
+
+cam.location = (0, 0, 2.5)
+cam.keyframe_insert(data_path="location", frame=100)       # hold while the floor opens
+cam.location = (0, 0, -6.0)
+cam.keyframe_insert(data_path="location", frame=120)       # plummet through
 
 # 4b. Cardboard material (tan, rough) on the welded box+flap mesh
 mat = bpy.data.materials.get("Material") or bpy.data.materials.new("Material")

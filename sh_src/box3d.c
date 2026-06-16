@@ -46,9 +46,12 @@ extern uint16_t currentFB;
 #define TAPE_NONE   0
 #define TAPE_USTRIP 1
 #define TAPE_VEDGE  2
+/* Face order (box_faces): 0 front trap door, 1 South wall (LABEL), 2 East,
+ * 3 North, 4 West, 5 North flap, 6 South flap, 7 East flap, 8 West flap,
+ * 9 back trap door. The trap-door floor panels are plain cardboard. */
 static const uint8_t face_tape[BOX_NFACES] = {
     TAPE_NONE, TAPE_USTRIP, TAPE_NONE, TAPE_NONE, TAPE_NONE,
-    TAPE_VEDGE, TAPE_VEDGE, TAPE_NONE, TAPE_NONE
+    TAPE_VEDGE, TAPE_VEDGE, TAPE_NONE, TAPE_NONE, TAPE_NONE
 };
 
 /* The South wall (face 1) is the labelled front: it samples the label
@@ -166,15 +169,16 @@ static inline int detail_index(int lvl, fx_t u, fx_t v, int tape_mode) {
  *  MASTER: geometry — transform, shade, clip, project, sort          *
  * ================================================================== */
 static void build_frame(int f) {
-    fx_t t = box_morph[f];
     const int32_t *cr = box_cam_right[f];
     const int32_t *cu = box_cam_up[f];
     const int32_t *cb = box_cam_back[f];
     const int32_t *cp = box_cam_pos[f];
     for (int i = 0; i < BOX_NVERTS; i++) {
-        fx_t wx = box_pose_open[i][0] + FX_MUL(t, box_pose_closed[i][0] - box_pose_open[i][0]);
-        fx_t wy = box_pose_open[i][1] + FX_MUL(t, box_pose_closed[i][1] - box_pose_open[i][1]);
-        fx_t wz = box_pose_open[i][2] + FX_MUL(t, box_pose_closed[i][2] - box_pose_open[i][2]);
+        /* Vertices are pre-morphed per frame by export_box.py (flaps +
+         * trap door already baked in) — just read them. */
+        fx_t wx = box_verts[f][i][0];
+        fx_t wy = box_verts[f][i][1];
+        fx_t wz = box_verts[f][i][2];
         wverts[i][0] = wx; wverts[i][1] = wy; wverts[i][2] = wz;
         fx_t rx = wx - cp[0], ry = wy - cp[1], rz = wz - cp[2];
         cverts[i].cx    =  FX_MUL(rx, cr[0]) + FX_MUL(ry, cr[1]) + FX_MUL(rz, cr[2]);
@@ -484,8 +488,21 @@ void box3d_load_palette(void) {
     Hw32xSetBGColor(BOX_TEXT_IDX, 31, 31, 31);
 }
 
+/* Menu backdrop: the last INTRO frame — camera at the box mouth looking
+ * down at the (still-shut) trap-door floor. NOT the last frame, which is
+ * deep in the void after the fall. */
 void box3d_show_final(void) {
-    render_frame(BOX_NFRAMES - 1);
+    render_frame(BOX_INTRO_FRAMES - 1);
+}
+
+/* The trap-door fall: floor splits open and the camera plummets through
+ * into the void. Played once, in full, when the player commits the menu
+ * — the "fall into the backrooms" payoff. No skip; it's short. */
+void box3d_play_fall(void) {
+    for (int f = BOX_INTRO_FRAMES; f < BOX_NFRAMES; f++) {
+        render_frame(f);
+        box3d_flip();
+    }
 }
 
 void box3d_play(void) {
@@ -494,7 +511,9 @@ void box3d_play(void) {
 #endif
     build_wear_lut();        /* CPU precompute (was in load_palette) */
     uint16_t prev_pad = 0xFFFF;
-    for (int f = 0; f < BOX_NFRAMES; f++) {
+    /* Intro only (flaps open + dive to the box mouth). The trap-door fall
+     * tail (BOX_INTRO_FRAMES..BOX_NFRAMES) plays later, on menu commit. */
+    for (int f = 0; f < BOX_INTRO_FRAMES; f++) {
 #if BOX_PROFILE
         uint16_t t0 = frt_read();
         render_frame(f);

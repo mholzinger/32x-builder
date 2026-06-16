@@ -41,7 +41,7 @@ player_t player = {
  *                                "why is this here" Backrooms vibe).
  *   SPAWN CORRIDOR: tight col-16 N-S corridor from row 17 to 28,
  *                   side-doors at (15,20), (17,23), (15,26). */
-uint8_t world_map[MAP_H][MAP_W] = {
+static const uint8_t fixed_map[MAP_H][MAP_W] = {
     {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
     {1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
     {1,0,0,0,0,0,0,0,1,0,0,0,1,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,1},
@@ -75,6 +75,58 @@ uint8_t world_map[MAP_H][MAP_W] = {
     {1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
     {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
 };
+
+/* The HobbyTown lobby — a tiny 5x5 room (open cols 2-6, rows 2-6; the rest
+ * of the 32x32 grid is solid, unused). The box is grid walls; the dividers
+ * are free-standing wallpaper PARTITIONS set in raycast_load_lobby. Spawn
+ * (S) is bottom-centre facing north; walk up through the entrance gap,
+ * around the T-divider, and out the east exit to load the chosen level.
+ *
+ *        col: 2 3 4 5 6 7
+ *        r2   . | . . . E    | = T-stem (partition, x=3)
+ *        r3   . |== . . #    == = T-arm (partition, x3->5)
+ *        r4   . . . . . #
+ *        r5   == . == . #    entrance wall (partition), gap cols 3-4
+ *        r6   . . S . . #    S = spawn (faces north); E = east exit */
+static const uint8_t lobby_map[MAP_H][MAP_W] = {
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,0,0,0,0,0,0,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,0,0,0,0,0,0,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,0,0,0,0,0,0,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+};
+
+/* The live world grid the raycaster reads. Filled at runtime by
+ * raycast_load_fixed() / raycast_load_lobby() / procgen_run() — the
+ * hand-tuned layout now lives in fixed_map above and is copied in on
+ * demand, so the lobby and procedural maps can replace it in place. */
+uint8_t world_map[MAP_H][MAP_W];
 
 /* Palette layout (8bpp, 256 entries):
  *   0          : black (sky / unrendered)
@@ -307,6 +359,32 @@ static void build_shading_tables(void) {
 /* Linear blend of bright base (weight: SHADE_LEVELS - i) toward fog (weight: i). */
 #define MIX(bright, fog, i) (((bright) * (SHADE_LEVELS - (i)) + (fog) * (i)) / SHADE_LEVELS)
 
+/* Set the gameplay palette scaled to brightness lvl/FADE_STEPS (FADE_STEPS
+ * = full bright, 0 = black) — drives the lobby->map fade-through-black.
+ * Must be called inside vblank (CRAM write). FADE_STEPS is in raycast.h. */
+void raycast_set_brightness(int lvl) {
+    if (lvl < 0) lvl = 0; else if (lvl > FADE_STEPS) lvl = FADE_STEPS;
+    Hw32xSetBGColor(0, 0, 0, 0);
+    for (int i = 0; i < SHADE_LEVELS; i++) {
+        Hw32xSetBGColor(WALL_BASE + i,
+            MIX(30,FOG_R,i)*lvl/FADE_STEPS, MIX(27,FOG_G,i)*lvl/FADE_STEPS, MIX(13,FOG_B,i)*lvl/FADE_STEPS);
+        Hw32xSetBGColor(FLOOR_BASE + i,
+            MIX(27,FOG_R,i)*lvl/FADE_STEPS, MIX(22,FOG_G,i)*lvl/FADE_STEPS, MIX(11,FOG_B,i)*lvl/FADE_STEPS);
+        Hw32xSetBGColor(CEIL_BASE + i,
+            MIX(25,FOG_R,i)*lvl/FADE_STEPS, MIX(23,FOG_G,i)*lvl/FADE_STEPS, MIX(16,FOG_B,i)*lvl/FADE_STEPS);
+    }
+    {
+        static const uint8_t lt[4][3] = {{31,31,28},{23,23,21},{15,15,14},{7,7,7}};
+        for (int i = 0; i < 4; i++)
+            Hw32xSetBGColor(LIGHT_BASE + i, lt[i][0]*lvl/FADE_STEPS, lt[i][1]*lvl/FADE_STEPS, lt[i][2]*lvl/FADE_STEPS);
+    }
+    {
+        static const uint8_t nb[8][3] = {{16,11,5},{2,2,1},{7,5,3},{11,8,6},{16,12,9},{19,16,13},{23,20,17},{26,22,19}};
+        for (int i = 0; i < 8; i++)
+            Hw32xSetBGColor(NEANDER_BASE + i, nb[i][0]*lvl/FADE_STEPS, nb[i][1]*lvl/FADE_STEPS, nb[i][2]*lvl/FADE_STEPS);
+    }
+}
+
 static void build_palette(void) {
     Hw32xSetBGColor(0, 0, 0, 0);
     /* Walls: stronger yellow eggshell. R bumped to 30, B dropped to 13
@@ -372,6 +450,42 @@ void raycast_init(void) {
     for (int col = 0; col < SCREEN_W; col++) {
         cameraX_table[col] = ((fx_t)col << (FX_SHIFT + 1)) / SCREEN_W - FX_ONE;
     }
+}
+
+/* --- Map loaders --------------------------------------------------- *
+ * Each fills world_map[]/partitions[] and parks the player. Call BEFORE
+ * raycast_init() (or re-call init_lights via raycast_init) so the
+ * ceiling-fixture grid is laid over the new map. */
+
+/* The hand-tuned 32x32 Backrooms map + its two dividers. */
+void raycast_load_fixed(void) {
+    for (int r = 0; r < MAP_H; r++)
+        for (int c = 0; c < MAP_W; c++)
+            world_map[r][c] = fixed_map[r][c];
+    partitions[0] = (partition_t){ FX(22), FX(22), FX(26), FX(22) };
+    partitions[1] = (partition_t){ FX(20), FX(11), FX(20), FX(14) };
+    num_partitions = 2;
+    player.x = FX(16.5); player.y = FX(28.5); player.angle = 192;
+}
+
+/* Load the tiny 8x8 lobby: the grid box (lobby_map) plus the free-standing
+ * wallpaper PARTITION that IS the photo's divider. Spawn (X) sits bottom-
+ * west facing north so the divider stands on your right; walk up the west
+ * side, across the top, and out the east exit doorway (col 10, rows 2-4) to
+ * enter the chosen level. */
+void raycast_load_lobby(void) {
+    for (int r = 0; r < MAP_H; r++)
+        for (int c = 0; c < MAP_W; c++)
+            world_map[r][c] = lobby_map[r][c];
+    /* Free-standing wallpaper PARTITION dividers, per the sketch (5x5):
+     *  - T-divider top-left: vertical stem (x=3, rows 2-3) + arm (row 3, x3->5)
+     *  - entrance wall (row 5) split by a centre gap (cols 3-4) you walk up. */
+    partitions[0] = (partition_t){ FX(3), FX(2), FX(3), FX(4) };  /* T stem     */
+    partitions[1] = (partition_t){ FX(3), FX(3), FX(5), FX(3) };  /* T arm      */
+    partitions[2] = (partition_t){ FX(2), FX(5), FX(3), FX(5) };  /* entrance L */
+    partitions[3] = (partition_t){ FX(4), FX(5), FX(7), FX(5) };  /* entrance R (closed in 1 cell) */
+    num_partitions = 4;
+    player.x = FX(4.0); player.y = FX(6.6); player.angle = 184;
 }
 
 /* Per-frame palette nudge on the brightest wall and ceiling entries —
@@ -1185,6 +1299,7 @@ void raycast_draw_walls(int col_start, int col_end) {
 
         int side = 0;
         int hit = 0;
+        int hit_cell = 0;          /* world_map value at the hit (2 = black exit) */
         for (int i = 0; i < 64 && !hit; i++) {
             if (sideDistX < sideDistY) {
                 sideDistX += deltaDistX;
@@ -1196,7 +1311,7 @@ void raycast_draw_walls(int col_start, int col_end) {
                 side = 1;
             }
             if (mapX < 0 || mapX >= MAP_W || mapY < 0 || mapY >= MAP_H) break;
-            if (world_map[mapY][mapX]) { hit = 1; break; }
+            if (world_map[mapY][mapX]) { hit = 1; hit_cell = world_map[mapY][mapX]; break; }
             if (sideDistX > MAX_VIEW_DIST && sideDistY > MAX_VIEW_DIST) break;
         }
         /* Do NOT continue on !hit yet — even when the DDA bails because
@@ -1370,6 +1485,16 @@ void raycast_draw_walls(int col_start, int col_end) {
         int wall_bot  = horizon_y + lineHeight / 2;
         int drawStart = wall_top < 0 ? 0 : wall_top;
         int drawEnd   = wall_bot >= SCREEN_H ? SCREEN_H - 1 : wall_bot;
+
+        /* Black-exit cell (world_map == 2): a solid void wall — the dark
+         * doorway you walk through to leave the lobby. Fill the column
+         * black and skip all texture/baseboard work. Partitions still
+         * occlude it (they override perpDist above). */
+        if (hit_cell == 2 && !partition_hit) {
+            uint8_t *pb = (uint8_t *)fb + col + drawStart * SCREEN_W;
+            for (int y = drawStart; y <= drawEnd; y++) { *pb = 0; pb += SCREEN_W; }
+            continue;
+        }
 
         /* DIVU latency hide #2: start tex_step = (tex_h*tile_y
          * << 16) / lineHeight, then do detail_factor + shade_lut in

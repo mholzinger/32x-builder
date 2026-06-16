@@ -20,9 +20,14 @@ void box3d_load_palette(void);
 /* Play the box animation once (~1.5s), skippable with START. */
 void box3d_play(void);
 
-/* Render the final frame (camera deepest inside the box) into the back
- * buffer — used as the menu backdrop. No flip. */
+/* Render the menu-backdrop frame (camera at the box mouth) into the back
+ * buffer. No flip. */
 void box3d_show_final(void);
+
+/* Play the trap-door fall to completion: the floor splits open and the
+ * camera plummets into the void. Call on menu commit, before raycast_init
+ * — the "fall into the backrooms" payoff. Ends on black. */
+void box3d_play_fall(void);
 
 /* Shimmer-free buffer flip (mirrors swapBuffers minus raycast_shimmer)
  * so the cardboard CRAM palette is left intact. */

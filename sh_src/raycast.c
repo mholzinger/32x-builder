@@ -171,8 +171,8 @@ uint8_t world_map[MAP_H][MAP_W];
 /* Per-column z-buffer captured during wall draw so the light billboards
  * can z-test against walls. 0x7FFFFFFF = no wall hit (light wins).
  *
- * Both CPUs write to this array (master cols 0-159, slave 160-319) and
- * the master reads it back for the sprite z-test. ALL accesses must
+ * Both CPUs write to this array (primary cols 0-159, secondary 160-319) and
+ * the primary reads it back for the sprite z-test. ALL accesses must
  * go through the WALL_DIST() macro below, which routes them via the
  * | 0x20000000 cache-through alias so neither CPU sees stale cached
  * values written by the other. */
@@ -180,11 +180,11 @@ static fx_t wall_dist[SCREEN_W];
 #define WALL_DIST(i) (((volatile fx_t *)((uintptr_t)wall_dist | 0x20000000))[i])
 
 /* Per-frame list of visible partition face segments, populated by
- * partition_build_faces() once per frame on master and consumed by
+ * partition_build_faces() once per frame on primary and consumed by
  * both CPUs in raycast_draw_walls via per-ray ray-segment intersection.
  * Each face is a 2D line segment in world space; ua/ub are the texture-U
  * world coordinates at the two endpoints. Cache-through aliased so the
- * slave's reads are coherent with master's per-frame writes.
+ * secondary's reads are coherent with primary's per-frame writes.
  *
  * Per-ray (not per-segment-projection) means each column independently
  * tests against each visible face and takes the closest hit — exactly
@@ -890,7 +890,7 @@ static void draw_standups(uint8_t *fb,
  * independently finds its closest hit, no cross-column interpolation,
  * no wedge by construction.
  *
- * Runs ONCE on the master before MARS_SYS_COMM4 wakes the slave; both
+ * Runs ONCE on the primary before MARS_SYS_COMM4 wakes the secondary; both
  * CPUs then read the populated arrays during their draw_walls half. */
 static void partition_build_faces(void) {
     const fx_t HALF_THICK = FX(0.15);    /* 0.3 cell ≈ 1' */
@@ -1093,11 +1093,11 @@ static void draw_lights(uint8_t *fb,
     }
 }
 
-/* Drop-ceiling grid pass — called from the slave SH-2's dispatch loop
- * after the master writes the player snapshot and signals
- * MARS_CMD_CEILING on COMM4. Master can also call this directly during
+/* Drop-ceiling grid pass — called from the secondary SH-2's dispatch loop
+ * after the primary writes the player snapshot and signals
+ * MARS_CMD_CEILING on COMM4. Primary can also call this directly during
  * single-CPU testing; in both cases the function reads player state
- * from SHARED_UC (cache-through alias) so the slave sees the master's
+ * from SHARED_UC (cache-through alias) so the secondary sees the primary's
  * latest writes without explicit cache flushes.
  *
  * Writes only to the top half of the framebuffer (rows 0..SCREEN_H/2-1).
@@ -1124,7 +1124,7 @@ void raycast_draw_ceiling_grid(int col_start, int col_end) {
     int horizon_y   = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
     /* Ceiling depth scales with focal·(1-eyeH): crouch -> ceiling recedes,
      * grid lines spread, in step with the wall ceiling-edge. Both CPUs read
-     * eye_h here, so the slave's column half stays aligned. */
+     * eye_h here, so the secondary's column half stays aligned. */
     const int focal_const = (SCREEN_H * (256 - (int)SHARED_UC->eye_h)) >> 8;
     /* Same trick as the carpet: rebase row_color sampling so the
      * ceiling fog gradient and grid-line shade follow the shifted
@@ -1218,7 +1218,7 @@ void raycast_draw_ceiling_grid(int col_start, int col_end) {
 
 /* Carpet wear pass — stamps dark "stains" across the floor (bottom
  * half of screen) at world-position-hashed locations. Reads player
- * from the shared snapshot so the slave can run it alongside the
+ * from the shared snapshot so the secondary can run it alongside the
  * ceiling grid pass on the top half (disjoint framebuffer regions,
  * no race). */
 void raycast_draw_carpet(int col_start, int col_end) {
@@ -1243,7 +1243,7 @@ void raycast_draw_carpet(int col_start, int col_end) {
     int horizon_y   = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
     /* Floor depth scales with focal·eyeH: crouch -> the carpet comes up
      * close, stains land at the nearer world distance, in step with the
-     * wall floor-edge. Both CPUs read eye_h, keeping the slave's half aligned. */
+     * wall floor-edge. Both CPUs read eye_h, keeping the secondary's half aligned. */
     const int focal_const = (SCREEN_H * (int)SHARED_UC->eye_h) >> 8;
     /* sample_bias rebases row_color sampling so its color gradient
      * (and the stain-LOD derived from base_shade) travels with the
@@ -1317,10 +1317,10 @@ void raycast_draw_carpet(int col_start, int col_end) {
 
 /* Wall column pass — DDA, perspective-correct textured columns, fog
  * cutoff, distance-based detail falloff. Caller-supplied half-open
- * column range [col_start, col_end) lets the master and slave divide
- * the screen — master does [0, SCREEN_W/2), slave does [SCREEN_W/2,
+ * column range [col_start, col_end) lets the primary and secondary divide
+ * the screen — primary does [0, SCREEN_W/2), secondary does [SCREEN_W/2,
  * SCREEN_W). Writes the per-column z-buffer (WALL_DIST) through the
- * cache-through alias so the sprite passes on master see slave's
+ * cache-through alias so the sprite passes on primary see secondary's
  * writes after the COMM4 sync. Reads player from SHARED_UC. */
 void raycast_draw_walls(int col_start, int col_end) {
     fx_t px = SHARED_UC->player.x;
@@ -1338,11 +1338,11 @@ void raycast_draw_walls(int col_start, int col_end) {
      * was attempted but the ~190K atomic bus ops/sec during the wall
      * pass drowned the 68K→SH2 bridge that carries joypad reads back
      * to MARS_SYS_COMM8, re-introducing the controller-drop stall.
-     * Sticking with the master 0..SCREEN_W/2 / slave SCREEN_W/2..
+     * Sticking with the primary 0..SCREEN_W/2 / secondary SCREEN_W/2..
      * SCREEN_W static split until we have a low-contention work-
-     * stealing pattern (e.g. master pre-chunking into 8-column
-     * batches and the slave just reading a written-once index). */
-    /* Load pitch once — read via cache-through alias so master's
+     * stealing pattern (e.g. primary pre-chunking into 8-column
+     * batches and the secondary just reading a written-once index). */
+    /* Load pitch once — read via cache-through alias so primary's
      * latest write is visible. Walls center on the shifted horizon. */
     int horizon_y = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
     /* Eye height once: splits the wall column about the horizon. 128 =
@@ -1752,11 +1752,11 @@ void raycast_draw_walls(int col_start, int col_end) {
  * stops calling fixed-range walls. */
 
 /* Profile counters. Both written by raycast_render, read by m_main.c
- * for the on-screen overlay. half = master's parallel work
+ * for the on-screen overlay. half = primary's parallel work
  * (clear+ceiling+carpet+walls of its column range); idle = time
- * spent spinning on the slave-done sync after that. */
-volatile uint16_t prof_master_idle_ticks = 0;
-volatile uint16_t prof_master_half_ticks = 0;
+ * spent spinning on the secondary-done sync after that. */
+volatile uint16_t prof_primary_idle_ticks = 0;
+volatile uint16_t prof_primary_half_ticks = 0;
 static inline uint16_t prof_frt_read(void) {
     uint8_t hi = SH2_FRT_FRCH;
     uint8_t lo = SH2_FRT_FRCL;
@@ -1784,7 +1784,7 @@ void raycast_clear_half(int col_start, int col_end) {
      * applies via sample_bias, just decoupled from horizon_y so the geometry
      * stays flat to the player. Lower eye => more bright carpet before the
      * fade, the fade-point creeps toward the horizon (and the ceiling fogs
-     * sooner as it looms). Both CPUs run this on their half, so the slave
+     * sooner as it looms). Both CPUs run this on their half, so the secondary
      * matches. The carpet and ceiling-grid passes apply the identical term so
      * the whole tone gradient travels together. */
     int sample_bias = (SCREEN_H / 2 - horizon_y)
@@ -1821,8 +1821,8 @@ void raycast_render(void) {
     fx_t planeX = FX_MUL(-dirY, FX(0.66));
     fx_t planeY = FX_MUL( dirX, FX(0.66));
 
-    /* Snapshot player state for the slave to read via cache-through.
-     * Must land before COMM4 wakes the slave so it sees the new frame. */
+    /* Snapshot player state for the secondary to read via cache-through.
+     * Must land before COMM4 wakes the secondary so it sees the new frame. */
     SHARED_UC->player.x     = player.x;
     SHARED_UC->player.y     = player.y;
     SHARED_UC->player.angle = player.angle;
@@ -1844,23 +1844,23 @@ void raycast_render(void) {
     if (pitch_combined < -128) pitch_combined = -128;
     SHARED_UC->pitch_y = (int8_t)pitch_combined;
 
-    /* Build the visible-partition-faces list once. Master populates
+    /* Build the visible-partition-faces list once. Primary populates
      * pface_* via cache-through alias; both halves of raycast_draw_walls
      * read them when doing per-ray ray-segment intersection. Must finish
-     * BEFORE the slave wake below.
+     * BEFORE the secondary wake below.
      *
      * Drain: a read-back of the last-written cache-through address
      * serializes against all prior writes through the same alias bus
      * path. Without it the MARS controller can forward COMM4=HALF
-     * before SDRAM writes are visible from slave's view. */
+     * before SDRAM writes are visible from secondary's view. */
     partition_build_faces();
     (void)PFACE_COUNT;
     __asm__ __volatile__("" ::: "memory");
 
-    /* Single dispatch: slave does clear + ceiling + carpet + walls for
-     * cols 160..319, master does the same for cols 0..159 in parallel.
+    /* Single dispatch: secondary does clear + ceiling + carpet + walls for
+     * cols 160..319, primary does the same for cols 0..159 in parallel.
      * Column ownership eliminates the previous CEILING→WALLS sequential
-     * dependency (master used to idle ~26ms waiting for slave's ceiling
+     * dependency (primary used to idle ~26ms waiting for secondary's ceiling
      * before walls could start). One sync point at the end. */
     MARS_SYS_COMM4 = MARS_CMD_HALF;
 
@@ -1870,20 +1870,20 @@ void raycast_render(void) {
     raycast_draw_walls(0, SCREEN_W / 2);
 
     uint16_t idle_start = prof_frt_read();
-    prof_master_half_ticks = (uint16_t)(idle_start - prof_start);
+    prof_primary_half_ticks = (uint16_t)(idle_start - prof_start);
     while (MARS_SYS_COMM4 != MARS_CMD_NONE) {
-        /* Throttle the master-side ACK wait to reduce 68K-bridge
+        /* Throttle the primary-side ACK wait to reduce 68K-bridge
          * pressure — bare-loop polling at ~5M reads/sec was lining
          * up with the 68K's joypad-read window often enough to drop
          * COMM8 updates. ~30 cycles of NOPs per loop iteration brings
-         * the master poll rate down to a friendlier ~700K/sec while
+         * the primary poll rate down to a friendlier ~700K/sec while
          * keeping latency well under one frame. */
         __asm__ __volatile__("nop\n\tnop\n\tnop\n\tnop\n\t"
                              "nop\n\tnop\n\tnop\n\tnop\n\t"
                              "nop\n\tnop\n\tnop\n\tnop\n\t"
                              "nop\n\tnop\n\tnop\n\tnop");
     }
-    prof_master_idle_ticks = (uint16_t)(prof_frt_read() - idle_start);
+    prof_primary_idle_ticks = (uint16_t)(prof_frt_read() - idle_start);
 
     /* Commit any reordered stores from the non-volatile draw loops before
      * the next swapBuffers() makes them visible via the VDP page flip. */

@@ -28,7 +28,7 @@
  * Adapted from viciious/d32xr (r_phase6.c:190-247).
  *
  * NOTE: both SH-2 CPUs have their OWN DIVU at the same address (it's
- * an on-chip peripheral). Master and slave can use this concurrently
+ * an on-chip peripheral). Primary and secondary can use this concurrently
  * without contention. */
 
 /* Blocking divide — single asm block so start + read can't be

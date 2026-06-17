@@ -32,47 +32,47 @@ turns out to be wrong, write a new entry that corrects it.
 
 ---
 
-## 2026-06 — HW-TRUTH: The marsdev slave SH-2 is broken at boot
+## 2026-06 — HW-TRUTH: The marsdev secondary SH-2 is broken at boot
 
-**Context.** First attempt at the dual-CPU split. The slave was sitting
+**Context.** First attempt at the dual-CPU split. The secondary was sitting
 in `for (;;);` and we wanted to give it real work. Standard procedure
-was to write a command code into a COMM register, have the slave's
-`s_main()` poll for it, execute, ACK. None of that worked — the slave
+was to write a command code into a COMM register, have the secondary's
+`s_main()` poll for it, execute, ACK. None of that worked — the secondary
 never responded to anything.
 
 **Outcome.** The marsdev skeleton's `mars_start.s` crt0 *intends* to
-release the slave from its boot wait by writing 0 to the slave's status
+release the secondary from its boot wait by writing 0 to the secondary's status
 register (`MARS_SYS_COMM4` at `0x20004024`). The code at lines 271-273:
 
 ```asm
-mov.l   _master_do_init,r0
+mov.l   _primary_do_init,r0
 jsr     @r0
 nop
-! let Slave SH2 run
+! let Secondary SH2 run
 mov     #0,r1
-mov.l   r1,@(4,r0)  /* clear slave status */
+mov.l   r1,@(4,r0)  /* clear secondary status */
 ```
 
 After the `jsr @r0` (call into `__INIT_SECTION__`), `r0` is *whatever
 that function left in it* — which on the 32X with an empty init section
 is the address of the init section itself, in cart ROM. So
 `mov.l r1,@(4,r0)` writes 0 to **cart ROM**, which is silently dropped
-on real hardware. The slave never sees COMM4 change from the "S_OK"
+on real hardware. The secondary never sees COMM4 change from the "S_OK"
 boot-handshake value (`0x535F4F4B`) and loops forever in its wait.
 
 The diagnostic that proved it: a two-square debug overlay on the
 framebuffer, one square driven by an MMIO-incremented counter
-(`MARS_SYS_COMM4++` from slave), one driven by an uncached-SDRAM
-counter (`SLAVE_HEARTBEAT++` from slave via the cache-through alias).
-Before the fix both were red (slave never running). After explicitly
+(`MARS_SYS_COMM4++` from secondary), one driven by an uncached-SDRAM
+counter (`SECONDARY_HEARTBEAT++` from secondary via the cache-through alias).
+Before the fix both were red (secondary never running). After explicitly
 clearing COMM4 from `m_main()` before initialization, both went green
-in one shot — proof that (a) the slave boots, and (b) the cache-through
+in one shot — proof that (a) the secondary boots, and (b) the cache-through
 SDRAM trick works on this hardware.
 
 **Insight.** When porting from a third-party SH-2 skeleton, do not
-trust that the slave actually starts. The visible symptom is "rendering
-works fine because the master never needed the slave" — masking the
-real problem until you go to add slave work.
+trust that the secondary actually starts. The visible symptom is "rendering
+works fine because the primary never needed the secondary" — masking the
+real problem until you go to add secondary work.
 
 **Files.** `sh_src/m_main.c:18-27` (the workaround); `sh_src/mars_start.s:271-273` (the bug).
 
@@ -80,10 +80,10 @@ real problem until you go to add slave work.
 
 ```c
 int m_main(void) {
-    /* Release the slave SH-2. The crt0 (mars_start.s:271-273) intends
+    /* Release the secondary SH-2. The crt0 (mars_start.s:271-273) intends
      * to do this after the init JSR but uses a stale r0 — the write
-     * to "clear slave status" goes to ROM and is silently dropped.
-     * Without this, the slave loops forever in its S_OK wait at
+     * to "clear secondary status" goes to ROM and is silently dropped.
+     * Without this, the secondary loops forever in its S_OK wait at
      * 0x20004024 (= MARS_SYS_COMM4) and never reaches s_main(). */
     MARS_SYS_COMM4 = 0;
     Hw32xInit(MARS_VDP_MODE_256, 0);
@@ -95,10 +95,10 @@ int m_main(void) {
 
 ## 2026-06 — HW-TRUTH: COMM register partition is load-bearing
 
-**Context.** Second attempt at the dual-CPU split. We had the slave
-running but couldn't get a clean signaling channel between master and
-slave. The first try used `MARS_SYS_COMM0` as the doorbell ("master
-writes a command, slave polls and ACKs"). Visually the game rendered
+**Context.** Second attempt at the dual-CPU split. We had the secondary
+running but couldn't get a clean signaling channel between primary and
+secondary. The first try used `MARS_SYS_COMM0` as the doorbell ("primary
+writes a command, secondary polls and ACKs"). Visually the game rendered
 correctly, but the controller stopped responding completely.
 
 **Outcome.** The 32X COMM register space `0x20004020-0x2000402E` is
@@ -106,42 +106,42 @@ partitioned by convention:
 
 | Register | Purpose | Don't touch from |
 |---|---|---|
-| `COMM0`, `COMM2` | 68K → Master SH-2 services (joypad polling, VDP commands, save RAM) | Slave |
-| `COMM4`, `COMM6` | Master → Slave doorbell + argument word | 68K |
-| `COMM8` | Controller 1 current state (written by 68K, read by master) | Anyone but the 68K |
+| `COMM0`, `COMM2` | 68K → Primary SH-2 services (joypad polling, VDP commands, save RAM) | Secondary |
+| `COMM4`, `COMM6` | Primary → Secondary doorbell + argument word | 68K |
+| `COMM8` | Controller 1 current state (written by 68K, read by primary) | Anyone but the 68K |
 | `COMM10` | Controller 2 current state | Same |
 | `COMM12` | VBlank counter (timer) | Same |
 
-We were polling and clearing `COMM0` from the slave, which raced with
+We were polling and clearing `COMM0` from the secondary, which raced with
 the 68K's controller-poll requests that go through the same register
 (see `sh_src/mars.c:177` for `HwMdReadPad`). The 68K writes
-`COMM0 = 0x0300|port` to ask for a joypad read; the master clears it
-when the read completes; the master then reads `COMM8` for the result.
-When the slave was *also* writing 0 to COMM0 as an ACK, it was
-clobbering the 68K's outgoing controller-poll request before the master
+`COMM0 = 0x0300|port` to ask for a joypad read; the primary clears it
+when the read completes; the primary then reads `COMM8` for the result.
+When the secondary was *also* writing 0 to COMM0 as an ACK, it was
+clobbering the 68K's outgoing controller-poll request before the primary
 could see it. `Mars_GetPad()` returned the same value forever, so the
 player appeared frozen.
 
-The d32xr convention from `viciious/d32xr@master::marsnew.c::Mars_Secondary`
-is: COMM4 = master-to-slave command code, COMM6 = master-to-slave
+The d32xr convention from `viciious/d32xr@primary::marsnew.c::Mars_Secondary`
+is: COMM4 = primary-to-secondary command code, COMM6 = primary-to-secondary
 argument word. We switched to COMM4 and the controller worked
 immediately.
 
 **Insight.** The 32X is a four-CPU system if you count the Z80
-(M68K + Master SH-2 + Slave SH-2 + Z80). Two CPUs sharing a register
+(M68K + Primary SH-2 + Secondary SH-2 + Z80). Two CPUs sharing a register
 file means the register partition is part of the ABI, not optional.
 Document it in any shared header.
 
 **Files.** `sh_src/shared.h:23-26` (our codified partition);
-`sh_src/mars.c:177-181` (the 68K-to-master pattern); `sh_src/s_main.c`
-(slave-side polling on COMM4 only).
+`sh_src/mars.c:177-181` (the 68K-to-primary pattern); `sh_src/s_main.c`
+(secondary-side polling on COMM4 only).
 
 ---
 
 ## 2026-06 — HW-TRUTH: The `| 0x20000000` cache-through alias is real
 
 **Context.** Once the boot path and COMM4 channel worked, we needed
-shared state between master and slave. The d32xr docs hint at a "cache-
+shared state between primary and secondary. The d32xr docs hint at a "cache-
 through" SDRAM alias — bitwise-OR any cached SDRAM address with
 `0x20000000` and you get an uncached pointer to the same physical
 bytes. We weren't sure if this was a real hardware feature or a
@@ -150,9 +150,9 @@ software convention, and the SH-2 architecture manual is ambiguous.
 **Outcome.** It's a real bus-level feature on the 32X SDRAM controller.
 We proved it with the same two-square debug overlay: a shared
 heartbeat counter at SDRAM address `0x060010b0` (cached alias). The
-slave writes via `((shared_t *)(0x060010b0 | 0x20000000))->slave_heartbeat++`,
-i.e. through `0x260010b0`. The master reads through the same alias.
-If the alias is real, the master sees the counter advancing every
+secondary writes via `((shared_t *)(0x060010b0 | 0x20000000))->secondary_heartbeat++`,
+i.e. through `0x260010b0`. The primary reads through the same alias.
+If the alias is real, the primary sees the counter advancing every
 frame. It does.
 
 The C-side macro pattern we settled on:
@@ -187,16 +187,16 @@ need invalidation (so the reader gets fresh data instead of its own
 stale cache line).
 
 **Outcome.** Write-through, confirmed by the cache-through-alias
-experiment above. Master writes through the cache-through alias; the
-write commits to SDRAM immediately; slave reads through the same alias
+experiment above. Primary writes through the cache-through alias; the
+write commits to SDRAM immediately; secondary reads through the same alias
 and sees the new value, with no explicit flush call between them.
 
 The corollary that simplifies everything: if a shared struct is
 **only written by one CPU**, the writer doesn't need to do anything
 special — its writes commit to SDRAM as part of normal store activity.
 Only the reader needs to bypass its cache (via the alias) to see fresh
-values. For our project, that's exactly the master-writes-player /
-slave-reads-player pattern: master writes through `SHARED_UC`, slave
+values. For our project, that's exactly the primary-writes-player /
+secondary-reads-player pattern: primary writes through `SHARED_UC`, secondary
 reads through `SHARED_UC`, and we never call any cache-flush macro.
 
 **Insight.** The mental model "cache flushes are required around all
@@ -314,16 +314,16 @@ cache lines of L1 for the hot paths.
 
 ## 2026-06 — BUG: `-flto` hoists volatile-only-through-deref reads
 
-**Context.** After splitting ceiling-grid rendering onto the slave,
+**Context.** After splitting ceiling-grid rendering onto the secondary,
 walking around showed a mysterious symptom: the ceiling grid rotated
 correctly when the player turned, but did not translate when the
 player walked. The wall pass and carpet pass — using the same
 `SHARED_UC->player.x`/`.y` reads — animated correctly.
 
-**Outcome.** The slave's `raycast_draw_ceiling_grid()` was being
+**Outcome.** The secondary's `raycast_draw_ceiling_grid()` was being
 inlined into the dispatch loop in `s_main.c` by `-flto`. After
-inlining, GCC saw that nothing in the slave's view *writes* to
-`shared.player.x`/`y` — the writes are in `raycast_render()` (master
+inlining, GCC saw that nothing in the secondary's view *writes* to
+`shared.player.x`/`y` — the writes are in `raycast_render()` (primary
 side, different translation unit). LTO hoisted the loads of
 `SHARED_UC->player.x`/`.y` out of the `for(;;)` dispatch loop and
 cached the initial-frame values in registers forever.
@@ -350,8 +350,8 @@ to be on the *field* to defeat LTO's analysis. This is a sharp edge
 of LTO that doesn't show up without inter-translation-unit inlining
 + data-flow analysis — both of which `-flto` enables.
 
-Also: the bug only manifested on the slave-side reads. The carpet pass
-on the slave used the same struct but the carpet function was
+Also: the bug only manifested on the secondary-side reads. The carpet pass
+on the secondary used the same struct but the carpet function was
 *larger* than the ceiling function and got inlined less aggressively,
 so its reads weren't hoisted. This is why "carpet animates, ceiling
 doesn't" — the same root cause hit one path and not the other based
@@ -374,10 +374,10 @@ were affected.
 **Outcome.** The 68K updates `MARS_SYS_COMM8` (controller 1 state) by
 processing a command request that arrives via `COMM0`. The bridge
 that carries these MMIO writes between the 68K bus and the SH-2 bus
-has a finite throughput. When the slave's polling loop on `COMM4`
+has a finite throughput. When the secondary's polling loop on `COMM4`
 runs at ~3M reads/sec (a tight `while (cmd == NONE)` with no delay),
-the bridge spends all its time serving slave reads and occasionally
-drops or delays a 68K-to-COMM8 update. The master then reads stale
+the bridge spends all its time serving secondary reads and occasionally
+drops or delays a 68K-to-COMM8 update. The primary then reads stale
 COMM8 in `player_update`, sees no button pressed, doesn't move the
 player. On the next frame, fresh poll = fresh COMM8 = player moves
 again — *unless* the player is still holding the same direction, in
@@ -385,10 +385,10 @@ which case the kernel doesn't generate a new "press" event and the
 state stays "released" until the player physically lifts and
 re-presses.
 
-The fix is mechanical: throttle the polling. The slave's idle COMM4
+The fix is mechanical: throttle the polling. The secondary's idle COMM4
 poll now has a `for (volatile int i = 0; i < 256; i++);` busy-wait
 between checks, dropping the rate to ~30K/sec. Symmetrically, the
-master's two ACK-wait points in `raycast_render` (`while (COMM4 !=
+primary's two ACK-wait points in `raycast_render` (`while (COMM4 !=
 0);` between CMD_CEILING and CMD_WALLS, and after CMD_WALLS before
 sprites) got 16 NOPs per iteration to drop their polling rate from
 ~5M/sec to ~700K/sec.
@@ -405,8 +405,8 @@ use more than its share — even when polling for things, throttle the
 poll rate. Documenting the 68K↔SH-2 bridge as a "shared serialized
 channel" with a back-of-envelope cycle budget would have saved hours.
 
-**Files.** `sh_src/s_main.c:10-22` (slave-side throttle);
-`sh_src/raycast.c` (master-side throttle on both ACK waits).
+**Files.** `sh_src/s_main.c:10-22` (secondary-side throttle);
+`sh_src/raycast.c` (primary-side throttle on both ACK waits).
 
 ---
 
@@ -683,14 +683,14 @@ added a new field to `shared_t` in `shared.h`, but `shared.c` —
 which allocates the actual `shared_t shared` storage — wasn't
 rebuilt because its `.o` file was newer than `shared.c`'s timestamp.
 The compiled `shared.o` allocated 4 bytes (the old struct size); the
-compiled `raycast.o` wrote 16 bytes into it from the new master-side
+compiled `raycast.o` wrote 16 bytes into it from the new primary-side
 snapshot code. The 12 bytes of overflow corrupted whatever happened
 to be adjacent in the linker's allocation, which on this build was
 the renderer's column z-buffer + parts of the rendering state.
 
 Result: rendering went to garbage in a way that LOOKED like a CPU
 bug. We chased the symptom for two cycles (full revert of work-
-stealing, slave-side investigation) before realizing it was a build
+stealing, secondary-side investigation) before realizing it was a build
 hygiene issue.
 
 The fix: add `-MMD -MP` to the compile commands so GCC emits a `.d`
@@ -709,16 +709,16 @@ lines).
 
 ---
 
-## 2026-06 — ARCHITECTURE: Throttle the slave's idle loop, not its work
+## 2026-06 — ARCHITECTURE: Throttle the secondary's idle loop, not its work
 
-**Context.** Early in the SH-2 split, the slave's polling-dispatcher
+**Context.** Early in the SH-2 split, the secondary's polling-dispatcher
 pattern was: tight loop reading COMM4, branching on non-zero, doing
 the named work, writing 0 back. Per-iteration cost: 1 MMIO read + 1
 compare + 1 branch ≈ 8 SH-2 cycles, so ~3M iterations per second.
 This was the textbook polling pattern from d32xr.
 
 **Outcome.** The bridge-bandwidth bug forced a refactor. The
-realization was that the slave **shouldn't** be polling COMM4 at
+realization was that the secondary **shouldn't** be polling COMM4 at
 3M/sec during idle — the command-response latency we actually care
 about is "one frame" = 16ms. Polling at 30K/sec (one check every
 33μs) is **500× the latency budget we need**, and dropping that two
@@ -737,7 +737,7 @@ for (;;) {
 }
 ```
 
-Equivalent for the master's slave-ACK wait, using NOPs:
+Equivalent for the primary's secondary-ACK wait, using NOPs:
 
 ```c
 while (MARS_SYS_COMM4 != MARS_CMD_NONE) {
@@ -754,19 +754,19 @@ costs not just CPU cycles but bus bandwidth. Match the polling rate
 to the **actual latency budget** of the response, not the maximum
 the CPU can sustain.
 
-**Files.** `sh_src/s_main.c:10-22` (slave throttle);
-`sh_src/raycast.c` (master throttles).
+**Files.** `sh_src/s_main.c:10-22` (secondary throttle);
+`sh_src/raycast.c` (primary throttles).
 
 ---
 
-## 2026-06 — HW-TRUTH: mars_start.s slave IRQ table is missing DMA
+## 2026-06 — HW-TRUTH: mars_start.s secondary IRQ table is missing DMA
 
 **Context.** The PWM audio research agent's plan requires a DMA-
-complete interrupt handler on the slave. We hadn't implemented it
+complete interrupt handler on the secondary. We hadn't implemented it
 yet, but the agent's audit flagged a setup issue we'd otherwise hit
 on first test.
 
-**Outcome.** The slave's IRQ dispatcher in `sh_src/mars_start.s`
+**Outcome.** The secondary's IRQ dispatcher in `sh_src/mars_start.s`
 at `slav_irq:` is a `cmp/eq` chain dispatching on `SR.I3-I0`-derived
 level codes — FRT (`0x28`), VBI (`0x38`), HBI (`0x30`), PWM
 (`0x20`), CMD (`0x18`), VRES (`0x40`). The "Level 4 & 5" vector slot
@@ -795,7 +795,7 @@ extension); fix pattern in `viciious/d32xr::crt0.s::sec_dma_irq`.
 
 ## 2026-06 — HW-TRUTH: SH-2 internal-peripheral IRQs use VCR, not auto-vector
 
-**Context.** First attempt at PWM audio on the slave. The implementation
+**Context.** First attempt at PWM audio on the secondary. The implementation
 plan from the deep-mining agent said to set IPRA priority and the
 DMA-complete interrupt would fire. We wrote the asm dispatch in
 `mars_start.s`, plumbed `amb_sound_init` and `amb_dma_handler` through
@@ -827,11 +827,11 @@ hidden by the agent's plan being *almost* right:
    `SH2_DMA_VCR1` defaults to 0 after reset. Vector 0 in the VBR
    table is the cold-start PC. So when DMA1 completes and tries to
    dispatch its IRQ, the SH-2 looks up `VBR[0]` and jumps to the
-   slave's `sstart` — i.e., re-runs slave initialization. The slave
+   secondary's `sstart` — i.e., re-runs secondary initialization. The secondary
    ends up in a weird re-entered state and the audio never resumes.
 
    The fix: point VCR1 at a vector slot that holds our IRQ handler
-   address. Slot 66 in the slave vector table (the existing "Level
+   address. Slot 66 in the secondary vector table (the existing "Level
    4 & 5" entry) already contains `slav_irq`, which has a chain that
    dispatches to `slav_dma_irq` when SR.I3-I0 = 4. So:
 
@@ -889,7 +889,7 @@ like it was emanating from the neanderthal cardboard cutout sprite
 away. With true stereo we'd pan; with mono we have only volume.
 
 **Outcome.** Spatial audio on mono = volume modulation per sample by
-distance. The slave's audio pump already computes a per-buffer player
+distance. The secondary's audio pump already computes a per-buffer player
 snapshot from `SHARED_UC->player.{x,y}`; we extended that to compute
 distance to the neanderthal's hardcoded world-cell position and
 derive an attenuation factor:
@@ -955,7 +955,7 @@ without blowing the budget.
 **Outcome.** Two-axis compression that played well together:
 
 1. **Bit depth: 16-bit → 8-bit signed (`int8_t`).** Source PCM scaled
-   to `int16_t` then truncated with `>> 8`. At runtime the slave
+   to `int16_t` then truncated with `>> 8`. At runtime the secondary
    expands back via `<< 2`, putting the result back in roughly the
    PWM's 10-bit duty-cycle range. Lossy — adds about 6 dB of
    quantization noise — but at the source amplitude levels we use

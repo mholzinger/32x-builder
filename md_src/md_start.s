@@ -164,15 +164,15 @@ _start:
 		move.l	#0,(VBlankCounter)		/* clear the vblank count */
 	0:
 		cmp.l	#0x4D5F4F4B,(MARS_COMM0)	/* M_OK */
-		bne.s	0b							/* wait for master ok */
+		bne.s	0b							/* wait for primary ok */
 	1:
 		cmp.l	#0x535F4F4B,(MARS_COMM4)	/* S_OK */
-		bne.s	1b							/* wait for slave ok */
+		bne.s	1b							/* wait for secondary ok */
 
 		move.w	(0xA15100),d0
 		or.w	#0x8000,d0
 		move.w	d0,(0xA15100)		/* set FM - allow SH2 access to MARS hw */
-		move.l	#0,(MARS_COMM0)		/* let Master SH2 run */
+		move.l	#0,(MARS_COMM0)		/* let Primary SH2 run */
 
 		;// TODO: Interrupts crash... why?
 

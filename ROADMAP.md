@@ -219,7 +219,7 @@ Single dark rectangle on one wall hinting at "the way out."
 ## Audio
 
 ### PWM ambient fluorescent drone
-✅ done — slave SH-2 mixes a 30s buzz loop + occasional neon sting on
+✅ done — secondary SH-2 mixes a 30s buzz loop + occasional neon sting on
 the PWM mono channel via DMA1 ping-pong buffers. Plus the Voyager
 Golden Record neanderthal-positional hello (distance-attenuated) and
 carpet footsteps gated on `is_walking`. See `sh_src/sound.c`.
@@ -244,7 +244,7 @@ optimization work to make Doom run smoothly on the actual 23 MHz
 SH-2s. We've already borrowed:
 - the `| 0x20000000` cache-through SDRAM alias for shared state
 - the COMM4 doorbell + COMM6 arg-word convention
-- the `MARS_SECCMD_*` command enum + slave polling dispatcher pattern
+- the `MARS_SECCMD_*` command enum + secondary polling dispatcher pattern
 
 #### Ranked adopt-list (from the deep-mine research agent)
 
@@ -257,8 +257,8 @@ texture coordinate setup during the 39-cycle latency.
 4-pixel-per-iter inline asm block in `draw_walls` — keeps `tex_pos`,
 `p`, `shade_lut`, `step`, `mask` in registers, uses indexed byte load
 via `@(R0,Rm)` and `dt`/`bf` for the count-down. Measured on
-hardware: master half-render time dropped from 44000→33500 FRT ticks
-(24%), slave from 44000→25000 (43%). Frame crossed a vsync boundary
+hardware: primary half-render time dropped from 44000→33500 FRT ticks
+(24%), secondary from 44000→25000 (43%). Frame crossed a vsync boundary
 in the wall scene (15fps → ~20fps).
 
 **3. Work-stealing wall split via COMM6.** ✅ done, then reverted.
@@ -282,7 +282,7 @@ quadrant folding via `swap.w` + sign flip.
 and `Mars_ClearCacheLines` in `sh_src/sh2_asm.h`.
 
 **7. SH-2 DMA + completion-interrupt audio mixer.** ✅ done.
-`sh_src/sound.c` mixes a ping-pong `amb_pwm_buf[2][256]` on the slave;
+`sh_src/sound.c` mixes a ping-pong `amb_pwm_buf[2][256]` on the secondary;
 DMA1 streams the active buffer to `MARS_PWM_MONO`; `amb_dma_handler`
 swaps + re-arms. Mixes buzz + neon + positional hello + footsteps.
 
@@ -346,7 +346,7 @@ scp'ing, so USB renumber doesn't break the push.
 
 ### FRT-based on-screen profiler
 ✅ done — top-right overlay shows `T:NNNNN H:NNNNN S:NNNNN` (frame
-total, master half-render time, slave half-render time) sampled from
+total, primary half-render time, secondary half-render time) sampled from
 SH-2 free-running timer at Φ/32 (1.39μs per tick). Both CPUs init
-their own FRT; slave publishes its delta via `SHARED_UC->slave_render_ticks`.
+their own FRT; secondary publishes its delta via `SHARED_UC->secondary_render_ticks`.
 Remove the overlay before shipping a release build.

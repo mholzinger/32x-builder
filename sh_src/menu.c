@@ -9,7 +9,7 @@
  * focused. UP/DOWN cycles between the tab row and the per-tab content
  * rows; LEFT/RIGHT on a content row adjusts the value (sliders) or
  * inverts the bool (toggles). Settings live in shared SDRAM so the
- * slave's audio pump and the raycaster's effect gates see edits
+ * secondary's audio pump and the raycaster's effect gates see edits
  * immediately via cache-through. */
 
 #define TAB_AUDIO    0

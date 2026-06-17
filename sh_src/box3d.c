@@ -6,7 +6,7 @@
 #include "box_model.h"
 #include "box_label.h"
 
-/* Per-frame render-time overlay (master total + slave band, in FRT
+/* Per-frame render-time overlay (primary total + secondary band, in FRT
  * ticks at Phi/32 ~= 1.39us/tick; 60fps ~= 12000). Optimize against
  * numbers, not vibes. Set to 0 to hide. */
 #define BOX_PROFILE 1
@@ -80,12 +80,12 @@ static int8_t wear_lut[WEAR_N][WEAR_N];
 
 typedef struct { fx_t cx, cy, depth, u, v; } cvert_t;
 
-/* --- Master-built shared draw-list --------------------------------- *
- * The MASTER does all the geometry (transform, near-clip, project,
+/* --- Primary-built shared draw-list --------------------------------- *
+ * The PRIMARY does all the geometry (transform, near-clip, project,
  * shade, depth-sort) once and stores the screen-space polygons here.
  * Both SH-2s then rasterize disjoint framebuffer bands from it, so the
  * expensive fill is split in half. Accessed via the cache-through alias
- * on both CPUs (master writes, slave reads) — same coherency trick as
+ * on both CPUs (primary writes, secondary reads) — same coherency trick as
  * SHARED_UC. */
 #define BOX_MAXV 6
 typedef struct {
@@ -101,7 +101,7 @@ typedef struct {
 static box_drawlist_t box_dl;
 #define BOX_DL ((volatile box_drawlist_t *)((uintptr_t)&box_dl | 0x20000000))
 
-/* Master-only geometry scratch. */
+/* Primary-only geometry scratch. */
 static fx_t    wverts[BOX_NVERTS][3];
 static cvert_t cverts[BOX_NVERTS];
 
@@ -118,7 +118,7 @@ static inline uint16_t frt_read(void) {
     uint8_t hi = SH2_FRT_FRCH, lo = SH2_FRT_FRCL;
     return ((uint16_t)hi << 8) | lo;
 }
-/* Master-band breakdown: time spent clearing vs filling. */
+/* Primary-band breakdown: time spent clearing vs filling. */
 static volatile uint16_t g_clear_ticks, g_fill_ticks;
 #endif
 
@@ -138,7 +138,7 @@ static fx_t fx_sqrt(fx_t v) {
     return (fx_t)(isqrt32((uint32_t)v) * 256);
 }
 
-/* --- Wear LUT (built once on the master) --------------------------- */
+/* --- Wear LUT (built once on the primary) --------------------------- */
 static int wear_delta(fx_t u, fx_t v) {
     int d = 0;
     fx_t e = u;
@@ -180,7 +180,7 @@ static inline int detail_index(int lvl, fx_t u, fx_t v, int tape_mode) {
 }
 
 /* ================================================================== *
- *  MASTER: geometry — transform, shade, clip, project, sort          *
+ *  PRIMARY: geometry — transform, shade, clip, project, sort          *
  * ================================================================== */
 static void build_frame(int f) {
     const int32_t *cr = box_cam_right[f];
@@ -448,14 +448,14 @@ void box3d_render_band(int band) {
 #endif
 }
 
-/* Master geometry + dual-CPU fill for one frame. */
+/* Primary geometry + dual-CPU fill for one frame. */
 static void render_frame(int f) {
     render_geometry(f);
 
-    /* Drain the cache-through SDRAM write stream before waking the slave
+    /* Drain the cache-through SDRAM write stream before waking the secondary
      * (same race as raycast_render's partition dispatch): the ~675 bytes
      * of BOX_DL we just wrote go through the 0x20000000 alias, the COMM4
-     * wake goes through MARS MMIO. With no barrier the slave can read a
+     * wake goes through MARS MMIO. With no barrier the secondary can read a
      * stale BOX_DL and rasterize the bottom band from garbage. A
      * read-back of the last-written field (order[]) through the same
      * alias serializes against all prior writes; the compiler barrier
@@ -463,8 +463,8 @@ static void render_frame(int f) {
     (void)BOX_DL->order[BOX_NFACES - 1];
     __asm__ __volatile__("" ::: "memory");
 
-    MARS_SYS_COMM4 = MARS_CMD_BOX;        /* slave: bottom half         */
-    box3d_render_band(0);                 /* master: top half           */
+    MARS_SYS_COMM4 = MARS_CMD_BOX;        /* secondary: bottom half         */
+    box3d_render_band(0);                 /* primary: top half           */
     while (MARS_SYS_COMM4 != MARS_CMD_NONE) {
         __asm__ __volatile__("nop\n\tnop\n\tnop\n\tnop\n\t"
                              "nop\n\tnop\n\tnop\n\tnop\n\t");
@@ -484,7 +484,7 @@ static void draw_perf(uint8_t *fb, uint16_t m, uint16_t s, uint16_t vbl) {
     buf[0] = 'M'; buf[1] = ':'; put5(buf + 2, m);
     buf[7] = ' '; buf[8] = 'S'; buf[9] = ':'; put5(buf + 10, s); buf[15] = 0;
     font_draw_string(fb, 4, 4, buf, BOX_TEXT_IDX);
-    /* Master-band breakdown: clear vs fill (FRT — zero if unemulated). */
+    /* Primary-band breakdown: clear vs fill (FRT — zero if unemulated). */
     char b2[16];
     b2[0] = 'C'; b2[1] = ':'; put5(b2 + 2, g_clear_ticks);
     b2[7] = ' '; b2[8] = 'F'; b2[9] = ':'; put5(b2 + 10, g_fill_ticks); b2[15] = 0;
@@ -590,7 +590,7 @@ void box3d_play(void) {
         uint16_t mdelta = (uint16_t)(frt_read() - t0);   /* pure render time */
         if (g_metrics_on)
             draw_perf((uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200),
-                      mdelta, SHARED_UC->slave_render_ticks, last_vbl);
+                      mdelta, SHARED_UC->secondary_render_ticks, last_vbl);
 #else
         render_frame(f);
 #endif

@@ -81,7 +81,7 @@ void clearArea(vu16 x, vu16 y, int xWidth, int yWidth){
 * @param checkTransparency - 0 for not checked ie overwrite every pixel, including with zero, 1 for checking
 * @param screenWrap - 0 for no screenWrap, 1 for screen wrapping  
 */
-int drawSpriteMaster(const vu8 *spriteBuffer, const int16 x, const int16 y, const int xWidth, const int yWidth, const int mirror, const int checkTransparency)
+int drawSpritePrimary(const vu8 *spriteBuffer, const int16 x, const int16 y, const int xWidth, const int yWidth, const int mirror, const int checkTransparency)
 {
 
 	//MARS_VDP_MODE_256
@@ -226,7 +226,7 @@ int drawSpriteMaster(const vu8 *spriteBuffer, const int16 x, const int16 y, cons
 int drawSprite(const vu8 *spriteBuffer, const int16 x, const int16 y, const int xWidth, const int yWidth, const int mirror)
 {
 	//call drawSprite with transparency enabled
-	return drawSpriteMaster(spriteBuffer,  x, y, xWidth, yWidth, mirror, 1);
+	return drawSpritePrimary(spriteBuffer,  x, y, xWidth, yWidth, mirror, 1);
 }
 
 
@@ -240,7 +240,7 @@ int drawSprite(const vu8 *spriteBuffer, const int16 x, const int16 y, const int 
 int drawBG(const vu8 *spriteBuffer)
 {
 	//draw full screen background image with no transparency
-	return drawSpriteMaster(spriteBuffer, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0, 0);
+	return drawSpritePrimary(spriteBuffer, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0, 0);
 }
 
 /* 

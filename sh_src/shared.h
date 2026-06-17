@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-/* Inter-CPU shared state between the master and slave SH-2s.
+/* Inter-CPU shared state between the primary and secondary SH-2s.
  *
  * Lives in normal SDRAM (.bss). BOTH CPUs MUST access fields via the
  * SHARED_UC macro below — plain `shared.field` access goes through
@@ -14,19 +14,19 @@
  * but coherent across CPUs. Confirmed working on real 32X hardware
  * — see ROADMAP.md → SH-2 dual-CPU split. */
 
-/* COMM4 command codes (master → slave doorbell). 0 = no command /
- * ACK. The slave's polling loop in s_main.c reads COMM4, executes
- * the named work, then writes 0 back. Master waits for the 0 before
+/* COMM4 command codes (primary → secondary doorbell). 0 = no command /
+ * ACK. The secondary's polling loop in s_main.c reads COMM4, executes
+ * the named work, then writes 0 back. Primary waits for the 0 before
  * proceeding past the sync point. */
 #define MARS_CMD_NONE     0
-#define MARS_CMD_HALF     1   /* Slave draws clear+ceiling+carpet+walls for cols 160..319 */
-#define MARS_CMD_BOX      2   /* Slave rasterizes the box title's bottom band (rows 112..223) */
+#define MARS_CMD_HALF     1   /* Secondary draws clear+ceiling+carpet+walls for cols 160..319 */
+#define MARS_CMD_BOX      2   /* Secondary rasterizes the box title's bottom band (rows 112..223) */
 
-/* Snapshot of the master's player state for the slave to render from.
- * Master writes this just before signaling CMD_CEILING; slave reads
+/* Snapshot of the primary's player state for the secondary to render from.
+ * Primary writes this just before signaling CMD_CEILING; secondary reads
  * it via cache-through.
  *
- * Fields are `volatile` to defeat -flto hoisting. When the slave's
+ * Fields are `volatile` to defeat -flto hoisting. When the secondary's
  * draw functions get inlined into the s_main dispatch loop, GCC can
  * notice that no code visible to it writes to these fields and hoist
  * the loads OUT of the for(;;) loop — caching the initial frame's
@@ -42,25 +42,25 @@ typedef struct {
 } player_snap_t;
 
 typedef struct {
-    /* Monotonic counter the slave increments forever in its idle loop.
-     * Master reads it as a "slave alive" indicator. */
-    volatile uint32_t slave_heartbeat;
+    /* Monotonic counter the secondary increments forever in its idle loop.
+     * Primary reads it as a "secondary alive" indicator. */
+    volatile uint32_t secondary_heartbeat;
     /* Player snapshot for cross-CPU rendering. */
     player_snap_t player;
     /* Test-and-set byte for the work-stealing wall-column counter
      * (stored in MARS_SYS_COMM6). Either CPU acquires this lock via
      * sh2_spin_tas before reading-and-incrementing the counter. */
     volatile uint8_t wall_lock;
-    /* Runtime audio gain. The slave's amb_pump reads this on every
+    /* Runtime audio gain. The secondary's amb_pump reads this on every
      * buffer refill and multiplies samples by (amb_volume / 128.0):
      *   0   = mute
      *   128 = unity (play ROM samples as-baked)
      *   255 = ~2× (will clip if the ROM was baked hot already)
-     * Master can write this freely; cache-through alias keeps the
-     * slave's reads coherent without explicit flushes. */
+     * Primary can write this freely; cache-through alias keeps the
+     * secondary's reads coherent without explicit flushes. */
     volatile uint8_t amb_volume;
-    /* Set by the master each frame to 1 when the player is moving,
-     * 0 when stationary. Slave's pump uses this to gate the carpet
+    /* Set by the primary each frame to 1 when the player is moving,
+     * 0 when stationary. Secondary's pump uses this to gate the carpet
      * footstep audio — advances and mixes the step sample when set,
      * silent otherwise. */
     volatile uint8_t is_walking;
@@ -69,23 +69,23 @@ typedef struct {
      * menu. 0..255, 128 = current half-amp baseline, 256 would be
      * full but capped at 255. Applied as a >> 8 scale in the pump. */
     volatile uint8_t step_volume;
-    /* Profile counter: slave's own FRT ticks spent processing CMD_HALF.
-     * Slave initializes its FRT to match master's prescaler (Φ/32) and
-     * writes its render delta here at the end of each command. Master
+    /* Profile counter: secondary's own FRT ticks spent processing CMD_HALF.
+     * Secondary initializes its FRT to match primary's prescaler (Φ/32) and
+     * writes its render delta here at the end of each command. Primary
      * reads via cache-through for the on-screen overlay so we can see
-     * if slave is the long pole regardless of the master's idle wait. */
-    volatile uint16_t slave_render_ticks;
-    /* Master-incremented per-frame counter. Used by draw_walls on both
+     * if secondary is the long pole regardless of the primary's idle wait. */
+    volatile uint16_t secondary_render_ticks;
+    /* Primary-incremented per-frame counter. Used by draw_walls on both
      * CPUs so the fluorescent-strobe RNG produces the same per-cell
      * flash pattern across the column split — flashes that straddle
-     * the master/slave boundary look continuous. */
+     * the primary/secondary boundary look continuous. */
     volatile uint32_t frame_count;
     /* Per-effect enable bits, gated by the in-game menu's LIGHTING
      * tab. Default 0x07 = all on. Each raycaster effect early-outs
      * (or behaves as if at base value) when its bit is clear. */
     volatile uint8_t lighting_flags;
     /* Camera pitch shift in screen pixels (positive = look down, horizon
-     * slides UP on screen). Written by master in raycast_render every
+     * slides UP on screen). Written by primary in raycast_render every
      * frame, read by both CPUs' wall/floor/ceiling draws to position
      * the horizon. Cheap y-shear: walls slide with the horizon, depth
      * formula uses the unshifted SCREEN_H/2 as the focal-length
@@ -105,7 +105,7 @@ typedef struct {
 extern shared_t shared;
 
 /* On-screen debug metrics (X/Y/A, frame timers, box profiler) — off by
- * default, toggled by the six-button controller's MODE button. Master-only
+ * default, toggled by the six-button controller's MODE button. Primary-only
  * (no cross-CPU access), so a plain global rather than a shared field. */
 extern uint8_t g_metrics_on;
 
@@ -113,7 +113,7 @@ extern uint8_t g_metrics_on;
  * every read and write of any shared field. */
 #define SHARED_UC ((shared_t *)((uintptr_t)&shared | 0x20000000))
 
-#define SLAVE_HEARTBEAT (SHARED_UC->slave_heartbeat)
+#define SECONDARY_HEARTBEAT (SHARED_UC->secondary_heartbeat)
 
 /* Pointer to the wall-column-counter lock byte, via the cache-through
  * alias. Pass to sh2_spin_tas / sh2_release_tas. */

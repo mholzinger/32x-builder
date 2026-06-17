@@ -48,9 +48,9 @@ typedef volatile signed long int vint32;
 #define MARS_SYS_HINT_CLR   (*(volatile uint16_t *)0x20004018)
 #define MARS_SYS_CMDI_CLR   (*(volatile uint16_t *)0x2000401A)
 #define MARS_SYS_PWMI_CLR   (*(volatile uint16_t *)0x2000401C)
-#define MARS_SYS_COMM0      (*(volatile uint16_t *)0x20004020) /* Master SH2 communication */
+#define MARS_SYS_COMM0      (*(volatile uint16_t *)0x20004020) /* Primary SH2 communication */
 #define MARS_SYS_COMM2      (*(volatile uint16_t *)0x20004022)
-#define MARS_SYS_COMM4      (*(volatile uint16_t *)0x20004024) /* Slave SH2 communication */
+#define MARS_SYS_COMM4      (*(volatile uint16_t *)0x20004024) /* Secondary SH2 communication */
 #define MARS_SYS_COMM6      (*(volatile uint16_t *)0x20004026)
 #define MARS_SYS_COMM8      (*(volatile uint16_t *)0x20004028) /* controller 1 current value */
 #define MARS_SYS_COMM10     (*(volatile uint16_t *)0x2000402A) /* controller 2 current value */
@@ -91,11 +91,11 @@ typedef volatile signed long int vint32;
 #define MARS_VDP_FEN        0x0002
 #define MARS_VDP_FS         0x0001
 
-// Master / Slave SH-2 Communication 
-#define MASTER_STATUS_OK 1
-#define MASTER_LOCK 4
-#define SLAVE_STATUS_OK 2
-#define SLAVE_LOCK 8
+// Primary / Secondary SH-2 Communication 
+#define PRIMARY_STATUS_OK 1
+#define PRIMARY_LOCK 4
+#define SECONDARY_STATUS_OK 2
+#define SECONDARY_LOCK 8
 
 #define SH2_CCTL_CP         0x10
 #define SH2_CCTL_TW         0x08

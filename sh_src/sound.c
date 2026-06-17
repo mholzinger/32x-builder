@@ -7,7 +7,7 @@
 #include "amb_step.h"
 
 /* Neanderthal sprite position (matches the entry in raycast.c::standups).
- * Keeping a duplicate here on the audio side means the slave doesn't
+ * Keeping a duplicate here on the audio side means the secondary doesn't
  * have to read the standups table — cleaner separation, and we only
  * have one Voyager-broadcasting sprite. */
 #define NEANDER_X_CELL 16
@@ -37,16 +37,16 @@
 #define SOFT_HIGH 1290   /* SAMPLE_CENTER + 571 (~80% of 711 budget) */
 #define SOFT_LOW   148   /* SAMPLE_CENTER - 571 */
 
-/* Step A of the slave-fills-buffer refactor — allocate ping-pong
- * SDRAM buffers that the slave will write into (with optional gain /
+/* Step A of the secondary-fills-buffer refactor — allocate ping-pong
+ * SDRAM buffers that the secondary will write into (with optional gain /
  * eventual synth math) while DMA1 drains the other one. DMA reads
- * from cached SDRAM here; SH-2 cache is write-through, so the slave's
+ * from cached SDRAM here; SH-2 cache is write-through, so the secondary's
  * stores reach memory before the DMA accesses them.
  *
  * 256 samples per buffer at 11025 Hz = ~23 ms per drain — gives the
- * slave 23 ms of headroom between buffer swaps to fill the next one,
+ * secondary 23 ms of headroom between buffer swaps to fill the next one,
  * vs. the actual fill cost of ~150 μs. Plenty of slack even when the
- * slave is doing ceiling+carpet+walls work in foreground.
+ * secondary is doing ceiling+carpet+walls work in foreground.
  *
  * Wired up in Step B (amb_dma_handler swap) and Step C (amb_pump
  * fill loop). For now they're just allocated and initialized to
@@ -100,7 +100,7 @@ static void Mars_InitPWM(int sample_rate, int min_sample, int max_sample) {
 
 /* Step B: handler swaps to the OTHER ping-pong buffer and marks the
  * just-drained one as needing refill. The pump (step C) reads that
- * flag in the slave's idle loop and refills. While the pump isn't
+ * flag in the secondary's idle loop and refills. While the pump isn't
  * wired in yet, audio is silence after the first buffer pass — the
  * structural plumbing has to land first. */
 void amb_dma_handler(void) {
@@ -127,13 +127,13 @@ void amb_dma_handler(void) {
  *   All other bits 0.
  */
 
-/* Step C: pump. Called from the slave's idle polling loop. Checks if
+/* Step C: pump. Called from the secondary's idle polling loop. Checks if
  * either ping-pong buffer needs a refill (set by amb_dma_handler when
  * a buffer completes draining), and if so reads AMB_SAMPLES_PER_BUF
  * samples from the ROM source into it. The read position advances
  * across the source and wraps at the end so the loop seamlessly
  * repeats. Step D adds runtime gain; step E exposes the gain knob to
- * the master via shared memory. */
+ * the primary via shared memory. */
 /* xorshift32 PRNG — cheap, decent quality. State seeded by something
  * non-zero so the sequence isn't degenerate. */
 static uint32_t prng_state = 0xCAFEBABE;
@@ -187,8 +187,8 @@ static int buzz_env_timer = 0;
 
 /* Title-screen gate. The ambient pump stays fully idle (skipping its
  * ~150us fill work) until the game world loads — so the title burns no
- * slave cycles on audio, and the PWM is free for dedicated title SFX.
- * Master flips it on via amb_set_active(); the slave reads it through
+ * secondary cycles on audio, and the PWM is free for dedicated title SFX.
+ * Primary flips it on via amb_set_active(); the secondary reads it through
  * the cache-through alias for coherency. */
 static uint8_t amb_active_storage = 0;
 #define AMB_ACTIVE (*(volatile uint8_t *)((uintptr_t)&amb_active_storage | 0x20000000))
@@ -201,7 +201,7 @@ void amb_pump(void) {
     if (needs == 0) return;
 
     int buf_idx = (needs & 1) ? 0 : 1;
-    /* Snapshot the volume once per buffer to avoid the master's
+    /* Snapshot the volume once per buffer to avoid the primary's
      * mid-fill writes producing a discontinuity within a buffer. */
     int vol = (int)SHARED_UC->amb_volume;
 
@@ -289,7 +289,7 @@ void amb_pump(void) {
         hello_pos_fx += HELLO_STEP_FX;
         if ((hello_pos_fx >> 16) >= AMB_HELLO_SAMPLE_COUNT) hello_pos_fx = 0;
 
-        /* Carpet footstep — bypasses master `vol` (amb_volume) below.
+        /* Carpet footstep — bypasses primary `vol` (amb_volume) below.
          * >>9 (was >>8) halves its contribution so it shares the
          * budget evenly with buzz/neon/hello. Source baked 11kHz/16-bit. */
         int step_delta = 0;
@@ -302,7 +302,7 @@ void amb_pump(void) {
             if ((step_pos_fx >> 16) >= AMB_STEP_SAMPLE_COUNT) step_pos_fx = 0;
         }
 
-        /* Master gain on ambient sources; step added post-master. */
+        /* Overall gain on ambient sources; footstep added post-gain. */
         int s = ((delta * vol) >> 7) + step_delta + SAMPLE_CENTER;
 
         /* Soft clip — piecewise linear 4:1 compression above/below
@@ -326,7 +326,7 @@ void amb_pump(void) {
 void amb_sound_init(void) {
     /* Default runtime audio volumes — unity gain for ambient, the
      * same half-amp baseline for footsteps that we used before.
-     * Set here on the slave at boot for robustness against whether
+     * Set here on the secondary at boot for robustness against whether
      * crt0 actually copies .data from ROM to SDRAM at startup. */
     SHARED_UC->amb_volume  = 128;
     SHARED_UC->step_volume = 140;   /* 25% above the 11kHz/16-bit re-bake baseline */
@@ -346,16 +346,16 @@ void amb_sound_init(void) {
     /* DMA destination = PWM mono register, fixed. */
     SH2_DMA_DAR1  = (uint32_t)(uintptr_t)&MARS_PWM_MONO;
     SH2_DMA_DRCR1 = 0;                /* external DREQ source = PWM */
-    SH2_DMA_DMAOR = 1;                /* master enable for the DMAC */
+    SH2_DMA_DMAOR = 1;                /* DMAOR.DME — enable the DMAC */
 
     /* SH-2 IPRA layout (SH7095): [15:12]=DIVU, [11:8]=DMAC, [7:4]=WDT,
-     * [3:0]=REF. Setting DMA priority to 4 — slave's SR mask is 2, so
+     * [3:0]=REF. Setting DMA priority to 4 — secondary's SR mask is 2, so
      * priority 4 is high enough to be taken. */
     SH2_INT_IPRA = (SH2_INT_IPRA & 0xF0FF) | 0x0400;
 
     /* DMA1 uses a USER-DEFINED interrupt vector. VCR1 holds the vector
      * number; SH-2 reads VBR[VCR1*4] to get the handler. We point it
-     * at vector slot 66 = "Level 4 & 5" entry in the slave vector
+     * at vector slot 66 = "Level 4 & 5" entry in the secondary vector
      * table (mars_start.s line 203), which already holds slav_irq.
      * slav_irq's dispatch chain has the new `cmp/eq #0x10` branch to
      * slav_dma_irq for level-4 source = DMA. */

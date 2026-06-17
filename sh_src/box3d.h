@@ -33,11 +33,11 @@ void box3d_play_fall(void);
  * so the cardboard CRAM palette is left intact. */
 void box3d_flip(void);
 
-/* Rasterize the master-built shared draw-list into one framebuffer
+/* Rasterize the primary-built shared draw-list into one framebuffer
  * half. band 0 = top, band 1 = bottom. The box renders at half
  * resolution (160x112) and each logical pixel is written as a 2x2
  * block, so this owns full-res rows [0,112) for band 0 / [112,224) for
- * band 1. Called by BOTH SH-2s — master takes band 0, slave band 1
+ * band 1. Called by BOTH SH-2s — primary takes band 0, secondary band 1
  * (via MARS_CMD_BOX in s_main). */
 void box3d_render_band(int band);
 

@@ -81,10 +81,10 @@ MARS_HEADER:
 		.long	_stext				/* Source (in ROM) */
 		.long	0x00000000			/* Destination (in SDRAM) */
 		.long	_sdata				/* Size */
-		.long	0x06000240			/* Master SH2 Jump */
-		.long	0x06000244			/* Slave SH2 Jump */
-		.long	0x06000000			/* Master SH2 VBR */
-		.long	0x06000120			/* Slave SH2 VBR */
+		.long	0x06000240			/* Primary SH2 Jump */
+		.long	0x06000244			/* Secondary SH2 Jump */
+		.long	0x06000000			/* Primary SH2 VBR */
+		.long	0x06000120			/* Secondary SH2 VBR */
 
 ! Standard MD startup code at 0x3F0
 M68K_CODE:
@@ -93,7 +93,7 @@ M68K_CODE:
 
 	.data
 
-! Master Vector Base Table at 0x06000000
+! Primary Vector Base Table at 0x06000000
 
 		.long   mstart      /* Cold Start PC */
 		.long   0x0603F000  /* Cold Start SP 0x0603F000*/
@@ -150,7 +150,7 @@ M68K_CODE:
 		.long   main_irq    /* V Blank interupt */
 		.long   main_irq    /* Reset Button */
 
-! Slave Vector Base Table at 0x06000120
+! Secondary Vector Base Table at 0x06000120
 
 		.long   sstart      /* Cold Start PC */
 		.long   0x06040000  /* Cold Start SP */
@@ -213,7 +213,7 @@ mstart:
 		bra     mcont
 		nop
 
-! The slave SH2 starts here at 0x06000244
+! The secondary SH2 starts here at 0x06000244
 
 sstart:
 		bra     scont
@@ -225,7 +225,7 @@ sstart:
 
 mcont:
 ! clear interrupt flags
-		mov.l   _master_int_clr,r1
+		mov.l   _primary_int_clr,r1
 		mov.w   r0,@-r1     /* PWM INT clear */
 		mov.w   r0,@r1
 		mov.w   r0,@-r1     /* CMD INT clear */
@@ -237,16 +237,16 @@ mcont:
 		mov.w   r0,@-r1     /* VRES INT clear */
 		mov.w   r0,@r1
 
-		mov.l   _master_stk,r15
+		mov.l   _primary_stk,r15
 ! purge cache and turn it off
-		mov.l   _master_cctl,r0
+		mov.l   _primary_cctl,r0
 		mov     #0x10,r1
 		mov.b   r1,@r0
 
 ! clear bss
 		mov     #0,r0
-		mov.l   _master_bss_start,r1
-		mov.l   _master_bss_end,r2
+		mov.l   _primary_bss_start,r1
+		mov.l   _primary_bss_end,r2
 	0:
 		mov.l   r0,@r1
 		cmp/eq  r1,r2
@@ -254,8 +254,8 @@ mcont:
 		add     #4,r1
 
 ! wait for 68000 to finish init
-		mov.l   _master_sts,r0
-		mov.l   _master_ok,r1
+		mov.l   _primary_sts,r0
+		mov.l   _primary_ok,r1
 	1:
 		mov.l   @r0,r2
 		nop
@@ -264,16 +264,16 @@ mcont:
 		bt      1b
 
 ! do all initializers
-		mov.l   _master_do_init,r0
+		mov.l   _primary_do_init,r0
 		jsr     @r0
 		nop
 
-! let Slave SH2 run
+! let Secondary SH2 run
 		mov     #0,r1
-		mov.l   r1,@(4,r0)  /* clear slave status */
+		mov.l   r1,@(4,r0)  /* clear secondary status */
 
 		mov     #0x80,r0
-		mov.l   _master_adapter,r1
+		mov.l   _primary_adapter,r1
 		mov.b   r0,@r1      /* set FM */
 		mov     #0x00,r0
 		mov.b   r0,@(1,r1)  /* set int enables */
@@ -281,15 +281,15 @@ mcont:
 		ldc     r0,sr       /* allow ints */
 
 ! purge cache, turn it on, and run main()
-		mov.l   _master_cctl,r0
+		mov.l   _primary_cctl,r0
 		mov     #0x11,r1
 		mov.b   r1,@r0
-		mov.l   _master_go,r0
+		mov.l   _primary_go,r0
 		jsr     @r0
 		nop
 
 ! do all finishers
-		mov.l   _master_do_fini,r0
+		mov.l   _primary_do_fini,r0
 		jsr     @r0
 		nop
 	2:
@@ -297,33 +297,33 @@ mcont:
 		nop
 
 		.align   2
-_master_int_clr:
+_primary_int_clr:
 		.long   0x2000401E  /* one word passed last int clr reg */
-_master_stk:
+_primary_stk:
 		.long   0x0603F000  /* Cold Start SP */
-_master_sts:
+_primary_sts:
 		.long   0x20004020
-_master_ok:
+_primary_ok:
 		.ascii  "M_OK"
-_master_adapter:
+_primary_adapter:
 		.long   0x20004000
-_master_cctl:
+_primary_cctl:
 		.long   0xFFFFFE92
-_master_go:
+_primary_go:
 		.long   _m_main
 
-_master_bss_start:
+_primary_bss_start:
 		.long   __bss_start
-_master_bss_end:
+_primary_bss_end:
 		.long   __end
-_master_do_init:
+_primary_do_init:
 		.long   __INIT_SECTION__
-_master_do_fini:
+_primary_do_fini:
 		.long   __FINI_SECTION__
 
 scont:
 ! clear interrupt flags
-		mov.l   _slave_int_clr,r1
+		mov.l   _secondary_int_clr,r1
 		mov.w   r0,@-r1     /* PWM INT clear */
 		mov.w   r0,@r1
 		mov.w   r0,@-r1     /* CMD INT clear */
@@ -335,10 +335,10 @@ scont:
 		mov.w   r0,@-r1     /* VRES INT clear */
 		mov.w   r0,@r1
 
-		mov.l   _slave_stk,r15
-! wait for Master SH2 and 68000 to finish init
-		mov.l   _slave_sts,r0
-		mov.l   _slave_ok,r1
+		mov.l   _secondary_stk,r15
+! wait for Primary SH2 and 68000 to finish init
+		mov.l   _secondary_sts,r0
+		mov.l   _secondary_ok,r1
 	1:
 		mov.l   @r0,r2
 		nop
@@ -346,43 +346,43 @@ scont:
 		cmp/eq  r1,r2
 		bt      1b
 
-		mov.l   _slave_adapter,r1
+		mov.l   _secondary_adapter,r1
 		mov     #0x00,r0
-		mov.b   r0,@(1,r1)  /* set int enables (different from master despite same address!) */
+		mov.b   r0,@(1,r1)  /* set int enables (different from primary despite same address!) */
 		mov     #0x20,r0
 		ldc     r0,sr       /* allow ints */
 
-! purge cache, turn it on, and run slave()
-		mov.l   _slave_cctl,r0
+! purge cache, turn it on, and run secondary()
+		mov.l   _secondary_cctl,r0
 		mov     #0x11,r1
 		mov.b   r1,@r0
-		mov.l   _slave_go,r0
+		mov.l   _secondary_go,r0
 		jmp     @r0
 		nop
 
 		.align   2
-_slave_int_clr:
+_secondary_int_clr:
 		.long   0x2000401E  /* one word passed last int clr reg */
-_slave_stk:
+_secondary_stk:
 		.long   0x06040000  /* Cold Start SP */
-_slave_sts:
+_secondary_sts:
 		.long   0x20004024
-_slave_ok:
+_secondary_ok:
 		.ascii  "S_OK"
-_slave_adapter:
+_secondary_adapter:
 		.long   0x20004000
-_slave_cctl:
+_secondary_cctl:
 		.long   0xFFFFFE92
-_slave_go:
+_secondary_go:
 		.long   _s_main
 
-! Master exception handler
+! Primary exception handler
 
 main_err:
 		rte
 		nop
 
-! Master IRQ handler
+! Primary IRQ handler
 
 main_irq:
 		mov.l   r0,@-r15
@@ -502,26 +502,26 @@ main_vres_irq:
 		shll2   r0
 		ldc     r0,sr       /* disallow ints */
 
-		mov.l   mvri_master_stk,r15
-		mov.l   mvri_master_vres,r0
+		mov.l   mvri_primary_stk,r15
+		mov.l   mvri_primary_vres,r0
 		jmp     @r0
 		nop
 
 		.align  2
 mvri_mars_adapter:
 		.long   0x20004000
-mvri_master_stk:
+mvri_primary_stk:
 		.long   0x0603F000  /* Cold Start SP */
-mvri_master_vres:
+mvri_primary_vres:
 		.long   main_reset
 
-! Slave exception handler
+! Secondary exception handler
 
 slav_err:
 		rte
 		nop
 
-! Slave IRQ handler
+! Secondary IRQ handler
 
 slav_irq:
 		mov.l   r0,@-r15
@@ -630,7 +630,7 @@ slav_pwm_irq:
 spi_mars_adapter:
 		.long   0x20004000
 
-! Slave DMA-complete IRQ — fires on DMA channel 1 transfer end. Save
+! Secondary DMA-complete IRQ — fires on DMA channel 1 transfer end. Save
 ! callee-saved set, clear CHCR1.TE (read-then-write-zero is required
 ! by SH-2 hardware), call into _amb_dma_handler (sound.c) which re-
 ! arms DMA1 with the same buffer to keep the ambient loop going.
@@ -690,17 +690,17 @@ slav_vres_irq:
 		shll2   r0
 		ldc     r0,sr       /* disallow ints */
 
-		mov.l   svri_slave_stk,r15
-		mov.l   svri_slave_vres,r0
+		mov.l   svri_secondary_stk,r15
+		mov.l   svri_secondary_vres,r0
 		jmp     @r0
 		nop
 
 		.align  2
 svri_mars_adapter:
 		.long   0x20004000
-svri_slave_stk:
+svri_secondary_stk:
 		.long   0x06040000  /* Cold Start SP */
-svri_slave_vres:
+svri_secondary_vres:
 		.long   slav_reset
 
 
@@ -906,7 +906,7 @@ ss_pitch:
 		.text
 
 main_reset:
-! do any master SH2 specific reset code here
+! do any primary SH2 specific reset code here
 
 		mov.l   slav_st,r0
 		mov.l   slav_ok,r1
@@ -915,7 +915,7 @@ main_reset:
 		nop
 		nop
 		cmp/eq  r1,r2
-		bf      0b          /* wait for slave */
+		bf      0b          /* wait for secondary */
 
 		! recopy rom data to sdram
 
@@ -945,11 +945,11 @@ main_reset:
 		nop
 
 slav_reset:
-! do any slave SH2 specific reset code here
+! do any secondary SH2 specific reset code here
 
 		mov.l   slav_st,r0
 		mov.l   slav_ok,r1
-		mov.l   r1,@r0      /* tell master to start reset */
+		mov.l   r1,@r0      /* tell primary to start reset */
 
 		mov.l   main_st,r0
 		mov.l   main_ok,r1
@@ -958,7 +958,7 @@ slav_reset:
 		nop
 		nop
 		cmp/eq  r1,r2
-		bf      0b          /* wait for master to do the work */
+		bf      0b          /* wait for primary to do the work */
 
 		mov.l   slav_go,r0
 		jmp     @r0

@@ -32,10 +32,10 @@ static void metrics_mode_check(uint16_t pad) {
  * we're done with the optimization pass. */
 static uint16_t prof_prev_frt = 0;
 static uint16_t prof_smoothed = 0;
-static uint16_t prof_slave_smoothed = 0;
+static uint16_t prof_secondary_smoothed = 0;
 static uint16_t prof_half_smoothed = 0;
 
-extern volatile uint16_t prof_master_half_ticks;  /* written by raycast_render */
+extern volatile uint16_t prof_primary_half_ticks;  /* written by raycast_render */
 
 static inline uint16_t prof_read_frt(void) {
     /* Hitachi SH-2 FRT quirk: reading FRCH latches FRCL into a
@@ -58,13 +58,13 @@ static void prof_sample_and_draw(uint8_t *fb) {
     prof_prev_frt = now;
     /* EMA: 7/8 old + 1/8 new — ~8-frame time constant. */
     prof_smoothed = (uint16_t)((prof_smoothed - (prof_smoothed >> 3)) + (delta >> 3));
-    uint16_t slave = SHARED_UC->slave_render_ticks;
-    prof_slave_smoothed = (uint16_t)((prof_slave_smoothed - (prof_slave_smoothed >> 3)) + (slave >> 3));
-    uint16_t half = prof_master_half_ticks;
+    uint16_t secondary = SHARED_UC->secondary_render_ticks;
+    prof_secondary_smoothed = (uint16_t)((prof_secondary_smoothed - (prof_secondary_smoothed >> 3)) + (secondary >> 3));
+    uint16_t half = prof_primary_half_ticks;
     prof_half_smoothed = (uint16_t)((prof_half_smoothed - (prof_half_smoothed >> 3)) + (half >> 3));
 
-    /* "T:NNNNN H:NNNNN S:NNNNN" — frame total, master half-render,
-     * slave half-render. Higher of H/S is the parallel bottleneck. */
+    /* "T:NNNNN H:NNNNN S:NNNNN" — frame total, primary half-render,
+     * secondary half-render. Higher of H/S is the parallel bottleneck. */
     char text[24];
     text[0] = 'T'; text[1] = ':';
     uint16_t v = prof_smoothed;
@@ -81,7 +81,7 @@ static void prof_sample_and_draw(uint8_t *fb) {
     text[11] = '0' + (v % 10); v /= 10;
     text[10] = '0' + v;
     text[15] = ' '; text[16] = 'S'; text[17] = ':';
-    v = prof_slave_smoothed;
+    v = prof_secondary_smoothed;
     text[22] = '0' + (v % 10); v /= 10;
     text[21] = '0' + (v % 10); v /= 10;
     text[20] = '0' + (v % 10); v /= 10;
@@ -145,15 +145,15 @@ void swapBuffers(void) {
 }
 
 int m_main(void) {
-    /* Release the slave SH-2. The crt0 (mars_start.s:271-273) intends
+    /* Release the secondary SH-2. The crt0 (mars_start.s:271-273) intends
      * to do this after the init JSR but uses a stale r0 — the write
-     * to "clear slave status" goes to ROM and is silently dropped.
-     * Without this, the slave loops forever in its S_OK wait at
+     * to "clear secondary status" goes to ROM and is silently dropped.
+     * Without this, the secondary loops forever in its S_OK wait at
      * 0x20004024 (= MARS_SYS_COMM4) and never reaches s_main().
      *
      * Writing 0 to COMM4 changes the upper half of the 32-bit word
-     * the slave is polling for "S_OK" (0x535F4F4B) → cmp/eq fails →
-     * slave exits the wait and jumps to s_main. */
+     * the secondary is polling for "S_OK" (0x535F4F4B) → cmp/eq fails →
+     * secondary exits the wait and jumps to s_main. */
     MARS_SYS_COMM4 = 0;
 
     Hw32xInit(MARS_VDP_MODE_256, 0);
@@ -183,7 +183,7 @@ int m_main(void) {
     raycast_init();
     prof_init();
 
-    /* Backrooms ambience comes in as we stand up in the lobby (slave
+    /* Backrooms ambience comes in as we stand up in the lobby (secondary
      * starts pumping from the top of the loop now). */
     amb_set_active(1);
 

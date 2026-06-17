@@ -48,10 +48,10 @@ extern uint16_t currentFB;
 #define TAPE_VEDGE  2
 /* Face order (box_faces): 0 front trap door, 1 South wall (LABEL), 2 East,
  * 3 North, 4 West, 5 North flap, 6 South flap, 7 East flap, 8 West flap,
- * 9 back trap door. The trap-door floor panels are plain cardboard. */
+ * 9 back trap door, 10 carpet floor plane. */
 static const uint8_t face_tape[BOX_NFACES] = {
     TAPE_NONE, TAPE_USTRIP, TAPE_NONE, TAPE_NONE, TAPE_NONE,
-    TAPE_VEDGE, TAPE_VEDGE, TAPE_NONE, TAPE_NONE, TAPE_NONE
+    TAPE_VEDGE, TAPE_VEDGE, TAPE_NONE, TAPE_NONE, TAPE_NONE, TAPE_NONE
 };
 
 /* The South wall (face 1) is the labelled front: it samples the label
@@ -60,6 +60,12 @@ static const uint8_t face_tape[BOX_NFACES] = {
 #define LABEL_FACE  1
 #define LABEL_TSH   (FX_SHIFT - 7)
 #define LABEL_TMASK 127
+
+/* Face 10 is the carpet floor below the box — the camera falls through the
+ * open trap doors and lands on it. Flat-lit mustard carpet ramp in CRAM. */
+#define FLOOR_FACE  10
+#define CARPET_BASE 136        /* carpet CRAM 136..151 (clear of label) */
+#define N_CARPET    16
 
 
 static const fx_t FACE_U[4] = { 0, FX_ONE, FX_ONE, 0 };
@@ -85,7 +91,7 @@ typedef struct { fx_t cx, cy, depth, u, v; } cvert_t;
 typedef struct {
     int16_t sx[BOX_MAXV], sy[BOX_MAXV];
     int32_t u[BOX_MAXV],  v[BOX_MAXV];
-    uint8_t nv, level, tape, label;
+    uint8_t nv, level, tape, label, floor;
 } box_poly_t;
 typedef struct {
     box_poly_t poly[BOX_NFACES];
@@ -259,6 +265,7 @@ static void clip_project_store(int fi, int level, int show_label) {
     p->level = (uint8_t)level;
     p->tape  = face_tape[fi];
     p->label = (uint8_t)(fi == LABEL_FACE && show_label);
+    p->floor = (uint8_t)(fi == FLOOR_FACE);
 }
 
 static void render_geometry(int f) {
@@ -267,13 +274,18 @@ static void render_geometry(int f) {
      * wall (y=-1, facing -Y). Once we arc over / dive inside, that wall's
      * interior is plain cardboard. */
     int show_label = (box_cam_pos[f][1] < FX(-1));
+    /* Box3d floor disabled — a flat plane read as a solid colour, so we
+     * land in the LOBBY (real textured carpet + pitch-up reveal) instead.
+     * The floor face stays in the model but is never drawn. */
+    int show_floor = 0;
     fx_t key[BOX_NFACES];
     uint8_t order[BOX_NFACES];
     for (int i = 0; i < BOX_NFACES; i++) {
         const uint8_t *vi = box_faces[i];
         key[i] = cverts[vi[0]].depth + cverts[vi[1]].depth
                + cverts[vi[2]].depth + cverts[vi[3]].depth;
-        clip_project_store(i, face_level(i, f), show_label);
+        if (i == FLOOR_FACE && !show_floor) BOX_DL->poly[i].nv = 0;
+        else clip_project_store(i, face_level(i, f), show_label);
         order[i] = (uint8_t)i;
     }
     for (int i = 1; i < BOX_NFACES; i++) {
@@ -294,9 +306,16 @@ static void render_geometry(int f) {
  * out ONCE up front, so the per-scanline loop has no divide (A). */
 static void fill_face(const int16_t *xs, const int16_t *ys,
                       const int32_t *us, const int32_t *vs,
-                      int n, int base_lvl, int tape_mode, int label,
+                      int n, int base_lvl, int tape_mode, int label, int floor,
                       int yc0, int yc1) {
     uint8_t *fb = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
+    /* Carpet floor: one flat lit mustard shade across the whole plane. */
+    uint16_t floor_cc = 0;
+    if (floor) {
+        int fl = base_lvl; if (fl < 0) fl = 0; else if (fl >= N_CARPET) fl = N_CARPET - 1;
+        uint8_t fc = (uint8_t)(CARPET_BASE + fl);
+        floor_cc = (uint16_t)((fc << 8) | fc);
+    }
 
     /* Per-edge setup: top vertex + slope of x,u,v per scanline. */
     int  e_yt[BOX_MAXV], e_yb[BOX_MAXV], e_xt[BOX_MAXV];
@@ -350,7 +369,12 @@ static void fill_face(const int16_t *xs, const int16_t *ys,
         uint16_t *r0 = (uint16_t *)(fb + (yy << 1) * SCREEN_W);
         uint16_t *r1 = (uint16_t *)(fb + ((yy << 1) + 1) * SCREEN_W);
         uint8_t *cov = box_cover[yy];
-        if (label) {
+        if (floor) {
+            /* Flat carpet — no per-pixel texture sample. */
+            for (int x = sxL; x <= sxR; x++) {
+                if (!cov[x]) { r0[x] = floor_cc; r1[x] = floor_cc; cov[x] = 1; }
+            }
+        } else if (label) {
             for (int x = sxL; x <= sxR; x++) {
                 if (!cov[x]) {
                     uint8_t c = label_tex[(v >> LABEL_TSH) & LABEL_TMASK]
@@ -417,7 +441,7 @@ void box3d_render_band(int band) {
             lx[k] = vp->sx[k]; ly[k] = vp->sy[k];
             lu[k] = vp->u[k];  lv[k] = vp->v[k];
         }
-        fill_face(lx, ly, lu, lv, nv, vp->level, vp->tape, vp->label, ly0, ly1);
+        fill_face(lx, ly, lu, lv, nv, vp->level, vp->tape, vp->label, vp->floor, ly0, ly1);
     }
 #if BOX_PROFILE
     if (band == 0) g_fill_ticks = (uint16_t)(frt_read() - tprof);
@@ -517,6 +541,14 @@ void box3d_load_palette(void) {
     for (int i = 0; i < LABEL_N; i++)
         Hw32xSetBGColor(LABEL_BASE + i, label_palette[i][0],
                         label_palette[i][1], label_palette[i][2]);
+    /* Carpet floor ramp — Backrooms mustard brown, darkest..brightest
+     * (index = lit level, so high = bright, matching the cardboard ramp). */
+    for (int i = 0; i < N_CARPET; i++) {
+        int r = 8 + ((27 - 8) * i) / (N_CARPET - 1);
+        int g = 7 + ((22 - 7) * i) / (N_CARPET - 1);
+        int b = 3 + ((11 - 3) * i) / (N_CARPET - 1);
+        Hw32xSetBGColor(CARPET_BASE + i, r, g, b);
+    }
     Hw32xSetBGColor(BOX_TEXT_IDX, 31, 31, 31);
 }
 
@@ -531,6 +563,10 @@ void box3d_show_final(void) {
  * into the void. Played once, in full, when the player commits the menu
  * — the "fall into the backrooms" payoff. No skip; it's short. */
 void box3d_play_fall(void) {
+    /* Full plunge: the box interior rushes up past the camera, then it
+     * drops through the open trap doors and plummets into the black void
+     * below (z -> -10) — the "fell through the box into darkness" beat.
+     * The lobby then fades up from the carpet's perspective. */
     for (int f = BOX_INTRO_FRAMES; f < BOX_NFRAMES; f++) {
         render_frame(f);
         box3d_flip();

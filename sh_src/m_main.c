@@ -187,6 +187,35 @@ int m_main(void) {
      * starts pumping from the top of the loop now). */
     amb_set_active(1);
 
+    /* ---- Landing reveal --------------------------------------------- *
+     * You fell through the box into darkness; now you come to from the
+     * floor. Fade up looking straight DOWN at the carpet, hold a beat so
+     * the floor perspective reads, then STAND UP — ease the camera from
+     * face-down to the level photo view, decelerating into standing. */
+    SHARED_UC->pitch_y = 80;                 /* face-down at the carpet */
+    for (int lvl = 0; lvl <= FADE_STEPS; lvl++) {     /* fade up from black */
+        SHARED_UC->frame_count++;
+        raycast_render();
+        while (lastTick == MARS_SYS_COMM12);
+        raycast_set_brightness(lvl);
+        MARS_VDP_FBCTL = currentFB ^ 1;
+        while ((MARS_VDP_FBCTL & MARS_VDP_FS) == currentFB);
+        currentFB ^= 1;
+        lastTick = MARS_SYS_COMM12;
+    }
+    for (int i = 0; i < 14; i++) {                    /* hold on the carpet */
+        SHARED_UC->frame_count++;
+        raycast_render();
+        swapBuffers();
+    }
+    while (SHARED_UC->pitch_y > 0) {                  /* stand up */
+        int p = SHARED_UC->pitch_y; p -= (p >> 3) + 1; if (p < 0) p = 0;
+        SHARED_UC->pitch_y = (int8_t)p;
+        SHARED_UC->frame_count++;
+        raycast_render();
+        swapBuffers();
+    }
+
     /* --- Lobby: frozen menu, then walk in ---------------------------- *
      * Phase A: the player is FROZEN at the photo vantage; only the text
      * menu is live (UP/DOWN pick the level, any button confirms and

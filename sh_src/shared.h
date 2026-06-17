@@ -91,6 +91,11 @@ typedef struct {
      * formula uses the unshifted SCREEN_H/2 as the focal-length
      * constant so perspective stays calibrated. */
     volatile int8_t pitch_y;
+    /* Eye height as a fraction of room height in 8.8 (128 = mid-wall =
+     * standing; lower = crouched/crawling, eye toward the floor). Read by
+     * both CPUs' wall draw to split the wall column asymmetrically about
+     * the horizon (floor close, ceiling looms when low). */
+    volatile uint8_t eye_h;
 } shared_t;
 
 #define LIGHTING_FLICKER  0x01   /* per-panel random brightness rolls */

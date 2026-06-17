@@ -442,10 +442,26 @@ static inline uint8_t *fb_pixels(void) {
     return (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
 }
 
+/* Eye height (8.8 fraction of room height): 128 = standing (mid-wall, the
+ * original symmetric wall projection); 64 = crawling (eye a quarter up
+ * from the floor). Held in SHARED_UC->eye_h so both CPUs' wall draw see it. */
+#define STAND_EYE  128
+#define CROUCH_EYE 40          /* ~1/6 up the wall — down near the carpet */
+/* Crouch tone-gradient shift: how many row_color steps to slide the
+ * floor/ceiling fade as the eye drops (more bright carpet before the fade,
+ * ceiling fogs sooner). Applied identically in clear_half, the carpet, and
+ * the ceiling-grid so the whole gradient travels together. Reuses the same
+ * row_color shift the look-pitch uses, just keyed to eye height instead of
+ * pitch. 0 when standing. NOTE: this shifts COLOR only — the carpet's stain
+ * skip/LOD must stay on the *geometric* (unshifted) distance or far rows
+ * un-skip into aliased noise. */
+#define CROUCH_GRAD_SHIFT(eh)  (((STAND_EYE - (int)(eh)) * 1) >> 2)
+
 void raycast_init(void) {
     build_palette();
     build_shading_tables();
     init_lights();
+    SHARED_UC->eye_h = STAND_EYE;        /* standing until the player crouches */
     /* Precompute cameraX[col] = 2*col/SCREEN_W - 1 in FX. */
     for (int col = 0; col < SCREEN_W; col++) {
         cameraX_table[col] = ((fx_t)col << (FX_SHIFT + 1)) / SCREEN_W - FX_ONE;
@@ -579,6 +595,15 @@ static uint8_t is_walking  = 0;
  * (±1 from SIN_FX(bob_phase)) is added on top each frame. */
 static int     pitch_smooth_y = 0;
 
+/* Eye height (8.8 fraction of room height), eased toward STAND/CROUCH as
+ * the player holds X. STAND_EYE/CROUCH_EYE are #defined up by raycast_init. */
+static int     eye_smooth = STAND_EYE;
+/* Transient look-down "head dip" while standing up out of a crouch — glances
+ * at the floor as the eye climbs through the lower half of the rise, then
+ * eases back to level by mid-stand. Added as extra pitch in raycast_render. */
+static int     standup_dip = 0;
+#define STANDUP_DIP 40         /* peak look-down pixels while rising; 0 disables */
+
 /* Read controller, advance player by one frame. Axis-separated collision
  * gives natural sliding along walls. */
 void player_update(void) {
@@ -624,10 +649,38 @@ void player_update(void) {
         pitch_smooth_y += (0 - pitch_smooth_y) >> 2;
     }
 
+    /* Hold X to crawl — ease the eye down toward the floor (the wall draw
+     * reads SHARED_UC->eye_h). Variable eye height now; partial-height
+     * crawl-under walls come later. */
+    int crouching = (pad & SEGA_CTRL_X) != 0;
+    {
+        int target = crouching ? CROUCH_EYE : STAND_EYE;
+        int d = target - eye_smooth;
+        /* Drop into crouch 2× faster than we rise: d<0 (eye falling toward the
+         * floor) eases at 50%/frame, d>0 (standing back up) stays at 25%. */
+        if (d > -4 && d < 4) eye_smooth = target;
+        else eye_smooth += (d < 0) ? (d >> 1) : (d >> 2);
+        SHARED_UC->eye_h = (uint8_t)eye_smooth;
+
+        /* Stand-up floor-glance: while rising (not crouching) through the
+         * lower 3/4 of the climb, aim the dip toward the floor; once we pass
+         * 75% of the rise the target drops to 0 so the view eases back to
+         * level — mimicking how you glance at the ground as you get up. */
+        int dip_target = (!crouching && eye_smooth > CROUCH_EYE + 8
+                          && eye_smooth < (STAND_EYE * 3 + CROUCH_EYE) / 4)
+                         ? STANDUP_DIP : 0;
+        /* Dip toward the floor fast (>>1), but ease the gaze back to level at
+         * HALF that speed (>>2) so it reads as the player taking a moment to
+         * collect before settling into the standing perspective. */
+        int dd = dip_target - standup_dip;
+        standup_dip += (dd > 0) ? (dd >> 1) : (dd >> 2);
+    }
+
     /* Hold A to run — bumps walk speed and turn rate together so you can
-     * quickly reorient while sprinting. */
-    int sprinting = (pad & SEGA_CTRL_A) != 0;
-    fx_t walk = sprinting ? FX(0.15) : FX(0.08);
+     * quickly reorient while sprinting. No running while crouched; crawling
+     * is slow. */
+    int sprinting = !crouching && (pad & SEGA_CTRL_A) != 0;
+    fx_t walk = crouching ? FX(0.04) : (sprinting ? FX(0.15) : FX(0.08));
     uint8_t turn = sprinting ? 8 : 4;
 
     /* B toggles left/right between turning and strafing. */
@@ -710,11 +763,12 @@ static void draw_standups(uint8_t *fb,
         if (spriteWidth < 1) spriteWidth = 1;
         if (spriteHeight < 1) continue;
 
-        /* Floor row at this distance: horizon_y + (SCREEN_H/2)/transformY.
-         * horizon_y shifts with pitch (camera tilt); the SCREEN_H/2 inside
-         * the division is the focal constant and stays unshifted. */
+        /* Floor row at this distance: horizon_y + (focal·eyeH)/transformY.
+         * horizon_y shifts with pitch; the focal·eyeH term drops with the
+         * crouch so the standup's feet ride the floor up toward the horizon
+         * in lockstep with the wall floor-edge (no floating). */
         int floor_y = horizon_y
-                    + (int)(((int32_t)(SCREEN_H >> 1) << FX_SHIFT) / transformY);
+                    + (int)(((int32_t)((SCREEN_H * (int)SHARED_UC->eye_h) >> 8) << FX_SHIFT) / transformY);
         int drawEndY_u   = floor_y;
         int drawStartY_u = floor_y - spriteHeight;
         int drawStartX_u = screenX - (spriteWidth >> 1);
@@ -952,7 +1006,10 @@ static void draw_lights(uint8_t *fb,
             fx_t ratio = FX_DIV(tX, tY);
             corner_sx[k] = (SCREEN_W >> 1)
                   + (int)(((int32_t)(SCREEN_W >> 1) * ratio) >> FX_SHIFT);
-            int yoff = (int)(((int32_t)(SCREEN_H >> 1) << FX_SHIFT) / tY);
+            /* Ceiling offset uses focal·(1-eyeH): as the eye drops the
+             * ceiling rises away, so the light tile climbs in lockstep with
+             * the wall ceiling-edge. */
+            int yoff = (int)(((int32_t)((SCREEN_H * (256 - (int)SHARED_UC->eye_h)) >> 8) << FX_SHIFT) / tY);
             corner_sy[k] = horizon_y - yoff;
 
             if (corner_sy[k] < min_y) min_y = corner_sy[k];
@@ -1065,11 +1122,17 @@ void raycast_draw_ceiling_grid(int col_start, int col_end) {
     /* horizon_y shifts with pitch; focal_const stays unshifted so
      * depth math stays calibrated regardless of head tilt. */
     int horizon_y   = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
-    const int focal_const = SCREEN_H / 2;
+    /* Ceiling depth scales with focal·(1-eyeH): crouch -> ceiling recedes,
+     * grid lines spread, in step with the wall ceiling-edge. Both CPUs read
+     * eye_h here, so the slave's column half stays aligned. */
+    const int focal_const = (SCREEN_H * (256 - (int)SHARED_UC->eye_h)) >> 8;
     /* Same trick as the carpet: rebase row_color sampling so the
      * ceiling fog gradient and grid-line shade follow the shifted
-     * horizon instead of staying glued to absolute screen Y. */
-    int sample_bias = SCREEN_H / 2 - horizon_y;
+     * horizon instead of staying glued to absolute screen Y. The crouch
+     * term (matching raycast_clear_half) fogs the ceiling sooner as it
+     * looms, in step with the floor brightening. */
+    int sample_bias = (SCREEN_H / 2 - horizon_y)
+                    + CROUCH_GRAD_SHIFT(SHARED_UC->eye_h);
 
     /* For band detection when dX or dY is exactly 0 (facing cardinal):
      * we track wxL_s / wyL_s across rows and emit a full-width band
@@ -1094,8 +1157,11 @@ void raycast_draw_ceiling_grid(int col_start, int col_end) {
         fx_t wyR_s = wyR * CEIL_GRID_DENSITY;
 
         int sy = y + sample_bias;
-        if (sy < 0)         sy = 0;
-        if (sy >= SCREEN_H) sy = SCREEN_H - 1;
+        /* Clamp to the fog midpoint so the crouch shift can't pull floor
+         * colors into the ceiling sampling — that bypassed the fog-skip below
+         * and drew dense grid lines near the horizon (the speckle band). */
+        if (sy > SCREEN_H / 2) sy = SCREEN_H / 2;
+        if (sy < 0)            sy = 0;
         int base_shade = row_color[sy] - CEIL_BASE;
         if (base_shade >= SHADE_LEVELS - 1) {
             /* Skip drawing but keep prev_* coherent for next row's band test. */
@@ -1175,22 +1241,35 @@ void raycast_draw_carpet(int col_start, int col_end) {
      * camera-height·focal-length product in the perspective formula) so
      * depth-per-row remains calibrated when the camera pitches. */
     int horizon_y   = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
-    const int focal_const = SCREEN_H / 2;
+    /* Floor depth scales with focal·eyeH: crouch -> the carpet comes up
+     * close, stains land at the nearer world distance, in step with the
+     * wall floor-edge. Both CPUs read eye_h, keeping the slave's half aligned. */
+    const int focal_const = (SCREEN_H * (int)SHARED_UC->eye_h) >> 8;
     /* sample_bias rebases row_color sampling so its color gradient
      * (and the stain-LOD derived from base_shade) travels with the
      * shifted horizon. Without this the gradient stayed glued to
      * absolute Y while the geometry math moved — visible as static
      * stain density bands and a non-perspective color band when
-     * tilting up or down. */
-    int sample_bias = SCREEN_H / 2 - horizon_y;
+     * tilting up or down. The crouch term (matching raycast_clear_half)
+     * slides the carpet tone gradient with eye height: lower eye => more
+     * bright carpet before the fade, geometry untouched. */
+    int geo_bias    = SCREEN_H / 2 - horizon_y;        /* unshifted: skip + LOD */
+    int sample_bias = geo_bias + CROUCH_GRAD_SHIFT(SHARED_UC->eye_h);
     for (int y = horizon_y + 1; y < SCREEN_H; y++) {
         if (y < 0) continue;        /* extreme positive pitch */
+        /* Skip + LOD key off the geometric (unshifted) distance so far rows
+         * stay fog-skipped. The crouch color shift only brightens what we DO
+         * draw — it must NOT un-skip the aliased near-horizon rows (that was
+         * the noisy "broken horizon" band). */
+        int gy = y + geo_bias;
+        if (gy < 0)         gy = 0;
+        if (gy >= SCREEN_H) gy = SCREEN_H - 1;
+        int geo_shade = row_color[gy] - FLOOR_BASE;
+        if (geo_shade >= SHADE_LEVELS - 2) continue;
         int sy = y + sample_bias;
         if (sy < 0)         sy = 0;
         if (sy >= SCREEN_H) sy = SCREEN_H - 1;
-        uint8_t base_c = row_color[sy];
-        int base_shade = base_c - FLOOR_BASE;
-        if (base_shade >= SHADE_LEVELS - 2) continue;
+        int base_shade = row_color[sy] - FLOOR_BASE;   /* shifted: stain brightness */
 
         int p = y - horizon_y;
         /* rowDist always positive (y > horizon_y); DIVU. */
@@ -1212,8 +1291,8 @@ void raycast_draw_carpet(int col_start, int col_end) {
          * Saves ~40% of carpet pass work on a typical scene where most
          * rows are mid/far range. */
         int x_step = 4;
-        if      (base_shade >= 8) x_step = 16;
-        else if (base_shade >= 4) x_step = 8;
+        if      (geo_shade >= 8) x_step = 16;
+        else if (geo_shade >= 4) x_step = 8;
         fx_t stepWX = stepX * x_step;
         fx_t stepWY = stepY * x_step;
 
@@ -1266,6 +1345,10 @@ void raycast_draw_walls(int col_start, int col_end) {
     /* Load pitch once — read via cache-through alias so master's
      * latest write is visible. Walls center on the shifted horizon. */
     int horizon_y = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
+    /* Eye height once: splits the wall column about the horizon. 128 =
+     * standing (symmetric, lineHeight/2 below); lower drops the eye toward
+     * the floor (crawling) so the floor sits close and the ceiling looms. */
+    int eye_h = (int)SHARED_UC->eye_h;
     for (int col = col_start; col < col_end; col++) {
         WALL_DIST(col) = 0x7FFFFFFF;
         fx_t cameraX = cameraX_table[col];
@@ -1481,8 +1564,8 @@ void raycast_draw_walls(int col_start, int col_end) {
 
         int lineHeight = (int)divu_read();
 
-        int wall_top  = horizon_y - lineHeight / 2;
-        int wall_bot  = horizon_y + lineHeight / 2;
+        int wall_bot  = horizon_y + ((lineHeight * eye_h) >> 8);
+        int wall_top  = wall_bot - lineHeight;
         int drawStart = wall_top < 0 ? 0 : wall_top;
         int drawEnd   = wall_bot >= SCREEN_H ? SCREEN_H - 1 : wall_bot;
 
@@ -1697,9 +1780,22 @@ void raycast_clear_half(int col_start, int col_end) {
      * (y - horizon_y + SCREEN_H/2) so the table's ceiling/floor gradient
      * stays centered on the shifted horizon. */
     int horizon_y   = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
-    int sample_bias = SCREEN_H / 2 - horizon_y;     /* = pitch_y */
+    /* Crouch slides the row_color gradient UP — the SAME shift the look-pitch
+     * applies via sample_bias, just decoupled from horizon_y so the geometry
+     * stays flat to the player. Lower eye => more bright carpet before the
+     * fade, the fade-point creeps toward the horizon (and the ceiling fogs
+     * sooner as it looms). Both CPUs run this on their half, so the slave
+     * matches. The carpet and ceiling-grid passes apply the identical term so
+     * the whole tone gradient travels together. */
+    int sample_bias = (SCREEN_H / 2 - horizon_y)
+                    + CROUCH_GRAD_SHIFT(SHARED_UC->eye_h);
     for (int y = 0; y < SCREEN_H; y++) {
         int sy = y + sample_bias;
+        /* Ceiling rows must never sample floor colors: the crouch shift would
+         * otherwise pull floor (mustard) up above the horizon — the bleed band
+         * the ceiling-grid then drew dense lines into. Clamp the ceiling side
+         * to the fog midpoint; the floor side keeps the full shift. */
+        if (y <= horizon_y && sy > SCREEN_H / 2) sy = SCREEN_H / 2;
         if (sy < 0)         sy = 0;
         if (sy >= SCREEN_H) sy = SCREEN_H - 1;
         uint8_t  c   = row_color[sy];
@@ -1741,6 +1837,9 @@ void raycast_render(void) {
     if (is_walking) {
         pitch_combined += (int)((SIN_FX(bob_phase) * 1) >> FX_SHIFT);
     }
+    /* Stand-up head dip — transient look-down while rising out of a crouch
+     * (positive = look down). Eased in player_update; 0 at rest. */
+    pitch_combined += standup_dip;
     if (pitch_combined > 127)  pitch_combined = 127;
     if (pitch_combined < -128) pitch_combined = -128;
     SHARED_UC->pitch_y = (int8_t)pitch_combined;

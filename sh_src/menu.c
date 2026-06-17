@@ -3,6 +3,7 @@
 #include "menu.h"
 #include "raycast.h"
 #include "shared.h"
+#include "version.h"
 
 /* Two-tab pause menu. START opens/closes; tabs (AUDIO / LIGHTING) sit
  * on row 0 and LEFT/RIGHT switches between them when that row is
@@ -14,18 +15,22 @@
 
 #define TAB_AUDIO    0
 #define TAB_LIGHTING 1
+#define TAB_CREDITS  2
+#define NUM_TABS     3
 
 #define AUDIO_CONTENT_ROWS    2   /* AMBIENCE, FOOTSTEPS */
 #define LIGHTING_CONTENT_ROWS 3   /* FLICKER, STROBES, SHIMMER */
+#define CREDITS_CONTENT_ROWS  0   /* BUILD/DATE/SHA are read-only display */
 
 static int      menu_active = 0;
 static int      menu_tab    = TAB_AUDIO;
 static int      menu_row    = 0;   /* 0 = tab row, 1..N = content row */
 static uint16_t menu_prev_pad = 0;
 
-/* Layout — 18-char × 10-row box (144 × 80 px) centered on the 320×224
- * screen, tall enough for the LIGHTING tab's three toggle rows. */
-#define MENU_W_PX      144
+/* Layout — 22-char × 10-row box (176 × 80 px) centered on the 320×224
+ * screen, wide enough for the "LIGHTING |CREDITS|" tab row and tall
+ * enough for the LIGHTING tab's three toggle rows. */
+#define MENU_W_PX      176
 #define MENU_H_PX       80
 #define MENU_X        ((SCREEN_W - MENU_W_PX) / 2)
 #define MENU_Y        ((SCREEN_H - MENU_H_PX) / 2)
@@ -40,7 +45,11 @@ int menu_is_active(void) {
 }
 
 static int content_rows_for(int tab) {
-    return (tab == TAB_AUDIO) ? AUDIO_CONTENT_ROWS : LIGHTING_CONTENT_ROWS;
+    switch (tab) {
+    case TAB_AUDIO:    return AUDIO_CONTENT_ROWS;
+    case TAB_LIGHTING: return LIGHTING_CONTENT_ROWS;
+    default:           return CREDITS_CONTENT_ROWS;
+    }
 }
 
 void menu_update(uint16_t pad) {
@@ -69,9 +78,8 @@ void menu_update(uint16_t pad) {
     if (dir == 0) return;
 
     if (menu_row == 0) {
-        /* Tab row: LEFT/RIGHT switches tabs. Reset row so we land on
-         * the new tab's first content row visually. */
-        menu_tab = (menu_tab == TAB_AUDIO) ? TAB_LIGHTING : TAB_AUDIO;
+        /* Tab row: LEFT/RIGHT cycles through the tabs (wraps both ways). */
+        menu_tab = (menu_tab + dir + NUM_TABS) % NUM_TABS;
         return;
     }
 
@@ -83,7 +91,7 @@ void menu_update(uint16_t pad) {
         if (v < 0)   v = 0;
         if (v > 255) v = 255;
         *target = (uint8_t)v;
-    } else {
+    } else if (menu_tab == TAB_LIGHTING) {
         /* LIGHTING tab: toggle the corresponding bit. dir doesn't
          * matter — LEFT and RIGHT both flip. */
         uint8_t bit;
@@ -136,19 +144,24 @@ void menu_render(uint8_t *fb) {
     const int Y = MENU_Y;
 
     /* Top + bottom rule. */
-    font_draw_string(fb, X, Y,      "+----------------+", MENU_FG_COLOR);
-    font_draw_string(fb, X, Y + 72, "+----------------+", MENU_FG_COLOR);
+    font_draw_string(fb, X, Y,      "+--------------------+", MENU_FG_COLOR);
+    font_draw_string(fb, X, Y + 72, "+--------------------+", MENU_FG_COLOR);
 
     /* Tab row at y=16: "|AUDIO| LIGHTING" or "AUDIO |LIGHTING|" —
      * the bar-wrapped one is the active tab. > prefix marks the tab
      * row as selected; LEFT/RIGHT switches when on this row. */
     const char *tab_text;
-    if (menu_tab == TAB_AUDIO) {
-        tab_text = (menu_row == 0) ? "> |AUDIO| LIGHTING"
-                                   : "  |AUDIO| LIGHTING";
-    } else {
-        tab_text = (menu_row == 0) ? "> AUDIO |LIGHTING|"
-                                   : "  AUDIO |LIGHTING|";
+    int tab_sel = (menu_row == 0);
+    switch (menu_tab) {
+    case TAB_AUDIO:
+        tab_text = tab_sel ? "> |AUDIO| LIGHTING" : "  |AUDIO| LIGHTING";
+        break;
+    case TAB_LIGHTING:
+        tab_text = tab_sel ? "> AUDIO |LIGHTING|" : "  AUDIO |LIGHTING|";
+        break;
+    default: /* TAB_CREDITS */
+        tab_text = tab_sel ? "> LIGHTING |CREDITS|" : "  LIGHTING |CREDITS|";
+        break;
     }
     font_draw_string(fb, X, Y + 16, tab_text, MENU_FG_COLOR);
 
@@ -159,7 +172,7 @@ void menu_render(uint8_t *fb) {
         draw_row(fb, 32, menu_row == 1, "AMBIENCE",  num);
         fmt_pct(SHARED_UC->step_volume, num);
         draw_row(fb, 40, menu_row == 2, "FOOTSTEPS", num);
-    } else {
+    } else if (menu_tab == TAB_LIGHTING) {
         uint8_t f = SHARED_UC->lighting_flags;
         draw_row(fb, 32, menu_row == 1, "FLICKER",
                  (f & LIGHTING_FLICKER) ? " ON" : "OFF");
@@ -167,6 +180,11 @@ void menu_render(uint8_t *fb) {
                  (f & LIGHTING_STROBE)  ? " ON" : "OFF");
         draw_row(fb, 48, menu_row == 3, "SHIMMER",
                  (f & LIGHTING_SHIMMER) ? " ON" : "OFF");
+    } else {
+        /* CREDITS — read-only build stamp (no selection cursor). */
+        font_draw_string(fb, X + 8, Y + 32, "BUILD " VERSION_BUILD_STR, MENU_FG_COLOR);
+        font_draw_string(fb, X + 8, Y + 40, "DATE  " VERSION_DATE_STR,  MENU_FG_COLOR);
+        font_draw_string(fb, X + 8, Y + 48, "SHA   " VERSION_SHA_STR,   MENU_FG_COLOR);
     }
 
     /* Hint row at y=64. */

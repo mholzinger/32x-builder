@@ -245,11 +245,13 @@ int m_main(void) {
             SHARED_UC->frame_count++;
             raycast_render();                    /* stationary lobby view */
             uint8_t *fb_text = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
-            font_draw_string(fb_text, opt_x, 24,
+            font_draw_string(fb_text, (SCREEN_W - 13 * 8) / 2, 88,
+                             "BACKROOMS 32X", 49);
+            font_draw_string(fb_text, opt_x, 104,
                              (menu_selection == 0)
                                ? "> NOCLIP FIXED MAP  "
                                : "  NOCLIP FIXED MAP  ", 49);
-            font_draw_string(fb_text, opt_x, 40,
+            font_draw_string(fb_text, opt_x, 120,
                              (menu_selection == 1)
                                ? "> NOCLIP PROCEDURAL "
                                : "  NOCLIP PROCEDURAL ", 49);

@@ -16,6 +16,9 @@ sh_src/md_start.bin
 # GCC -MMD auto-generated header dependency files
 *.d
 
+# Build version stamp — regenerated every build by the Makefile
+sh_src/version.h
+
 # Debug capture artifacts (snapshotted to share with reviewers, not history)
 screenshots/
 

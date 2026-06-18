@@ -36,6 +36,9 @@ extern partition_t partitions[NUM_PARTITIONS_MAX];
 extern int num_partitions;
 /* Per-partition wallpaper: 0 = chevron (like the walls), 1 = spotted olive. */
 extern uint8_t partition_style[NUM_PARTITIONS_MAX];
+/* Per-partition render height: 0 = full, else fraction*256 (192 = 3/4 height)
+ * for a low cubicle-style divider you see over (ceiling shows above). */
+extern uint8_t partition_height[NUM_PARTITIONS_MAX];
 /* When set, the ceiling uses the lobby's hand-authored fluorescent runs. */
 extern int g_lobby_ceiling;
 

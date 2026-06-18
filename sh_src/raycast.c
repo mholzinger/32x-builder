@@ -205,6 +205,7 @@ static fx_t pface_by[MAX_PARTITION_FACES];
 static fx_t pface_ua[MAX_PARTITION_FACES];
 static fx_t pface_ub[MAX_PARTITION_FACES];
 static uint8_t pface_style[MAX_PARTITION_FACES];   /* 0=chevron, 1=spotted */
+static uint8_t pface_height[MAX_PARTITION_FACES];  /* 0=full, 1..255 = fraction*256 */
 static int  pface_count = 0;
 /* pface_* are now read CACHED (no 0x20000000 alias). They're written once per
  * frame by the primary in partition_build_faces, then read thousands of times
@@ -220,6 +221,7 @@ static int  pface_count = 0;
 #define PFACE_UA(i)    (((volatile fx_t *)pface_ua)[i])
 #define PFACE_UB(i)    (((volatile fx_t *)pface_ub)[i])
 #define PFACE_STYLE(i) (((volatile uint8_t *)pface_style)[i])
+#define PFACE_HEIGHT(i)(((volatile uint8_t *)pface_height)[i])
 #define PFACE_COUNT    (*(volatile int *)&pface_count)
 
 /* Purge a byte range from the SH-2 cache via the 0x40000000 alias (one store
@@ -239,6 +241,7 @@ void raycast_purge_partition_cache(void) {
     purge_cache_range(pface_ua,     sizeof pface_ua);
     purge_cache_range(pface_ub,     sizeof pface_ub);
     purge_cache_range(pface_style,  sizeof pface_style);
+    purge_cache_range(pface_height, sizeof pface_height);
     purge_cache_range(&pface_count, sizeof pface_count);
 }
 
@@ -330,6 +333,11 @@ int num_partitions = 2;
 /* Per-partition wallpaper: 0 = chevron (like the main walls), 1 = spotted
  * olive divider. Indexed alongside partitions[]; set per-map. */
 uint8_t partition_style[NUM_PARTITIONS_MAX] = {0};
+/* Per-partition render height: 0 = full ceiling-to-floor (default), else a
+ * fraction*256 (e.g. 192 = 3/4) for a low cubicle-style divider anchored at
+ * the floor — the ceiling shows above it. Matches the HobbyTown reference's
+ * low office partitions. */
+uint8_t partition_height[NUM_PARTITIONS_MAX] = {0};
 #define NUM_PARTITIONS num_partitions
 #define NUM_STANDUPS (int)(sizeof(standups) / sizeof(standups[0]))
 
@@ -751,6 +759,9 @@ void raycast_load_fixed(void) {
     partitions[1] = (partition_t){ FX(20), FX(11), FX(20), FX(14) };
     num_partitions = 2;
     partition_style[0] = 1; partition_style[1] = 1;   /* both spotted polka-dot */
+    /* All fixed-map dividers full-height (clear any partial heights left by the
+     * lobby T-partition across a map change). */
+    for (int i = 0; i < NUM_PARTITIONS_MAX; i++) partition_height[i] = 0;
     /* Pepper several more free-standing dividers through the map's open rooms
      * (non-blocking — each floats with walkable ends). ~10% more wall variety. */
     place_partitions_fixed(8);
@@ -789,6 +800,11 @@ void raycast_load_lobby(void) {
      * outlet wall) = chevron, same as the main walls (per the reference). */
     partition_style[0] = 1; partition_style[1] = 1;
     partition_style[2] = 1; partition_style[3] = 0;
+    /* The T-divider (stem + arm) is a low cubicle-style partition you see over
+     * — 3/4 height (192/256) per the HobbyTown reference. The entrance walls
+     * stay full-height (they're the room boundary / outlet wall). */
+    partition_height[0] = 192; partition_height[1] = 192;
+    partition_height[2] = 0;   partition_height[3] = 0;
     g_lobby_ceiling = 1;                  /* hand-authored fluorescent runs */
     /* Outlet on entrance-R's south face (the photo's right-hand partition),
      * low and right-of-center in the spawn/menu view. Placed FX(0.16) south
@@ -1269,7 +1285,10 @@ static void partition_build_faces(void) {
             n++;
         }
         /* Tag every face of this partition with its wallpaper style. */
-        for (int k = face_start; k < n; k++) PFACE_STYLE(k) = partition_style[i];
+        for (int k = face_start; k < n; k++) {
+            PFACE_STYLE(k)  = partition_style[i];
+            PFACE_HEIGHT(k) = partition_height[i];
+        }
     }
     PFACE_COUNT = n;
 }
@@ -1798,6 +1817,7 @@ void raycast_draw_walls(int col_start, int col_end) {
          * trap that originally pushed us to projection. */
         int  partition_hit       = 0;
         int  part_style          = 0;
+        int  part_height         = 0;   /* 0 = full; else fraction*256 (partial divider) */
         fx_t partition_wallhit_w = 0;
         int  n_faces = PFACE_COUNT;
         for (int fi = 0; fi < n_faces; fi++) {
@@ -1834,6 +1854,7 @@ void raycast_draw_walls(int col_start, int col_end) {
             partition_wallhit_w = ua + FX_MUL(s, ub - ua);
             partition_hit = 1;
             part_style = PFACE_STYLE(fi);
+            part_height = PFACE_HEIGHT(fi);
             side = (dxs == 0) ? 0 : 1;   /* vertical face = E/W (X-side), horizontal = N/S */
         }
         /* Spotted olive wallpaper applies only to partitions flagged style 1
@@ -1987,7 +2008,14 @@ void raycast_draw_walls(int col_start, int col_end) {
         int lineHeight = (int)divu_read();
 
         int wall_bot  = horizon_y + ((lineHeight * eye_h) >> 8);
-        int wall_top  = wall_bot - lineHeight;
+        /* Partial-height partition: a low divider anchored at the floor. Keep
+         * the floor line (wall_bot) but shorten the drawn column so the ceiling
+         * shows above it; the texture maps over the reduced band. part_height is
+         * a fraction*256 (0 = full). */
+        int draw_lineHeight = (part_height)
+                            ? ((lineHeight * part_height) >> 8)
+                            : lineHeight;
+        int wall_top  = wall_bot - draw_lineHeight;
         int drawStart = wall_top < 0 ? 0 : wall_top;
         int drawEnd   = wall_bot >= SCREEN_H ? SCREEN_H - 1 : wall_bot;
 
@@ -2006,7 +2034,7 @@ void raycast_draw_walls(int col_start, int col_end) {
          * parallel. The shade_lut loop alone is ~256 cycles, far
          * exceeding the 39-cycle DIVU latency. */
         divu_start_u32((uint32_t)((tex_h * tile_y) << FX_SHIFT),
-                       (uint32_t)lineHeight);
+                       (uint32_t)draw_lineHeight);   /* texture maps over the drawn band */
 
         int detail_factor;
         if (spotted) {
@@ -2066,7 +2094,7 @@ void raycast_draw_walls(int col_start, int col_end) {
          * Split the inner pixel loop in two so the per-pixel hot path
          * stays branch-free: wall portion runs the textured loop, then
          * the baseboard portion writes the flat color. */
-        int base_h = lineHeight >> 5;
+        int base_h = draw_lineHeight >> 5;
         if (base_h < 1) base_h = 1;
         int base_y = wall_bot - base_h;
         int wall_end;

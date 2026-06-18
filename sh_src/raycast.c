@@ -587,7 +587,31 @@ static inline uint8_t *fb_pixels(void) {
  * un-skip into aliased noise. */
 #define CROUCH_GRAD_SHIFT(eh)  (((STAND_EYE - (int)(eh)) * 1) >> 2)
 
+/* SDRAM staging for the wall textures. The .rodata arrays live in cart ROM
+ * (0x02000000); these copies live in SDRAM .bss (0x06000000). The SH-2's 4KB
+ * write-through cache thrashes on the ~8KB of texture data, and a cache-miss
+ * refill from cart ROM is far slower than from SDRAM — so the per-column
+ * shade_lut build (which reads a tex_h-byte column slice) gets cheaper refills.
+ * Copied once; write-through means the secondary sees it with no flush. */
+static uint8_t wall_tex_hi_ram[WALL_TEX_HI_WIDTH][WALL_TEX_HI_HEIGHT];
+static uint8_t partition_tex_ram[PARTITION_TEX_WIDTH][PARTITION_TEX_HEIGHT];
+static uint8_t wall_tex_ram[WALL_TEX_WIDTH][WALL_TEX_HEIGHT];
+
+static void stage_textures_to_sdram(void) {
+    static int done = 0;
+    if (done) return;
+    done = 1;
+    const uint8_t *s; uint8_t *d; int i, n;
+    s = (const uint8_t *)wall_tex_hi;   d = (uint8_t *)wall_tex_hi_ram;
+    n = (int)sizeof(wall_tex_hi);   for (i = 0; i < n; i++) d[i] = s[i];
+    s = (const uint8_t *)partition_tex; d = (uint8_t *)partition_tex_ram;
+    n = (int)sizeof(partition_tex); for (i = 0; i < n; i++) d[i] = s[i];
+    s = (const uint8_t *)wall_tex;      d = (uint8_t *)wall_tex_ram;
+    n = (int)sizeof(wall_tex);      for (i = 0; i < n; i++) d[i] = s[i];
+}
+
 void raycast_init(void) {
+    stage_textures_to_sdram();
     build_palette();
     build_shading_tables();
     init_lights();
@@ -1895,19 +1919,19 @@ void raycast_draw_walls(int col_start, int col_end) {
         int tex_w, tex_h, tile_x, tile_y;
         if (spotted) {
             /* Spotted partitions use the olive polka-dot wallpaper. */
-            tex_data = (const uint8_t *)partition_tex;
+            tex_data = (const uint8_t *)partition_tex_ram;   /* SDRAM-staged */
             tex_w    = PARTITION_TEX_WIDTH;
             tex_h    = PARTITION_TEX_HEIGHT;
             tile_x   = PARTITION_TILE_X;
             tile_y   = PARTITION_TILE_Y;
         } else if (perpDist < WALL_LOD_THRESHOLD) {
-            tex_data = (const uint8_t *)wall_tex_hi;
+            tex_data = (const uint8_t *)wall_tex_hi_ram;     /* SDRAM-staged */
             tex_w    = WALL_TEX_HI_WIDTH;
             tex_h    = WALL_TEX_HI_HEIGHT;
             tile_x   = WALL_TILE_HI_X;
             tile_y   = WALL_TILE_HI_Y;
         } else {
-            tex_data = (const uint8_t *)wall_tex;
+            tex_data = (const uint8_t *)wall_tex_ram;        /* SDRAM-staged */
             tex_w    = WALL_TEX_WIDTH;
             tex_h    = WALL_TEX_HEIGHT;
             tile_x   = WALL_TILE_X;

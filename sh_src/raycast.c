@@ -1875,6 +1875,20 @@ void raycast_draw_walls(int col_start, int col_end) {
         /* Nothing in range — leave the ceiling/floor earlier passes painted. */
         if (!hit && !partition_hit && !fg_hit) continue;
 
+        /* See-over cost control: only draw the BACKGROUND behind a partial
+         * partition when it pokes ABOVE the partial's top (the lobby T-stem
+         * case). When the partial's band fully covers the background — every
+         * free-standing divider, whose background is a far wall — skip the
+         * background entirely and just draw the band (the cheap path, no
+         * regression). A point at world height h/256 at distance d sits above
+         * the horizon ~(h-eye)/d, so the full (h=256) background pokes above the
+         * partial (h=fg_height) iff (256-eye)*fg_t > (fg_height-eye)*perpDist. */
+        if (fg_hit) {
+            if (!hit && !partition_hit) goto fg_overlay;     /* only a partial */
+            if ((int64_t)(256 - eye_h) * fg_t
+                    <= (int64_t)(fg_height - eye_h) * perpDist) goto fg_overlay;
+        }
+
         WALL_DIST(col) = perpDist;
         /* No hard cutoff at MAX_VIEW_DIST — let walls render through
          * fog. The shade ramp clamps them to shade 15 past FOG_RAMP_DIST
@@ -2291,7 +2305,12 @@ void raycast_draw_walls(int col_start, int col_end) {
          * validated to be in front (fg_t < perpDist), so it draws over the
          * column unconditionally. Replicates the wall pass's shade/texture/
          * baseboard so it reads identical — just shorter. */
+        fg_overlay:
         if (fg_hit) {
+            /* The band is the nearest solid surface in this column, so the
+             * sprite z-buffer must read its depth — otherwise the ceiling
+             * lights (drawn later, z-tested per column) bleed through it. */
+            WALL_DIST(col) = fg_t;
             int flh  = (int)divu_u32((uint32_t)(SCREEN_H << FX_SHIFT), (uint32_t)fg_t);
             int fdlh = (flh * fg_height) >> 8;          /* band height in px */
             if (fdlh > 0) {

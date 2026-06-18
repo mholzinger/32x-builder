@@ -1884,7 +1884,12 @@ void raycast_draw_walls(int col_start, int col_end) {
          * the full (h=256) background pokes above the partial (h=fg_height) iff
          * (256-eye)*fg_t > (fg_height-eye)*perpDist. */
         if (fg_hit) {
-            int bg_pokes = (hit || partition_hit) &&
+            /* See-over ONLY when the background is a FULL-height PARTITION (the
+             * lobby T-stem) — not a solid wall. A partial divider with a wall
+             * behind it should read as a plain low divider (ceiling above), the
+             * simple look; revealing the wall over it is unwanted. So require
+             * partition_hit (a full partition), and that it pokes above. */
+            int bg_pokes = partition_hit &&
                 ((int64_t)(256 - eye_h) * fg_t
                  > (int64_t)(fg_height - eye_h) * perpDist);
             if (!bg_pokes) {

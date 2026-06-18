@@ -759,12 +759,15 @@ void raycast_load_fixed(void) {
     partitions[1] = (partition_t){ FX(20), FX(11), FX(20), FX(14) };
     num_partitions = 2;
     partition_style[0] = 1; partition_style[1] = 1;   /* both spotted polka-dot */
-    /* All fixed-map dividers full-height (clear any partial heights left by the
-     * lobby T-partition across a map change). */
-    for (int i = 0; i < NUM_PARTITIONS_MAX; i++) partition_height[i] = 0;
     /* Pepper several more free-standing dividers through the map's open rooms
      * (non-blocking — each floats with walkable ends). ~10% more wall variety. */
     place_partitions_fixed(8);
+    /* All fixed-map dividers are low 3/4-height cubicle partitions you see over
+     * (HobbyTown look). They sit in open bands with walls far behind, so the
+     * ceiling correctly shows above them — and partial columns draw fewer
+     * pixels, lightening the partition-heavy fixed map. */
+    for (int i = 0; i < NUM_PARTITIONS_MAX; i++)
+        partition_height[i] = (i < num_partitions) ? 192 : 0;
     g_lobby_ceiling = 0;
     /* Wall outlet on the east wall of the spawn corridor (col 17, west face,
      * rows 24-28), ~2 cells ahead and just right of spawn so it reads on the
@@ -800,10 +803,11 @@ void raycast_load_lobby(void) {
      * outlet wall) = chevron, same as the main walls (per the reference). */
     partition_style[0] = 1; partition_style[1] = 1;
     partition_style[2] = 1; partition_style[3] = 0;
-    /* The T-divider (stem + arm) is a low cubicle-style partition you see over
-     * — 3/4 height (192/256) per the HobbyTown reference. The entrance walls
-     * stay full-height (they're the room boundary / outlet wall). */
-    partition_height[0] = 192; partition_height[1] = 192;
+    /* T-divider per the HobbyTown reference: the N/S stem (partitions[0],
+     * vertical) runs full height to the ceiling; the E/W arm (partitions[1],
+     * horizontal) is a low 3/4-height cubicle divider you see over. Entrance
+     * walls stay full (room boundary / outlet wall). */
+    partition_height[0] = 0;   partition_height[1] = 192;   /* stem full, arm 3/4 */
     partition_height[2] = 0;   partition_height[3] = 0;
     g_lobby_ceiling = 1;                  /* hand-authored fluorescent runs */
     /* Outlet on entrance-R's south face (the photo's right-hand partition),

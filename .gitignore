@@ -40,3 +40,6 @@ images/*
 # Canonical design reference (the HobbyTown photo the whole look is based on).
 !images/HobbyTown_USA_Oshkosh_interior_under_construction_2002_(The_Backrooms).jpg
 !images/outlet.jpg
+
+# Reference source code
+srcref/

@@ -1005,7 +1005,7 @@ static void draw_standups(uint8_t *fb,
                           fx_t dirX, fx_t dirY, fx_t planeX, fx_t planeY) {
     fx_t det = FX_MUL(planeX, dirY) - FX_MUL(dirX, planeY);
     if (det == 0) return;
-    fx_t inv_det = FX_DIV(FX_ONE, det);
+    fx_t inv_det = fx_div_hw(FX_ONE, det);   /* det == -0.66 const; bounded */
     /* Standup feet sit on the floor → anchor floor_y to the shifted
      * horizon so they slide with the wall/carpet when the camera pitches. */
     int horizon_y = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
@@ -1230,7 +1230,7 @@ static void draw_lights(uint8_t *fb,
                         fx_t dirX, fx_t dirY, fx_t planeX, fx_t planeY) {
     fx_t det = FX_MUL(planeX, dirY) - FX_MUL(dirX, planeY);
     if (det == 0) return;
-    fx_t inv_det = FX_DIV(FX_ONE, det);
+    fx_t inv_det = fx_div_hw(FX_ONE, det);   /* det == -0.66 const; bounded */
     /* Ceiling tiles project against the shifted horizon so they stay
      * on the ceiling when the camera pitches up or down. */
     int horizon_y = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
@@ -1639,7 +1639,7 @@ void raycast_draw_walls(int col_start, int col_end) {
     int pcolmin[MAX_PARTITION_FACES], pcolmax[MAX_PARTITION_FACES];
     {
         fx_t pdet = FX_MUL(planeX, dirY) - FX_MUL(dirX, planeY);
-        fx_t pinv = (pdet != 0) ? FX_DIV(FX_ONE, pdet) : 0;
+        fx_t pinv = (pdet != 0) ? fx_div_hw(FX_ONE, pdet) : 0;
         int nf = PFACE_COUNT;
         for (int fi = 0; fi < nf; fi++) {
             fx_t sax = PFACE_AX(fi) - px, say = PFACE_AY(fi) - py;
@@ -1673,10 +1673,15 @@ void raycast_draw_walls(int col_start, int col_end) {
         int mapX = FX_INT(px);
         int mapY = FX_INT(py);
 
-        fx_t deltaDistX = (rayDirX == 0) ? 0x7FFFFFFF
-                                         : FX_DIV(FX_ONE, FX_ABS(rayDirX));
-        fx_t deltaDistY = (rayDirY == 0) ? 0x7FFFFFFF
-                                         : FX_DIV(FX_ONE, FX_ABS(rayDirY));
+        /* deltaDist = 1/|rayDir| in 16.16. Hardware DIVU (fx_div_hw, ~39 cyc)
+         * vs the libgcc int64 FX_DIV (~200 cyc) — runs twice per column. The
+         * |rayDir| < 4 guard (was == 0) keeps fx_div_hw's quotient inside 31
+         * bits (it has no overflow saturation); a sub-0.00006 ray is treated as
+         * axis-parallel ("never crosses"), same intent as the old zero guard. */
+        fx_t deltaDistX = (FX_ABS(rayDirX) < 4) ? 0x7FFFFFFF
+                                                : fx_div_hw(FX_ONE, FX_ABS(rayDirX));
+        fx_t deltaDistY = (FX_ABS(rayDirY) < 4) ? 0x7FFFFFFF
+                                                : fx_div_hw(FX_ONE, FX_ABS(rayDirY));
 
         int stepX, stepY;
         fx_t sideDistX, sideDistY;

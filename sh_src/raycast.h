@@ -30,7 +30,7 @@ extern uint8_t world_map[MAP_H][MAP_W];
 
 /* Free-standing wallpaper partitions. Same data shape as in raycast.c.
  * procgen writes into partitions[] / sets num_partitions at boot. */
-#define NUM_PARTITIONS_MAX  8
+#define NUM_PARTITIONS_MAX  12
 typedef struct { fx_t x1, y1, x2, y2; } partition_t;
 extern partition_t partitions[NUM_PARTITIONS_MAX];
 extern int num_partitions;

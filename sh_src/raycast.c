@@ -265,19 +265,26 @@ typedef struct {
 } standup_t;
 
 static const standup_t standups[] = {
-    /* Neanderthal ~5 cells north of spawn in the col-16 spine corridor.
-     * Solid, walkable-through, the "iconic Backrooms cardboard cutout"
-     * moment. Audio-positioned via the Voyager-record hello loop. */
-    { FX(16.5), FX(23.5), 64,  0 },
+    /* Neanderthal ~5 cells north of spawn, pulled west to hug the col-15
+     * flat wall (x=16 face) so it stands against the wall and leaves the east
+     * side of the col-16 corridor walkable. Solid (collides), the "iconic
+     * Backrooms cardboard cutout" moment. Audio via the Voyager hello loop. */
+    { FX(16.3), FX(23.5), 64,  0 },
 };
 
 /* Wall-mounted decals (currently just the lobby outlet): small billboards
  * anchored at a height fraction z (0=floor, 1=ceiling) instead of the floor.
  * Populated per-map — raycast_load_lobby sets one; load_fixed/procgen clear
  * num_decals so the outlet only shows in the lobby. z is the plate CENTRE. */
-typedef struct { fx_t x, y, z; } decal_t;
-#define DECAL_OUTLET_H FX(0.098)  /* outlet plate height as a fraction of wall (30% smaller) */
-decal_t decals[4];
+/* axis: which wall the plate lies flat on. 1 = wall runs along X (plate spans
+ * X, normal +/-Y, e.g. the lobby entrance wall); 0 = wall runs along Y (plate
+ * spans Y, normal +/-X, e.g. a side-corridor wall). Drives the foreshortened,
+ * wall-flat projection in draw_decals so the plate doesn't pivot to face the
+ * camera like a billboard. */
+typedef struct { fx_t x, y, z; uint8_t axis; } decal_t;
+#define DECAL_OUTLET_H  FX(0.098)  /* outlet plate height as a fraction of wall (30% smaller) */
+#define DECAL_OUTLET_HW FX(0.031)  /* half the plate's world width; it lies flat on its wall */
+decal_t decals[16];
 int     num_decals = 0;
 
 /* Free-standing wallpaper partitions ("fake walls"). Defined by two
@@ -462,9 +469,9 @@ void raycast_set_brightness(int lvl) {
     Hw32xSetBGColor(0, 0, 0, 0);
     for (int i = 0; i < SHADE_LEVELS; i++) {
         Hw32xSetBGColor(WALL_BASE + i,
-            MIX(30,FOG_R,i)*lvl/FADE_STEPS, MIX(27,FOG_G,i)*lvl/FADE_STEPS, MIX(13,FOG_B,i)*lvl/FADE_STEPS);
+            MIX(30,FOG_R,i)*lvl/FADE_STEPS, MIX(28,FOG_G,i)*lvl/FADE_STEPS, MIX(18,FOG_B,i)*lvl/FADE_STEPS);
         Hw32xSetBGColor(FLOOR_BASE + i,
-            MIX(27,FOG_R,i)*lvl/FADE_STEPS, MIX(22,FOG_G,i)*lvl/FADE_STEPS, MIX(11,FOG_B,i)*lvl/FADE_STEPS);
+            MIX(25,FOG_R,i)*lvl/FADE_STEPS, MIX(21,FOG_G,i)*lvl/FADE_STEPS, MIX(15,FOG_B,i)*lvl/FADE_STEPS);
         Hw32xSetBGColor(CEIL_BASE + i,
             MIX(25,FOG_R,i)*lvl/FADE_STEPS, MIX(23,FOG_G,i)*lvl/FADE_STEPS, MIX(16,FOG_B,i)*lvl/FADE_STEPS);
     }
@@ -491,23 +498,27 @@ void raycast_set_brightness(int lvl) {
 
 static void build_palette(void) {
     Hw32xSetBGColor(0, 0, 0, 0);
-    /* Walls: stronger yellow eggshell. R bumped to 30, B dropped to 13
-     * (R-B gap 17) — wallpaper now clearly yellow while still bright
-     * cream rather than dingy mustard. */
+    /* Walls: milky cream-yellow. Desaturated from the old gold (30,27,13,
+     * R-B gap 17) by lifting B to 18 (gap 12, sat ~0.40) — reads as pale
+     * old wallpaper under fluorescent light rather than school-bus gold,
+     * matching the washed-out HobbyTown reference. */
     for (int i = 0; i < SHADE_LEVELS; i++) {
         Hw32xSetBGColor(WALL_BASE + i,
                         MIX(30, FOG_R, i),
-                        MIX(27, FOG_G, i),
-                        MIX(13, FOG_B, i));
+                        MIX(28, FOG_G, i),
+                        MIX(18, FOG_B, i));
     }
-    /* Carpet: yellower stained-mustard brown. Pulled back into the yellow
-     * family with R high and B much lower for the saturated Backrooms look,
-     * still slightly less bright than walls so the seam reads. */
+    /* Carpet: muted warm tan, hue leaned back toward the original warm-orange
+     * cast while keeping the desaturated look. Journey: old Tang (27,22,11,
+     * sat ~0.59) -> flat tan (23,21,17, ~0.26, too dead) -> (24,21,16, ~0.33)
+     * -> here (25,21,15): R-G gap widened to 4 (the warm/orange character)
+     * and B nudged down, sat ~0.40 — warmer than neutral tan but well clear
+     * of the old orange. Still a touch darker than the walls so the seam reads. */
     for (int i = 0; i < SHADE_LEVELS; i++) {
         Hw32xSetBGColor(FLOOR_BASE + i,
-                        MIX(27, FOG_R, i),
-                        MIX(22, FOG_G, i),
-                        MIX(11, FOG_B, i));
+                        MIX(25, FOG_R, i),
+                        MIX(21, FOG_G, i),
+                        MIX(15, FOG_B, i));
     }
     /* Ceiling: pulled further into the yellow family — was reading too
      * "white drop ceiling" against the warm walls. B dropped from 18 to
@@ -592,6 +603,94 @@ void raycast_init(void) {
  * raycast_init() (or re-call init_lights via raycast_init) so the
  * ceiling-fixture grid is laid over the new map. */
 
+/* Pepper outlets across the live world_map's visible wall faces (a wall cell
+ * with an open orthogonal neighbour), appending to decals[] until it holds
+ * `target` total. Two passes: count candidates, then place every stride-th so
+ * they spread across the whole map instead of clustering in the first rows.
+ * Each plate sits at the face's grid plane, centred on the cell, receptacle
+ * height. This is the hand-map analogue of the procgen placement to come. */
+static void place_outlets_fixed(int target) {
+    if (num_decals >= target) return;
+    int count = 0;
+    for (int y = 1; y < MAP_H - 1; y++)
+        for (int x = 1; x < MAP_W - 1; x++) {
+            if (world_map[y][x] == 0) continue;
+            if (world_map[y][x-1] == 0 || world_map[y][x+1] == 0 ||
+                world_map[y-1][x] == 0 || world_map[y+1][x] == 0) count++;
+        }
+    if (count == 0) return;
+    int stride = count / (target - num_decals);
+    if (stride < 1) stride = 1;
+
+    int seen = 0;
+    for (int y = 1; y < MAP_H - 1 && num_decals < target; y++)
+        for (int x = 1; x < MAP_W - 1 && num_decals < target; x++) {
+            if (world_map[y][x] == 0) continue;
+            uint8_t axis; fx_t px, py;
+            fx_t cx = ((fx_t)x << FX_SHIFT) + (FX_ONE >> 1);
+            fx_t cy = ((fx_t)y << FX_SHIFT) + (FX_ONE >> 1);
+            if      (world_map[y][x-1] == 0) { axis = 0; px = (fx_t)x     << FX_SHIFT; py = cy; }
+            else if (world_map[y][x+1] == 0) { axis = 0; px = (fx_t)(x+1) << FX_SHIFT; py = cy; }
+            else if (world_map[y-1][x] == 0) { axis = 1; px = cx; py = (fx_t)y     << FX_SHIFT; }
+            else if (world_map[y+1][x] == 0) { axis = 1; px = cx; py = (fx_t)(y+1) << FX_SHIFT; }
+            else continue;
+            if ((seen++ % stride) != 0) continue;
+            decals[num_decals++] = (decal_t){ px, py, FX(0.20), axis };
+        }
+}
+
+/* True if (mx,my) is >= 5 cells from every existing partition centre, so newly
+ * placed dividers spread out instead of piling up. */
+static int partition_clear_of_others(fx_t mx, fx_t my) {
+    for (int i = 0; i < num_partitions; i++) {
+        fx_t ox = (partitions[i].x1 + partitions[i].x2) >> 1;
+        fx_t oy = (partitions[i].y1 + partitions[i].y2) >> 1;
+        if (FX_ABS(mx - ox) < FX(5) && FX_ABS(my - oy) < FX(5)) return 0;
+    }
+    return 1;
+}
+
+/* Pepper a few free-standing partition dividers into the live world_map's open
+ * areas, appending to partitions[] until it holds `target` total. A candidate
+ * needs a fully-open 2-row x (L+2)-col block (both sides of the divider plus a
+ * cell past each end) so the divider floats in the room and you can always walk
+ * around either end — it never seals a path. Alternating wallpaper style. The
+ * hand-map analogue of the procgen partition placement to come. */
+static void place_partitions_fixed(int target) {
+    const int L = 3;
+    uint8_t style = 0;
+    /* Horizontal dividers: line y=gy, span cols cx..cx+L. */
+    for (int gy = 3; gy < MAP_H - 3 && num_partitions < target; gy++)
+        for (int cx = 2; cx < MAP_W - 2 - L && num_partitions < target; cx++) {
+            int ok = 1;
+            for (int x = cx - 1; x <= cx + L && ok; x++)
+                if (world_map[gy-1][x] || world_map[gy][x]) ok = 0;
+            if (!ok) continue;
+            fx_t mx = ((fx_t)cx << FX_SHIFT) + ((fx_t)L << (FX_SHIFT - 1));
+            fx_t my = (fx_t)gy << FX_SHIFT;
+            if (!partition_clear_of_others(mx, my)) continue;
+            partitions[num_partitions] = (partition_t){
+                (fx_t)cx << FX_SHIFT, my, (fx_t)(cx + L) << FX_SHIFT, my };
+            partition_style[num_partitions] = style & 1; style++;
+            num_partitions++;
+        }
+    /* Vertical dividers: line x=gx, span rows cy..cy+L. */
+    for (int gx = 3; gx < MAP_W - 3 && num_partitions < target; gx++)
+        for (int cy = 2; cy < MAP_H - 2 - L && num_partitions < target; cy++) {
+            int ok = 1;
+            for (int y = cy - 1; y <= cy + L && ok; y++)
+                if (world_map[y][gx-1] || world_map[y][gx]) ok = 0;
+            if (!ok) continue;
+            fx_t mx = (fx_t)gx << FX_SHIFT;
+            fx_t my = ((fx_t)cy << FX_SHIFT) + ((fx_t)L << (FX_SHIFT - 1));
+            if (!partition_clear_of_others(mx, my)) continue;
+            partitions[num_partitions] = (partition_t){
+                mx, (fx_t)cy << FX_SHIFT, mx, (fx_t)(cy + L) << FX_SHIFT };
+            partition_style[num_partitions] = style & 1; style++;
+            num_partitions++;
+        }
+}
+
 /* The hand-tuned 32x32 Backrooms map + its two dividers. */
 void raycast_load_fixed(void) {
     for (int r = 0; r < MAP_H; r++)
@@ -600,9 +699,21 @@ void raycast_load_fixed(void) {
     partitions[0] = (partition_t){ FX(22), FX(22), FX(26), FX(22) };
     partitions[1] = (partition_t){ FX(20), FX(11), FX(20), FX(14) };
     num_partitions = 2;
-    partition_style[0] = 0; partition_style[1] = 0;   /* both chevron */
+    partition_style[0] = 1; partition_style[1] = 1;   /* both spotted polka-dot */
+    /* Pepper several more free-standing dividers through the map's open rooms
+     * (non-blocking — each floats with walkable ends). ~10% more wall variety. */
+    place_partitions_fixed(8);
     g_lobby_ceiling = 0;
-    num_decals = 0;                       /* outlet is lobby-only */
+    /* Wall outlet on the east wall of the spawn corridor (col 17, west face,
+     * rows 24-28), ~2 cells ahead and just right of spawn so it reads on the
+     * way out. X 0.16 west of the X=17 face so it sits just in front; z=0.20
+     * receptacle height (same as the lobby outlet). */
+    /* One curated outlet on the spawn-corridor wall (col-17 west face, x=17.0
+     * plane, y=26.5 — ~2 cells ahead-right of spawn), then ~11 more peppered
+     * across the map's visible wall faces. */
+    num_decals = 0;
+    decals[num_decals++] = (decal_t){ FX(17.0), FX(26.5), FX(0.20), 0 };
+    place_outlets_fixed(12);
     player.x = FX(16.5); player.y = FX(28.5); player.angle = 192;
 }
 
@@ -632,7 +743,10 @@ void raycast_load_lobby(void) {
      * low and right-of-center in the spawn/menu view. Placed FX(0.16) south
      * of the y=5 wall line so it sits just in front of the face, not inside
      * it; z=0.15 = standard receptacle height up the 1.0-tall wall. */
-    decals[0] = (decal_t){ FX(5.33), FX(6.16), FX(0.20) };
+    /* Outlet embedded in entrance-R's south face (the partition line y=6),
+     * centred at x=5.33. axis 1 = the wall runs along X, so the plate spans X
+     * on the y=6 plane. z=0.20 receptacle height. */
+    decals[0] = (decal_t){ FX(5.33), FX(6.0), FX(0.20), 1 };
     num_decals = 1;
     player.x = FX(5.0); player.y = FX(7.6); player.angle = 184;
 }
@@ -694,6 +808,22 @@ static int partition_collides(fx_t px, fx_t py) {
     return 0;
 }
 
+/* Returns 1 if (px, py) would intersect a SOLID standup (the cardboard
+ * cutout), treated as a small axis-aligned box + player radius. Silhouette
+ * "watcher" standups stay intangible — they're meant to be a glimpse, not a
+ * wall. Makes the cutout a real free-standing obstacle you bump into. */
+#define STANDUP_HALF_THICK FX(0.12)   /* slim box so a 1-cell corridor stays squeezable past */
+static int standup_collides(fx_t px, fx_t py) {
+    fx_t margin = STANDUP_HALF_THICK + PLAYER_RADIUS;
+    for (int i = 0; i < NUM_STANDUPS; i++) {
+        if (standups[i].silhouette) continue;
+        fx_t dx = px - standups[i].x;
+        fx_t dy = py - standups[i].y;
+        if (dx > -margin && dx < margin && dy > -margin && dy < margin) return 1;
+    }
+    return 0;
+}
+
 static int position_clear(fx_t px, fx_t py) {
     /* Check all 4 corners of the player's bounding box against wall
      * cells. The 4-CARDINAL check (N/S/E/W edges) missed diagonal
@@ -713,6 +843,7 @@ static int position_clear(fx_t px, fx_t py) {
     if (!cell_passable(xL, yB)) return 0;
     if (!cell_passable(xR, yB)) return 0;
     if (partition_collides(px, py)) return 0;
+    if (standup_collides(px, py))   return 0;
     return 1;
 }
 
@@ -859,62 +990,10 @@ void player_update(void) {
  * horizon places the figure's feet on the floor and head 1 world unit up.
  * Front/back is dot(player - standup, standup_forward) — positive = front
  * (sample texture), negative = back (cardboard fill). */
-/* Wall-mounted outlet decals. Same camera-space billboard transform as the
- * standups, but anchored at a height fraction (z, plate centre) rather than
- * the floor, and sized by DECAL_OUTLET_H. Per-stripe wall z-test so a nearer
- * wall occludes it; the decal sits just in front of its partition so it isn't
- * self-occluded. Full opaque rect (an outlet plate IS a rectangle). */
-static void draw_decals(uint8_t *fb,
-                        fx_t dirX, fx_t dirY, fx_t planeX, fx_t planeY) {
-    if (num_decals <= 0) return;
-    fx_t det = FX_MUL(planeX, dirY) - FX_MUL(dirX, planeY);
-    if (det == 0) return;
-    fx_t inv_det = FX_DIV(FX_ONE, det);
-    int horizon_y = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
-    int eye_focal = (SCREEN_H * (int)SHARED_UC->eye_h) >> 8;
-
-    for (int i = 0; i < num_decals; i++) {
-        fx_t sx = decals[i].x - player.x;
-        fx_t sy = decals[i].y - player.y;
-        fx_t transformX = FX_MUL(inv_det, FX_MUL( dirY, sx) - FX_MUL( dirX, sy));
-        fx_t transformY = FX_MUL(inv_det, FX_MUL(-planeY, sx) + FX_MUL( planeX, sy));
-        if (transformY < FX(0.08))       continue;   /* essentially on top of it */
-        if (transformY >= MAX_VIEW_DIST) continue;   /* beyond fog */
-
-        fx_t ratio = FX_DIV(transformX, transformY);
-        int screenX = (SCREEN_W >> 1)
-                    + (int)(((int32_t)(SCREEN_W >> 1) * ratio) >> FX_SHIFT);
-
-        int spriteHeight = (int)(((int64_t)SCREEN_H * DECAL_OUTLET_H) / transformY);
-        int spriteWidth  = spriteHeight * OUTLET_TEX_WIDTH / OUTLET_TEX_HEIGHT;
-        if (spriteHeight < 1 || spriteWidth < 1) continue;
-
-        int floor_y  = horizon_y + (int)(((int32_t)eye_focal << FX_SHIFT) / transformY);
-        int center_y = floor_y - (int)(((int64_t)SCREEN_H * decals[i].z) / transformY);
-        int drawStartY_u = center_y - (spriteHeight >> 1);
-        int drawStartX_u = screenX  - (spriteWidth  >> 1);
-        int drawEndY_u   = drawStartY_u + spriteHeight;
-        int drawEndX_u   = drawStartX_u + spriteWidth;
-
-        int drawStartY = drawStartY_u < 0 ? 0 : drawStartY_u;
-        int drawEndY   = drawEndY_u >= SCREEN_H ? SCREEN_H - 1 : drawEndY_u;
-        int drawStartX = drawStartX_u < 0 ? 0 : drawStartX_u;
-        int drawEndX   = drawEndX_u >= SCREEN_W ? SCREEN_W - 1 : drawEndX_u;
-
-        for (int stripe = drawStartX; stripe <= drawEndX; stripe++) {
-            if (transformY >= WALL_DIST(stripe)) continue;
-            int texX = ((stripe - drawStartX_u) * OUTLET_TEX_WIDTH) / spriteWidth;
-            if (texX < 0 || texX >= OUTLET_TEX_WIDTH) continue;
-            uint8_t *p = fb + drawStartY * SCREEN_W + stripe;
-            for (int y = drawStartY; y <= drawEndY; y++) {
-                int texY = ((y - drawStartY_u) * OUTLET_TEX_HEIGHT) / spriteHeight;
-                if (texY >= 0 && texY < OUTLET_TEX_HEIGHT)
-                    *p = (uint8_t)(OUTLET_BASE + outlet_tex[texY][texX]);
-                p += SCREEN_W;
-            }
-        }
-    }
-}
+/* The outlet is no longer a separate object — it is painted INTO the wall
+ * column during the wall raster (see the wall-embedded outlet pass at the end
+ * of raycast_draw_walls). decals[] just carries where/how big it is; there is
+ * no billboard pass any more. */
 
 static void draw_standups(uint8_t *fb,
                           fx_t dirX, fx_t dirY, fx_t planeX, fx_t planeY) {
@@ -933,7 +1012,7 @@ static void draw_standups(uint8_t *fb,
                             FX_MUL( dirY,  sx) - FX_MUL( dirX,  sy));
         fx_t transformY = FX_MUL(inv_det,
                             FX_MUL(-planeY, sx) + FX_MUL( planeX, sy));
-        if (transformY < FX(0.5))     continue;     /* behind / too close */
+        if (transformY < FX(0.2))     continue;     /* behind / right on top of it */
         if (transformY >= MAX_VIEW_DIST) continue;  /* beyond fog */
         /* Watcher: vanishes when you get within 3 cells. Iconic Backrooms
          * "did I see something?" tell. */
@@ -1542,6 +1621,43 @@ void raycast_draw_walls(int col_start, int col_end) {
      * standing (symmetric, lineHeight/2 below); lower drops the eye toward
      * the floor (crawling) so the floor sits close and the ceiling looms. */
     int eye_h = (int)SHARED_UC->eye_h;
+
+    /* ── Partition screen-span cull ─────────────────────────────────────────
+     * Project each visible partition face's two endpoints to screen columns
+     * once, so the per-column intersection loop below can skip any face whose
+     * span doesn't cover the current column — turning partition cost from
+     * full-screen × faces into just-the-columns-they-occupy. This is what makes
+     * partitions closer to first-class vs grid walls. An endpoint at/behind the
+     * camera plane can't be projected, so that face falls back to the full
+     * column range (correctness over the optimization for that one face). */
+    int pcolmin[MAX_PARTITION_FACES], pcolmax[MAX_PARTITION_FACES];
+    {
+        fx_t pdet = FX_MUL(planeX, dirY) - FX_MUL(dirX, planeY);
+        fx_t pinv = (pdet != 0) ? FX_DIV(FX_ONE, pdet) : 0;
+        int nf = PFACE_COUNT;
+        for (int fi = 0; fi < nf; fi++) {
+            fx_t sax = PFACE_AX(fi) - px, say = PFACE_AY(fi) - py;
+            fx_t sbx = PFACE_BX(fi) - px, sby = PFACE_BY(fi) - py;
+            fx_t tya = FX_MUL(pinv, FX_MUL(-planeY, sax) + FX_MUL(planeX, say));
+            fx_t tyb = FX_MUL(pinv, FX_MUL(-planeY, sbx) + FX_MUL(planeX, sby));
+            if (tya < FX(0.05) || tyb < FX(0.05)) {        /* an end is at/behind us */
+                pcolmin[fi] = col_start; pcolmax[fi] = col_end - 1;
+                continue;
+            }
+            fx_t txa = FX_MUL(pinv, FX_MUL(dirY, sax) - FX_MUL(dirX, say));
+            fx_t txb = FX_MUL(pinv, FX_MUL(dirY, sbx) - FX_MUL(dirX, sby));
+            int xa = (SCREEN_W >> 1)
+                   + (int)(((int64_t)(SCREEN_W >> 1) * FX_DIV(txa, tya)) >> FX_SHIFT);
+            int xb = (SCREEN_W >> 1)
+                   + (int)(((int64_t)(SCREEN_W >> 1) * FX_DIV(txb, tyb)) >> FX_SHIFT);
+            int lo = (xa < xb ? xa : xb) - 1;            /* 1-col margin each side */
+            int hi = (xa > xb ? xa : xb) + 1;
+            if (lo < col_start) lo = col_start;
+            if (hi >= col_end)  hi = col_end - 1;
+            pcolmin[fi] = lo; pcolmax[fi] = hi;          /* lo>hi ⇒ off this half, skipped */
+        }
+    }
+
     for (int col = col_start; col < col_end; col++) {
         WALL_DIST(col) = 0x7FFFFFFF;
         fx_t cameraX = cameraX_table[col];
@@ -1620,6 +1736,9 @@ void raycast_draw_walls(int col_start, int col_end) {
         fx_t partition_wallhit_w = 0;
         int  n_faces = PFACE_COUNT;
         for (int fi = 0; fi < n_faces; fi++) {
+            /* Screen-span cull: skip the divide entirely for faces this column
+             * can't possibly cross (precomputed above). */
+            if (col < pcolmin[fi] || col > pcolmax[fi]) continue;
             fx_t ax = PFACE_AX(fi);
             fx_t ay = PFACE_AY(fi);
             fx_t bx = PFACE_BX(fi);
@@ -2005,6 +2124,64 @@ void raycast_draw_walls(int col_start, int col_end) {
             *p = base_color;
             p += SCREEN_W;
         }
+
+        /* ── Wall-embedded outlet ───────────────────────────────────────────
+         * Paint the outlet plate INTO this finished wall column when the hit
+         * point lands on a decal's footprint. It draws at the wall's own depth,
+         * so it's genuinely part of the surface (correct perspective + occlusion)
+         * instead of a billboard. Cheap: only runs when the map placed a decal,
+         * and the footprint test rejects almost every column with one compare. */
+        if (num_decals > 0) {
+            fx_t hx = px + FX_MUL(perpDist, rayDirX);
+            fx_t hy = py + FX_MUL(perpDist, rayDirY);
+            /* Plane tolerance must exceed the partition HALF_THICK (0.15) so a
+             * decal placed on the partition CENTRE line still matches its thick
+             * face (the visible face sits +/-0.15 off centre). Solid walls hit
+             * exact integer planes, so this wide band never false-matches them
+             * (the nearest other plane is a whole cell away). */
+            for (int d = 0; d < num_decals; d++) {
+                fx_t along;
+                if (decals[d].axis) {                 /* wall plane = Y, plate spans X */
+                    if (FX_ABS(hy - decals[d].y) > FX(0.2)) continue;
+                    along = hx - (decals[d].x - DECAL_OUTLET_HW);
+                } else {                              /* wall plane = X, plate spans Y */
+                    if (FX_ABS(hx - decals[d].x) > FX(0.2)) continue;
+                    along = hy - (decals[d].y - DECAL_OUTLET_HW);
+                }
+                if (along < 0 || along > 2 * DECAL_OUTLET_HW) continue;
+                int otx = (int)(((int64_t)along * OUTLET_TEX_WIDTH)
+                                / (2 * DECAL_OUTLET_HW));
+                if (otx < 0) otx = 0;
+                else if (otx >= OUTLET_TEX_WIDTH) otx = OUTLET_TEX_WIDTH - 1;
+
+                /* Vertical band: centre at height fraction z, height
+                 * DECAL_OUTLET_H, projected through lineHeight. wall_bot is the
+                 * floor line (fraction 0); up the wall subtracts lineHeight. */
+                int oc = wall_bot - (int)(((int64_t)lineHeight * decals[d].z) >> FX_SHIFT);
+                int oh = (int)(((int64_t)lineHeight * DECAL_OUTLET_H) >> (FX_SHIFT + 1));
+                if (oh < 1) oh = 1;
+                int oy0  = oc - oh, oy1 = oc + oh;
+                int span = oy1 - oy0;
+                int ylo  = oy0 < drawStart ? drawStart : oy0;
+                int yhi  = oy1 > drawEnd   ? drawEnd   : oy1;
+                uint8_t *po = (uint8_t *)fb + col + ylo * SCREEN_W;
+                /* Shade the plate with the wall it's mounted on: subtract the
+                 * wall's fog/light shade (0..15, already folded with cell_light)
+                 * scaled into the 5-bucket outlet ramp, so a far or unlit outlet
+                 * darkens with its wall instead of staying bright in the fog. */
+                int oshade = (wall_shade * 5) >> 4;
+                for (int yy = ylo; yy <= yhi; yy++) {
+                    int oty = ((yy - oy0) * OUTLET_TEX_HEIGHT) / span;
+                    if ((unsigned)oty < (unsigned)OUTLET_TEX_HEIGHT) {
+                        int ob = (int)outlet_tex[oty][otx] - oshade;
+                        if (ob < 0) ob = 0;
+                        *po = (uint8_t)(OUTLET_BASE + ob);
+                    }
+                    po += SCREEN_W;
+                }
+                break;   /* one outlet per column */
+            }
+        }
     }
 }
 
@@ -2168,7 +2345,6 @@ void raycast_render(void) {
      * overrides perpDist if a partition is closer. Drops to the same
      * column-rendering code path as regular walls. */
     draw_standups(fb, dirX, dirY, planeX, planeY);
-    draw_decals(fb, dirX, dirY, planeX, planeY);
 
     /* Vertical head bob via framebuffer line table.
      *

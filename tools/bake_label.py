@@ -30,6 +30,13 @@ def main():
     pal = q.getpalette()[:N * 3]
     pal5 = [(pal[i * 3] >> 3, pal[i * 3 + 1] >> 3, pal[i * 3 + 2] >> 3)
             for i in range(N)]
+    # The "32X" red is a small area, so MEDIANCUT (which minimises TOTAL error,
+    # and the big blue field dominates) merges it into a dark muddy maroon.
+    # Re-saturate any palette entry that is clearly red-dominant but dark — the
+    # X — into a vivid 32X red so it matches the hi-res hero label. Light tans
+    # (cardboard/SEGA) have r >= 16 and are left alone.
+    pal5 = [(16, 6, 6) if (r > g and r >= b and r < 16 and r - g >= 2) else (r, g, b)
+            for (r, g, b) in pal5]
     idx = q.tobytes()                          # LW*LH values 0..N-1
 
     with open(OUT, "w") as f:

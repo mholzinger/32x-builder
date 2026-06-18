@@ -1703,10 +1703,13 @@ void raycast_draw_walls(int col_start, int col_end) {
             }
             fx_t txa = FX_MUL(pinv, FX_MUL(dirY, sax) - FX_MUL(dirX, say));
             fx_t txb = FX_MUL(pinv, FX_MUL(dirY, sbx) - FX_MUL(dirX, sby));
+            /* tya/tyb >= 0.05 (guarded above) bounds the quotient, so the
+             * hardware divide is safe and replaces the last software FX_DIV in
+             * the wall pass. */
             int xa = (SCREEN_W >> 1)
-                   + (int)(((int64_t)(SCREEN_W >> 1) * FX_DIV(txa, tya)) >> FX_SHIFT);
+                   + (int)(((int64_t)(SCREEN_W >> 1) * fx_div_hw(txa, tya)) >> FX_SHIFT);
             int xb = (SCREEN_W >> 1)
-                   + (int)(((int64_t)(SCREEN_W >> 1) * FX_DIV(txb, tyb)) >> FX_SHIFT);
+                   + (int)(((int64_t)(SCREEN_W >> 1) * fx_div_hw(txb, tyb)) >> FX_SHIFT);
             int lo = (xa < xb ? xa : xb) - 1;            /* 1-col margin each side */
             int hi = (xa > xb ? xa : xb) + 1;
             if (lo < col_start) lo = col_start;

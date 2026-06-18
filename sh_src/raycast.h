@@ -58,6 +58,9 @@ void raycast_shimmer(void);
 void raycast_draw_ceiling_grid(int col_start, int col_end);
 void raycast_draw_carpet(int col_start, int col_end);
 void raycast_draw_walls(int col_start, int col_end);
+/* Secondary CPU: drop stale partition-face cache lines before the wall pass so
+ * it re-reads the primary's fresh per-frame writes. Primary never calls this. */
+void raycast_purge_partition_cache(void);
 void raycast_clear_half(int col_start, int col_end);
 
 #endif

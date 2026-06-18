@@ -206,14 +206,41 @@ static fx_t pface_ua[MAX_PARTITION_FACES];
 static fx_t pface_ub[MAX_PARTITION_FACES];
 static uint8_t pface_style[MAX_PARTITION_FACES];   /* 0=chevron, 1=spotted */
 static int  pface_count = 0;
-#define PFACE_AX(i)    (((volatile fx_t *)((uintptr_t)pface_ax | 0x20000000))[i])
-#define PFACE_AY(i)    (((volatile fx_t *)((uintptr_t)pface_ay | 0x20000000))[i])
-#define PFACE_BX(i)    (((volatile fx_t *)((uintptr_t)pface_bx | 0x20000000))[i])
-#define PFACE_BY(i)    (((volatile fx_t *)((uintptr_t)pface_by | 0x20000000))[i])
-#define PFACE_UA(i)    (((volatile fx_t *)((uintptr_t)pface_ua | 0x20000000))[i])
-#define PFACE_UB(i)    (((volatile fx_t *)((uintptr_t)pface_ub | 0x20000000))[i])
-#define PFACE_STYLE(i) (((volatile uint8_t *)((uintptr_t)pface_style | 0x20000000))[i])
-#define PFACE_COUNT    (*(volatile int *)((uintptr_t)&pface_count | 0x20000000))
+/* pface_* are now read CACHED (no 0x20000000 alias). They're written once per
+ * frame by the primary in partition_build_faces, then read thousands of times
+ * in the per-ray partition loop on both CPUs — uncached reads (~12 cyc) were
+ * pure waste. Write-through cache pushes the primary's writes to SDRAM; the
+ * secondary purges these lines once per frame (raycast_purge_partition_cache)
+ * before the wall pass so it re-reads fresh. The primary wrote them this frame,
+ * so its cache is already current. */
+#define PFACE_AX(i)    (((volatile fx_t *)pface_ax)[i])
+#define PFACE_AY(i)    (((volatile fx_t *)pface_ay)[i])
+#define PFACE_BX(i)    (((volatile fx_t *)pface_bx)[i])
+#define PFACE_BY(i)    (((volatile fx_t *)pface_by)[i])
+#define PFACE_UA(i)    (((volatile fx_t *)pface_ua)[i])
+#define PFACE_UB(i)    (((volatile fx_t *)pface_ub)[i])
+#define PFACE_STYLE(i) (((volatile uint8_t *)pface_style)[i])
+#define PFACE_COUNT    (*(volatile int *)&pface_count)
+
+/* Purge a byte range from the SH-2 cache via the 0x40000000 alias (one store
+ * invalidates a 16-byte line). */
+static inline void purge_cache_range(const void *p, unsigned bytes) {
+    uintptr_t a   = (uintptr_t)p & ~(uintptr_t)15;
+    uintptr_t end = (uintptr_t)p + bytes;
+    for (; a < end; a += 16) *(volatile uint32_t *)(a | 0x40000000) = 0;
+}
+
+/* Secondary calls this before the wall pass to drop its stale pface_* lines. */
+void raycast_purge_partition_cache(void) {
+    purge_cache_range(pface_ax,     sizeof pface_ax);
+    purge_cache_range(pface_ay,     sizeof pface_ay);
+    purge_cache_range(pface_bx,     sizeof pface_bx);
+    purge_cache_range(pface_by,     sizeof pface_by);
+    purge_cache_range(pface_ua,     sizeof pface_ua);
+    purge_cache_range(pface_ub,     sizeof pface_ub);
+    purge_cache_range(pface_style,  sizeof pface_style);
+    purge_cache_range(&pface_count, sizeof pface_count);
+}
 
 /* Saturated fixed-point divide: same as FX_DIV but clamps to ±INT32_MAX
  * instead of silently wrapping on overflow. Used in the per-ray ray-

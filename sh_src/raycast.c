@@ -2330,13 +2330,16 @@ void raycast_draw_walls(int col_start, int col_end) {
                 int ftop = fbot - fdlh;
                 int fds  = ftop < 0 ? 0 : ftop;
                 int fde  = fbot >= SCREEN_H ? SCREEN_H - 1 : fbot;
-                /* Shade: distance ramp + uniform, then cell-light cap. */
+                /* Shade: distance ramp + uniform + N/S side-shade, then cell-
+                 * light cap — matching the wall pass exactly so the arm reads
+                 * one step darker than the (E/W-facing) stem, not the same. */
                 int fsh;
                 if (fg_t < FX(2.5)) fsh = (int)((fg_t * 2) / FX(2.5));
                 else { fx_t past = fg_t - FX(2.5); fx_t span = FOG_RAMP_DIST - FX(2.5);
                        fsh = 2 + (int)((past * 13) / span); }
                 if (fsh > SHADE_LEVELS - 1) fsh = SHADE_LEVELS - 1;
                 fsh += 1;
+                if (fg_side) fsh += SIDE_SHADE;
                 if (fsh > SHADE_LEVELS - 1) fsh = SHADE_LEVELS - 1;
                 {
                     int lx = FX_INT(px + FX_MUL(fg_t, rayDirX));

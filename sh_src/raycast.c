@@ -916,7 +916,13 @@ void player_update(void) {
     /* Hold X to crawl — ease the eye down toward the floor (the wall draw
      * reads SHARED_UC->eye_h). Variable eye height now; partial-height
      * crawl-under walls come later. */
-    int crouching = (pad & SEGA_CTRL_X) != 0;
+    /* Crouch = A+B held together. We deliberately do NOT use the 6-button X
+     * button: emulators routinely bind X to the same key as D-pad Left (so
+     * X-crouch fires on Left), and they report a 6-button type, so we can't
+     * distinguish them from a real MiSTer 6-button pad to gate it. A+B is
+     * collision-free on every pad. Trade-off: holding sprint+strafe now
+     * crouch-strafes instead of sprint-strafing. */
+    int crouching = (pad & SEGA_CTRL_A) && (pad & SEGA_CTRL_B);
     {
         int target = crouching ? CROUCH_EYE : STAND_EYE;
         int d = target - eye_smooth;

@@ -291,6 +291,20 @@ int m_main(void) {
                                : "  NOCLIP PROCEDURAL ", 49);
             font_draw_string(fb_text, (SCREEN_W - 19 * 8) / 2, SCREEN_H - 20,
                              "ANY BUTTON: CONFIRM", 49);
+            /* Controller-type readout — UNCONDITIONAL (the metrics overlay is
+             * gated behind MODE, a 6-button-only button, so it can't report
+             * this on a pad that fails the 6-button handshake). The high nibble
+             * of the pad word is the type: 6 = six-button detected, 3 = three-
+             * button, ? = none/unknown. Lets us see what each emulator presents. */
+            uint16_t ptype = pad & SEGA_CTRL_TYPE;
+            char padline[8] = { 'P','A','D',':',' ',
+                (ptype == SEGA_CTRL_SIX) ? '6' : (ptype == SEGA_CTRL_THREE) ? '3' : '?',
+                0, 0 };
+            font_draw_string(fb_text, 8, 8, padline, 49);
+            /* Crouch is A+B on every pad (X is avoided — emulators bind it to
+             * Left). Metrics overlay lives in the pause menu's LIGHTING tab. */
+            font_draw_string(fb_text, (SCREEN_W - 11 * 8) / 2, SCREEN_H - 32,
+                             "CROUCH: A+B", 49);
             if (g_metrics_on) { prof_sample_and_draw(fb_text); pos_draw(fb_text); }
             swapBuffers();
         }

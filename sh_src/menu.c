@@ -5,6 +5,11 @@
 #include "shared.h"
 #include "version.h"
 
+/* Owned by m_main.c — the metrics-overlay gate. Exposed so the LIGHTING tab can
+ * toggle it: the MODE-button shortcut is 6-button-only, so this is the way to
+ * reach the overlay on a 3-button pad. */
+extern uint8_t g_metrics_on;
+
 /* Two-tab pause menu. START opens/closes; tabs (AUDIO / LIGHTING) sit
  * on row 0 and LEFT/RIGHT switches between them when that row is
  * focused. UP/DOWN cycles between the tab row and the per-tab content
@@ -19,7 +24,7 @@
 #define NUM_TABS     3
 
 #define AUDIO_CONTENT_ROWS    2   /* AMBIENCE, FOOTSTEPS */
-#define LIGHTING_CONTENT_ROWS 3   /* FLICKER, STROBES, SHIMMER */
+#define LIGHTING_CONTENT_ROWS 4   /* FLICKER, STROBES, SHIMMER, METRICS */
 #define CREDITS_CONTENT_ROWS  0   /* BUILD/DATE/SHA are read-only display */
 
 static int      menu_active = 0;
@@ -92,15 +97,20 @@ void menu_update(uint16_t pad) {
         if (v > 255) v = 255;
         *target = (uint8_t)v;
     } else if (menu_tab == TAB_LIGHTING) {
-        /* LIGHTING tab: toggle the corresponding bit. dir doesn't
-         * matter — LEFT and RIGHT both flip. */
-        uint8_t bit;
-        switch (menu_row) {
-        case 1: bit = LIGHTING_FLICKER; break;
-        case 2: bit = LIGHTING_STROBE;  break;
-        default: bit = LIGHTING_SHIMMER; break;
+        /* LIGHTING tab: toggle the corresponding bit/flag. dir doesn't
+         * matter — LEFT and RIGHT both flip. Row 4 is the METRICS overlay
+         * (any-pad access to what MODE toggles on a 6-button pad). */
+        if (menu_row == 4) {
+            g_metrics_on ^= 1;
+        } else {
+            uint8_t bit;
+            switch (menu_row) {
+            case 1: bit = LIGHTING_FLICKER; break;
+            case 2: bit = LIGHTING_STROBE;  break;
+            default: bit = LIGHTING_SHIMMER; break;
+            }
+            SHARED_UC->lighting_flags ^= bit;
         }
-        SHARED_UC->lighting_flags ^= bit;
     }
 }
 
@@ -180,6 +190,8 @@ void menu_render(uint8_t *fb) {
                  (f & LIGHTING_STROBE)  ? " ON" : "OFF");
         draw_row(fb, 48, menu_row == 3, "SHIMMER",
                  (f & LIGHTING_SHIMMER) ? " ON" : "OFF");
+        draw_row(fb, 56, menu_row == 4, "METRICS",
+                 g_metrics_on ? " ON" : "OFF");
     } else {
         /* CREDITS — read-only build stamp (no selection cursor). */
         font_draw_string(fb, X + 8, Y + 32, "BUILD " VERSION_BUILD_STR, MENU_FG_COLOR);

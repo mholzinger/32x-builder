@@ -894,10 +894,10 @@ static int     standup_dip = 0;
 
 /* Read controller, advance player by one frame. Axis-separated collision
  * gives natural sliding along walls. */
-void player_update(void) {
-    HwMdReadPad(0);
-    uint16_t pad = MARS_SYS_COMM8;
-
+/* pad is read ONCE per frame by the caller (the loop already reads it for
+ * menu/metrics) and passed in — the old self-read here was a second 68K
+ * HwMdReadPad round-trip per frame, pure overhead. */
+void player_update(uint16_t pad) {
     /* Hold C → look mode. D-pad UP/DOWN drive pitch in two phases:
      *   Phase 1 — ease toward the comfortable angle ±40 at 25%/frame
      *             (~11 frames / 183 ms to settle). Same exponential

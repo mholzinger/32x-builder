@@ -315,8 +315,9 @@ int m_main(void) {
     {
         for (;;) {
             HwMdReadPad(0);
-            metrics_mode_check(MARS_SYS_COMM8);
-            player_update();
+            uint16_t pad = MARS_SYS_COMM8;
+            metrics_mode_check(pad);
+            player_update(pad);
             /* Stepped into the black exit doorway (col 7, rows 2-4). */
             if (player.x > FX(7) && player.y > FX(1.5) && player.y < FX(5)) break;
             SHARED_UC->frame_count++;
@@ -371,7 +372,7 @@ int m_main(void) {
         menu_update(pad);
         metrics_mode_check(pad);
         if (!menu_is_active()) {
-            player_update();
+            player_update(pad);
         }
         /* Tick the shared frame counter before render so both CPUs
          * read the same value when computing the distant-wall strobe. */

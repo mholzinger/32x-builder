@@ -53,7 +53,7 @@ void raycast_set_brightness(int lvl);
 void raycast_load_fixed(void);
 void raycast_load_lobby(void);
 void raycast_render(void);
-void player_update(void);
+void player_update(uint16_t pad);
 void raycast_shimmer(void);
 void raycast_draw_ceiling_grid(int col_start, int col_end);
 void raycast_draw_carpet(int col_start, int col_end);

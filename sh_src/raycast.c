@@ -1827,7 +1827,7 @@ void raycast_draw_walls(int col_start, int col_end) {
          * the background (solid wall / full partition) after the main column
          * draw, so a surface behind it (e.g. the lobby T-stem) shows above it.
          * Same renderer the crawl-under gap will use. */
-        int  fg_hit = 0, fg_style = 0, fg_height = 0;
+        int  fg_hit = 0, fg_style = 0, fg_height = 0, fg_side = 0;
         fx_t fg_t = 0, fg_wallhit = 0;
         int  n_faces = PFACE_COUNT;
         for (int fi = 0; fi < n_faces; fi++) {
@@ -1865,7 +1865,7 @@ void raycast_draw_walls(int col_start, int col_end) {
                 part_style = PFACE_STYLE(fi); side = sd;
             } else {
                 fg_hit = 1; fg_t = t; fg_wallhit = wh;
-                fg_style = PFACE_STYLE(fi); fg_height = fh;
+                fg_style = PFACE_STYLE(fi); fg_height = fh; fg_side = sd;
             }
         }
         /* Partial partition only shows if in front of the final background. */
@@ -1875,18 +1875,24 @@ void raycast_draw_walls(int col_start, int col_end) {
         /* Nothing in range — leave the ceiling/floor earlier passes painted. */
         if (!hit && !partition_hit && !fg_hit) continue;
 
-        /* See-over cost control: only draw the BACKGROUND behind a partial
-         * partition when it pokes ABOVE the partial's top (the lobby T-stem
-         * case). When the partial's band fully covers the background — every
-         * free-standing divider, whose background is a far wall — skip the
-         * background entirely and just draw the band (the cheap path, no
-         * regression). A point at world height h/256 at distance d sits above
-         * the horizon ~(h-eye)/d, so the full (h=256) background pokes above the
-         * partial (h=fg_height) iff (256-eye)*fg_t > (fg_height-eye)*perpDist. */
+        /* See-over decision. The slow per-pixel overlay is only needed when the
+         * background pokes ABOVE the partial (the lobby T-stem behind the low
+         * arm). For every free-standing divider — background a far wall the
+         * band fully covers — PROMOTE the partial to the fast MAIN draw path
+         * (asm inner loop, full shade) and skip the overlay entirely. A point at
+         * world height h/256 at distance d sits above the horizon ~(h-eye)/d, so
+         * the full (h=256) background pokes above the partial (h=fg_height) iff
+         * (256-eye)*fg_t > (fg_height-eye)*perpDist. */
         if (fg_hit) {
-            if (!hit && !partition_hit) goto fg_overlay;     /* only a partial */
-            if ((int64_t)(256 - eye_h) * fg_t
-                    <= (int64_t)(fg_height - eye_h) * perpDist) goto fg_overlay;
+            int bg_pokes = (hit || partition_hit) &&
+                ((int64_t)(256 - eye_h) * fg_t
+                 > (int64_t)(fg_height - eye_h) * perpDist);
+            if (!bg_pokes) {
+                perpDist = fg_t; partition_wallhit_w = fg_wallhit; partition_hit = 1;
+                part_style = fg_style; part_height = fg_height; side = fg_side;
+                spotted = part_style;     /* partition_hit is now 1 */
+                fg_hit = 0;               /* drawn by the fast main path; no overlay */
+            }
         }
 
         WALL_DIST(col) = perpDist;
@@ -2304,8 +2310,9 @@ void raycast_draw_walls(int col_start, int col_end) {
          * background just drawn, so a wall/stem behind it shows above it. It's
          * validated to be in front (fg_t < perpDist), so it draws over the
          * column unconditionally. Replicates the wall pass's shade/texture/
-         * baseboard so it reads identical — just shorter. */
-        fg_overlay:
+         * baseboard so it reads identical — just shorter. Only reached for the
+         * see-over case (lobby T-stem); free-standing dividers were promoted to
+         * the fast main path above (fg_hit cleared). */
         if (fg_hit) {
             /* The band is the nearest solid surface in this column, so the
              * sprite z-buffer must read its depth — otherwise the ceiling

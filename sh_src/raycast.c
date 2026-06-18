@@ -1819,10 +1819,16 @@ void raycast_draw_walls(int col_start, int col_end) {
          * Saturated divide guards against denom underflow at glancing
          * angles where the wall DDA would similarly lose precision — same
          * trap that originally pushed us to projection. */
-        int  partition_hit       = 0;
+        int  partition_hit       = 0;   /* a FULL-height partition is the background */
         int  part_style          = 0;
-        int  part_height         = 0;   /* 0 = full; else fraction*256 (partial divider) */
+        int  part_height         = 0;   /* background is always full height (0) */
         fx_t partition_wallhit_w = 0;
+        /* Foreground = nearest PARTIAL-height partition. Drawn as a band OVER
+         * the background (solid wall / full partition) after the main column
+         * draw, so a surface behind it (e.g. the lobby T-stem) shows above it.
+         * Same renderer the crawl-under gap will use. */
+        int  fg_hit = 0, fg_style = 0, fg_height = 0;
+        fx_t fg_t = 0, fg_wallhit = 0;
         int  n_faces = PFACE_COUNT;
         for (int fi = 0; fi < n_faces; fi++) {
             /* Screen-span cull: skip the divide entirely for faces this column
@@ -1838,37 +1844,36 @@ void raycast_draw_walls(int col_start, int col_end) {
             fx_t cy  = ay - py;
 
             fx_t denom = FX_MUL(rayDirY, dxs) - FX_MUL(rayDirX, dys);
-            /* |denom| < 128 (~0.1deg off parallel): an edge-on sliver with no
-             * visible width. Skipping it also guarantees both quotients below
-             * stay inside 32 bits, so fx_div_hw needs no overflow saturation. */
-            if (denom < 128 && denom > -128) continue;
+            if (denom < 128 && denom > -128) continue;   /* edge-on sliver */
 
             fx_t t_num = FX_MUL(cy, dxs) - FX_MUL(cx, dys);
             fx_t t = fx_div_hw(t_num, denom);
             if (t <= FX(0.1)) continue;
-            if (t >= perpDist) continue;
-
+            int fh = PFACE_HEIGHT(fi);
+            if (fh == 0) {
+                if (t >= perpDist) continue;          /* full: behind the background */
+            } else {
+                if (fg_hit && t >= fg_t) continue;    /* partial: not the closest one */
+            }
             fx_t s_num = FX_MUL(rayDirX, cy) - FX_MUL(rayDirY, cx);
             fx_t s = fx_div_hw(s_num, denom);
             if (s < 0 || s > FX_ONE) continue;
-
-            perpDist = t;
-            fx_t ua = PFACE_UA(fi);
-            fx_t ub = PFACE_UB(fi);
-            partition_wallhit_w = ua + FX_MUL(s, ub - ua);
-            partition_hit = 1;
-            part_style = PFACE_STYLE(fi);
-            part_height = PFACE_HEIGHT(fi);
-            side = (dxs == 0) ? 0 : 1;   /* vertical face = E/W (X-side), horizontal = N/S */
+            fx_t wh = PFACE_UA(fi) + FX_MUL(s, PFACE_UB(fi) - PFACE_UA(fi));
+            int sd = (dxs == 0) ? 0 : 1;   /* vertical face = E/W (X-side), horizontal = N/S */
+            if (fh == 0) {
+                perpDist = t; partition_wallhit_w = wh; partition_hit = 1;
+                part_style = PFACE_STYLE(fi); side = sd;
+            } else {
+                fg_hit = 1; fg_t = t; fg_wallhit = wh;
+                fg_style = PFACE_STYLE(fi); fg_height = fh;
+            }
         }
-        /* Spotted olive wallpaper applies only to partitions flagged style 1
-         * (the left + T divider). Chevron partitions (style 0, e.g. the
-         * outlet wall) render exactly like a main wall. */
+        /* Partial partition only shows if in front of the final background. */
+        if (fg_hit && fg_t >= perpDist) fg_hit = 0;
         int spotted = partition_hit && part_style;
 
-        /* No wall AND no partition in range — leave the column as the
-         * sky/ceiling/floor that earlier passes painted. */
-        if (!hit && !partition_hit) continue;
+        /* Nothing in range — leave the ceiling/floor earlier passes painted. */
+        if (!hit && !partition_hit && !fg_hit) continue;
 
         WALL_DIST(col) = perpDist;
         /* No hard cutoff at MAX_VIEW_DIST — let walls render through
@@ -2277,6 +2282,82 @@ void raycast_draw_walls(int col_start, int col_end) {
                     po += SCREEN_W;
                 }
                 break;   /* one outlet per column */
+            }
+        }
+
+        /* ── Partial-height partition overlay ───────────────────────────────
+         * Draw the foreground partial partition as a textured band OVER the
+         * background just drawn, so a wall/stem behind it shows above it. It's
+         * validated to be in front (fg_t < perpDist), so it draws over the
+         * column unconditionally. Replicates the wall pass's shade/texture/
+         * baseboard so it reads identical — just shorter. */
+        if (fg_hit) {
+            int flh  = (int)divu_u32((uint32_t)(SCREEN_H << FX_SHIFT), (uint32_t)fg_t);
+            int fdlh = (flh * fg_height) >> 8;          /* band height in px */
+            if (fdlh > 0) {
+                int fbot = horizon_y + ((flh * eye_h) >> 8);
+                int ftop = fbot - fdlh;
+                int fds  = ftop < 0 ? 0 : ftop;
+                int fde  = fbot >= SCREEN_H ? SCREEN_H - 1 : fbot;
+                /* Shade: distance ramp + uniform, then cell-light cap. */
+                int fsh;
+                if (fg_t < FX(2.5)) fsh = (int)((fg_t * 2) / FX(2.5));
+                else { fx_t past = fg_t - FX(2.5); fx_t span = FOG_RAMP_DIST - FX(2.5);
+                       fsh = 2 + (int)((past * 13) / span); }
+                if (fsh > SHADE_LEVELS - 1) fsh = SHADE_LEVELS - 1;
+                fsh += 1;
+                if (fsh > SHADE_LEVELS - 1) fsh = SHADE_LEVELS - 1;
+                {
+                    int lx = FX_INT(px + FX_MUL(fg_t, rayDirX));
+                    int ly = FX_INT(py + FX_MUL(fg_t, rayDirY));
+                    if ((unsigned)lx < (unsigned)MAP_W && (unsigned)ly < (unsigned)MAP_H) {
+                        int lit = CELL_LIGHT(ly, lx);
+                        if (lit) { int cap = LIT_FOG_CAP - (lit - 1) * 2; if (fsh > cap) fsh = cap; }
+                    }
+                }
+                /* Texture + detail (spotted dots fade with distance). */
+                const uint8_t *ftex; int ftw, fth, ftlx, ftly, fdetail;
+                if (fg_style) {
+                    ftex = (const uint8_t *)partition_tex_ram;
+                    ftw = PARTITION_TEX_WIDTH;  fth = PARTITION_TEX_HEIGHT;
+                    ftlx = PARTITION_TILE_X;    ftly = PARTITION_TILE_Y;
+                    if (fg_t < FX(2))        fdetail = PARTITION_DETAIL;
+                    else if (fg_t < FX(3.5)) { fdetail = (int)(((FX(3.5) - fg_t) * PARTITION_DETAIL) / FX(1.5)); if (fdetail < 0) fdetail = 0; }
+                    else                     fdetail = 0;
+                } else if (fg_t < WALL_LOD_THRESHOLD) {
+                    ftex = (const uint8_t *)wall_tex_hi_ram;
+                    ftw = WALL_TEX_HI_WIDTH;    fth = WALL_TEX_HI_HEIGHT;
+                    ftlx = WALL_TILE_HI_X;      ftly = WALL_TILE_HI_Y; fdetail = 0;
+                } else {
+                    ftex = (const uint8_t *)wall_tex_ram;
+                    ftw = WALL_TEX_WIDTH;       fth = WALL_TEX_HEIGHT;
+                    ftlx = WALL_TILE_X;         ftly = WALL_TILE_Y;    fdetail = 0;
+                }
+                fx_t fwh = fg_wallhit - ((fx_t)FX_INT(fg_wallhit) << FX_SHIFT);
+                int ftexX = (int)(((uint32_t)fwh * (uint32_t)(ftw * ftlx)) >> FX_SHIFT) & (ftw - 1);
+                const uint8_t *fcol = ftex + ftexX * fth;
+                uint8_t flut[5];
+                for (int v = 0; v < 5; v++) {
+                    int s = fsh + ((v * fdetail) >> 4);
+                    if (s >= SHADE_LEVELS) s = SHADE_LEVELS - 1;
+                    flut[v] = (uint8_t)(WALL_BASE + s);
+                }
+                int fbase_h  = fdlh >> 5; if (fbase_h < 1) fbase_h = 1;
+                int ftex_end = (fbot - fbase_h) - 1;     /* texture above, molding below */
+                if (ftex_end > fde) ftex_end = fde;
+                int fmask = fth - 1;
+                fx_t fstep = ((fx_t)(fth * ftly) << FX_SHIFT) / fdlh;
+                fx_t fpos  = (fx_t)(fds - ftop) * fstep;
+                uint8_t *fp = (uint8_t *)fb + col + fds * SCREEN_W;
+                int y = fds;
+                for (; y <= ftex_end; y++) {
+                    *fp = flut[fcol[(fpos >> FX_SHIFT) & fmask]];
+                    fp += SCREEN_W; fpos += fstep;
+                }
+                int fshadow = fsh + 2; if (fshadow > SHADE_LEVELS - 1) fshadow = SHADE_LEVELS - 1;
+                if (y <= fde) { *fp = (uint8_t)(WALL_BASE + fshadow); fp += SCREEN_W; y++; }
+                uint8_t fmold = (uint8_t)(WALL_BASE + fsh);
+                for (; y <= fde; y++) { *fp = fmold; fp += SCREEN_W; }
             }
         }
     }

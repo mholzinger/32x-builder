@@ -55,14 +55,16 @@ void s_main(void) {
         }
         switch (cmd) {
         case MARS_CMD_HALF: {
-            /* Secondary owns the right half of the screen. Clears, draws
-             * the floor/ceiling grid + wear + walls — no overlap with
-             * primary, so no synchronization mid-frame. */
+            /* Secondary owns columns [split_col, SCREEN_W). The primary set
+             * split_col before raising COMM4 (adaptive load balance); read it
+             * via cache-through so this CPU sees the fresh value. No overlap
+             * with primary's [0, split_col), so no mid-frame sync. */
+            int split = (int)SHARED_UC->split_col;
             uint16_t t0 = secondary_frt_read();
-            raycast_clear_half(SCREEN_W / 2, SCREEN_W);
-            raycast_draw_ceiling_grid(SCREEN_W / 2, SCREEN_W);
-            raycast_draw_carpet(SCREEN_W / 2, SCREEN_W);
-            raycast_draw_walls(SCREEN_W / 2, SCREEN_W);
+            raycast_clear_half(split, SCREEN_W);
+            raycast_draw_ceiling_grid(split, SCREEN_W);
+            raycast_draw_carpet(split, SCREEN_W);
+            raycast_draw_walls(split, SCREEN_W);
             SHARED_UC->secondary_render_ticks = (uint16_t)(secondary_frt_read() - t0);
             break;
         }

@@ -96,6 +96,12 @@ typedef struct {
      * both CPUs' wall draw to split the wall column asymmetrically about
      * the horizon (floor close, ceiling looms when low). */
     volatile uint8_t eye_h;
+    /* Adaptive dual-CPU split column: the primary renders columns
+     * [0, split_col), the secondary [split_col, SCREEN_W). The primary nudges
+     * it each frame to equalize the two halves' measured FRT times (load
+     * balancing). Always a multiple of 4 (the clear pass writes 4-px words).
+     * Defaults to SCREEN_W/2; stays there on emulators where the FRT reads 0. */
+    volatile uint16_t split_col;
 } shared_t;
 
 #define LIGHTING_FLICKER  0x01   /* per-panel random brightness rolls */

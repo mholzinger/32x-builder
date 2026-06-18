@@ -2314,16 +2314,38 @@ void raycast_render(void) {
      * Column ownership eliminates the previous CEILING→WALLS sequential
      * dependency (primary used to idle ~26ms waiting for secondary's ceiling
      * before walls could start). One sync point at the end. */
+    /* Adaptive load balance: nudge the split column to equalize last frame's
+     * primary (H) and secondary (S) half-render FRT times. Feedback controller,
+     * no per-column cost model — converges in a few frames as the view changes.
+     * On emulators H/S read 0, so split stays at SCREEN_W/2 (static 50/50). */
+    static int split = SCREEN_W / 2;
+    {
+        int h = (int)prof_primary_half_ticks;            /* last frame, primary  */
+        int s = (int)SHARED_UC->secondary_render_ticks;  /* last frame, secondary */
+        int sum = h + s;
+        if (sum > 2000) {                                /* valid FRT reading */
+            int shift = ((h - s) * SCREEN_W) / (sum << 1);  /* full balancing step */
+            shift >>= 1;                                 /* damp to avoid oscillation */
+            if      (shift >  16) shift =  16;
+            else if (shift < -16) shift = -16;
+            split -= shift;                              /* h>s: primary overloaded -> shrink */
+            if      (split < 64)            split = 64;
+            else if (split > SCREEN_W - 64) split = SCREEN_W - 64;
+            split &= ~3;                                 /* clear pass writes 4-px words */
+        }
+        SHARED_UC->split_col = (uint16_t)split;          /* secondary reads this */
+    }
+
     MARS_SYS_COMM4 = MARS_CMD_HALF;
 
     uint16_t pp = prof_frt_read();
-    raycast_clear_half(0, SCREEN_W / 2);
+    raycast_clear_half(0, split);
     { uint16_t n = prof_frt_read(); prof_pass_clear  = (uint16_t)(n - pp); pp = n; }
-    raycast_draw_ceiling_grid(0, SCREEN_W / 2);
+    raycast_draw_ceiling_grid(0, split);
     { uint16_t n = prof_frt_read(); prof_pass_ceil   = (uint16_t)(n - pp); pp = n; }
-    raycast_draw_carpet(0, SCREEN_W / 2);
+    raycast_draw_carpet(0, split);
     { uint16_t n = prof_frt_read(); prof_pass_carpet = (uint16_t)(n - pp); pp = n; }
-    raycast_draw_walls(0, SCREEN_W / 2);
+    raycast_draw_walls(0, split);
     { uint16_t n = prof_frt_read(); prof_pass_walls  = (uint16_t)(n - pp); }
 
     uint16_t idle_start = prof_frt_read();

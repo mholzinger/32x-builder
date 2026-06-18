@@ -12,7 +12,7 @@ import os
 import mathutils
 
 LABEL = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                     "..", "images", "splasjh_label.png")
+                     "..", "images", "splash_label.png")
 OUT = "/tmp/hero.png"
 
 sc = bpy.context.scene

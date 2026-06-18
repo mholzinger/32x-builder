@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bake images/splasjh_label.png into sh_src/box_label.h — a small
+"""Bake images/splash_label.png into sh_src/box_label.h — a small
 paletted texture sampled onto the box's FRONT face by box3d, so the
 label deforms with the live 3D box (no per-frame bitmap cost, and it
 keeps the hero->box hand-off continuous).

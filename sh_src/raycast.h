@@ -34,6 +34,14 @@ extern uint8_t world_map[MAP_H][MAP_W];
 typedef struct { fx_t x1, y1, x2, y2; } partition_t;
 extern partition_t partitions[NUM_PARTITIONS_MAX];
 extern int num_partitions;
+/* Per-partition wallpaper: 0 = chevron (like the walls), 1 = spotted olive. */
+extern uint8_t partition_style[NUM_PARTITIONS_MAX];
+/* When set, the ceiling uses the lobby's hand-authored fluorescent runs. */
+extern int g_lobby_ceiling;
+
+/* Wall-mounted decals (the lobby outlet). Count is reset per-map so the
+ * outlet only renders in the lobby; the array itself lives in raycast.c. */
+extern int num_decals;
 
 void raycast_init(void);
 /* Scale the gameplay palette to brightness 0..FADE_STEPS (full..black) for

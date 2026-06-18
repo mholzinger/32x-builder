@@ -64,7 +64,8 @@ static void prof_sample_and_draw(uint8_t *fb) {
     prof_half_smoothed = (uint16_t)((prof_half_smoothed - (prof_half_smoothed >> 3)) + (half >> 3));
 
     /* "T:NNNNN H:NNNNN S:NNNNN" — frame total, primary half-render,
-     * secondary half-render. Higher of H/S is the parallel bottleneck. */
+     * secondary half-render. Higher of H/S is the parallel bottleneck.
+     * (Effective FPS rides the bottom line next to the per-pass breakdown.) */
     char text[24];
     text[0] = 'T'; text[1] = ':';
     uint16_t v = prof_smoothed;
@@ -91,6 +92,39 @@ static void prof_sample_and_draw(uint8_t *fb) {
     /* Top-right corner. LIGHT_BASE[0] (palette idx 49) is the brightest
      * fixture-white, reads on every background. */
     font_draw_string(fb, SCREEN_W - 8 * 23 - 4, 4, text, 49);
+
+    /* Second line: primary-half per-pass breakdown — Clear / ceiling-Grid /
+     * caRpet / Walls (raw FRT ticks), then F = effective FPS. Per-pass tells
+     * us which pass to optimize; F is the bottom-line score it rolls up to. */
+    {
+        extern volatile uint16_t prof_pass_clear, prof_pass_ceil,
+                                 prof_pass_carpet, prof_pass_walls;
+        static const char lbl[4] = {'C', 'G', 'R', 'W'};
+        uint16_t pv[4] = { prof_pass_clear, prof_pass_ceil,
+                           prof_pass_carpet, prof_pass_walls };
+        char t2[40];
+        int pos = 0;
+        for (int i = 0; i < 4; i++) {
+            t2[pos++] = lbl[i];
+            t2[pos++] = ':';
+            uint16_t x = pv[i];
+            for (int d = 4; d >= 0; d--) { t2[pos + d] = '0' + (x % 10); x /= 10; }
+            pos += 5;
+            t2[pos++] = ' ';
+        }
+        /* Effective FPS = 720000 / frame_period (FRT is ~720kHz). The 16-bit
+         * FRT wraps at 65536 (~91ms); a per-frame delta below one vblank
+         * (12000 ticks) wrapped once, so add 65536 — honest down to ~10fps. */
+        uint32_t ft = delta ? delta : 1;
+        if (ft < 12000) ft += 65536;
+        uint32_t fps = (720000u + ft / 2) / ft;
+        if (fps > 99) fps = 99;
+        t2[pos++] = 'F'; t2[pos++] = ':';
+        t2[pos++] = '0' + (fps / 10);
+        t2[pos++] = '0' + (fps % 10);
+        t2[pos] = 0;
+        font_draw_string(fb, 4, SCREEN_H - 12, t2, 49);
+    }
 }
 
 /* Top-left position + angle overlay for debugging map locations.
@@ -257,7 +291,7 @@ int m_main(void) {
                                : "  NOCLIP PROCEDURAL ", 49);
             font_draw_string(fb_text, (SCREEN_W - 19 * 8) / 2, SCREEN_H - 20,
                              "ANY BUTTON: CONFIRM", 49);
-            if (g_metrics_on) pos_draw(fb_text);   /* X/Y/A for spawn tuning */
+            if (g_metrics_on) { prof_sample_and_draw(fb_text); pos_draw(fb_text); }
             swapBuffers();
         }
     }
@@ -274,7 +308,7 @@ int m_main(void) {
             SHARED_UC->frame_count++;
             raycast_render();
             uint8_t *fb_text = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
-            if (g_metrics_on) pos_draw(fb_text);   /* live X/Y/A while you roam */
+            if (g_metrics_on) { prof_sample_and_draw(fb_text); pos_draw(fb_text); }
             swapBuffers();
         }
     }

@@ -33,10 +33,10 @@ models/
 # images/: track only the ones the asset bakers actually consume; reference
 # and unused art stays on disk but untracked.
 images/*
-!images/32xlogo.jpg
 !images/neanderthal.png
-!images/splasjh_label.png
+!images/splash_label.png
 !images/square_walltile_composite.jpg
 !images/walltile.jpg
 # Canonical design reference (the HobbyTown photo the whole look is based on).
 !images/HobbyTown_USA_Oshkosh_interior_under_construction_2002_(The_Backrooms).jpg
+!images/outlet.jpg

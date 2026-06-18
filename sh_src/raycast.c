@@ -7,6 +7,8 @@
 #include "wall_tex_hi.h"
 #include "neander_tex.h"
 #include "neander_tex_hi.h"
+#include "outlet_tex.h"
+#include "partition_tex.h"
 
 /* Player spawn — south end of the col-16 spine corridor in the
  * hand-tuned 32x32 Backrooms map. Walls flank tightly at cols 15/17
@@ -91,12 +93,12 @@ static const uint8_t fixed_map[MAP_H][MAP_W] = {
 static const uint8_t lobby_map[MAP_H][MAP_W] = {
     {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
     {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-    {1,1,0,0,0,0,0,0,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-    {1,1,0,0,0,0,0,0,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-    {1,1,0,0,0,0,0,0,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,0,0,0,0,0,0,0,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,0,0,0,0,0,0,0,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,0,0,0,0,0,0,0,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    {1,1,0,0,0,0,0,0,0,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
     {1,1,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
     {1,1,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
     {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
     {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
     {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
@@ -140,6 +142,9 @@ uint8_t world_map[MAP_H][MAP_W];
 #define LIGHT_BASE   49     /* 4 entries: full / 75% / 50% / 25% for flicker */
 #define NEANDER_BASE 64     /* 8 entries: 0=cardboard back, 1-7=figure shades */
 #define SHADE_LEVELS 16
+#define OUTLET_BASE   72    /* 5 entries: 0=slot-dark .. 4=plate-white */
+#define OUTLET_LEVELS 5
+#define PARTITION_BASE 77   /* 16 entries: olive spotted-wallpaper, bright..fog */
 
 /* Wall texture comes from wall_tex.h (generated from images/walltile.jpg). */
 #define TEX_W WALL_TEX_WIDTH
@@ -199,6 +204,7 @@ static fx_t pface_bx[MAX_PARTITION_FACES];
 static fx_t pface_by[MAX_PARTITION_FACES];
 static fx_t pface_ua[MAX_PARTITION_FACES];
 static fx_t pface_ub[MAX_PARTITION_FACES];
+static uint8_t pface_style[MAX_PARTITION_FACES];   /* 0=chevron, 1=spotted */
 static int  pface_count = 0;
 #define PFACE_AX(i)    (((volatile fx_t *)((uintptr_t)pface_ax | 0x20000000))[i])
 #define PFACE_AY(i)    (((volatile fx_t *)((uintptr_t)pface_ay | 0x20000000))[i])
@@ -206,6 +212,7 @@ static int  pface_count = 0;
 #define PFACE_BY(i)    (((volatile fx_t *)((uintptr_t)pface_by | 0x20000000))[i])
 #define PFACE_UA(i)    (((volatile fx_t *)((uintptr_t)pface_ua | 0x20000000))[i])
 #define PFACE_UB(i)    (((volatile fx_t *)((uintptr_t)pface_ub | 0x20000000))[i])
+#define PFACE_STYLE(i) (((volatile uint8_t *)((uintptr_t)pface_style | 0x20000000))[i])
 #define PFACE_COUNT    (*(volatile int *)((uintptr_t)&pface_count | 0x20000000))
 
 /* Saturated fixed-point divide: same as FX_DIV but clamps to ±INT32_MAX
@@ -219,6 +226,32 @@ static inline fx_t fx_div_sat(fx_t a, fx_t b) {
     if (result > (int64_t)0x7FFFFFFFLL)         return (fx_t)0x7FFFFFFF;
     if (result < (int64_t)0xFFFFFFFF80000000LL) return (fx_t)0x80000000;
     return (fx_t)result;
+}
+
+/* Hardware (a<<16)/b in 16.16 — signed 64÷32 on the SH-2 divide unit at
+ * 0xFFFFFF00, ~39 cycles vs ~250 for the libgcc software int64 divide that
+ * fx_div_sat compiles to. The 48-bit dividend (a<<16) is fed as DVDNTH:DVDNTL
+ * with the high word sign-extended; the unit divides signed natively and the
+ * read of DVDNTL stalls until the divide completes.
+ *
+ * No saturation: the sole caller (the per-ray partition intersection) gates
+ * every divide behind |denom| >= 128, which bounds both quotients inside 32
+ * bits — so overflow is impossible here and the libgcc saturation path isn't
+ * needed. Used ONLY under that guarantee; for general division use fx_div_sat. */
+static inline fx_t fx_div_hw(fx_t a, fx_t b) {
+    int32_t  hi = a >> 16;               /* sign-extended high word of (a<<16) */
+    uint32_t lo = (uint32_t)a << 16;
+    int32_t  q;
+    __asm__ __volatile__ (
+        "mov #-128, r1\n\t"
+        "add r1, r1\n\t"                 /* r1 = 0xFFFFFF00 */
+        "mov.l %1, @(0, r1)\n\t"         /* DVSR  = divisor          */
+        "mov.l %2, @(16, r1)\n\t"        /* DVDNTH = dividend high    */
+        "mov.l %3, @(20, r1)\n\t"        /* DVDNTL = dividend low → start */
+        "mov.l @(20, r1), %0\n\t"        /* quotient (stalls if !done) */
+        : "=r"(q) : "r"(b), "r"(hi), "r"(lo) : "r1"
+    );
+    return q;
 }
 
 /* Floor-standing cardboard cutouts. Each standup has a world position
@@ -238,6 +271,15 @@ static const standup_t standups[] = {
     { FX(16.5), FX(23.5), 64,  0 },
 };
 
+/* Wall-mounted decals (currently just the lobby outlet): small billboards
+ * anchored at a height fraction z (0=floor, 1=ceiling) instead of the floor.
+ * Populated per-map — raycast_load_lobby sets one; load_fixed/procgen clear
+ * num_decals so the outlet only shows in the lobby. z is the plate CENTRE. */
+typedef struct { fx_t x, y, z; } decal_t;
+#define DECAL_OUTLET_H FX(0.098)  /* outlet plate height as a fraction of wall (30% smaller) */
+decal_t decals[4];
+int     num_decals = 0;
+
 /* Free-standing wallpaper partitions ("fake walls"). Defined by two
  * world-space endpoints — rendered via per-ray segment intersection
  * (see partition_build_faces and the consumer in raycast_draw_walls),
@@ -251,6 +293,9 @@ partition_t partitions[NUM_PARTITIONS_MAX] = {
     { FX(20), FX(11), FX(20), FX(14) },
 };
 int num_partitions = 2;
+/* Per-partition wallpaper: 0 = chevron (like the main walls), 1 = spotted
+ * olive divider. Indexed alongside partitions[]; set per-map. */
+uint8_t partition_style[NUM_PARTITIONS_MAX] = {0};
 #define NUM_PARTITIONS num_partitions
 #define NUM_STANDUPS (int)(sizeof(standups) / sizeof(standups[0]))
 
@@ -271,16 +316,58 @@ typedef struct { fx_t x, y; } light_t;
 static light_t lights[MAX_LIGHTS];
 static int num_lights = 0;
 #define NUM_LIGHTS num_lights
+/* When set, init_lights uses the lobby's hand-authored fluorescent runs
+ * instead of the default every-other-cell auto-grid. Set per-map. */
+int g_lobby_ceiling = 0;
+
+/* Per-cell light boost (0..LIGHT_BOOST_MAX): each fixture brightens its own
+ * cell and its neighbours, so a wall or partition adjacent to a light reads
+ * as lit. Built in init_lights; read by both CPUs in the wall loop via the
+ * cache-through alias. */
+static uint8_t cell_light[MAP_H][MAP_W];
+#define CELL_LIGHT(y,x) (((volatile uint8_t *)((uintptr_t)cell_light | 0x20000000))[(y)*MAP_W + (x)])
+#define LIGHT_BOOST_MAX 3
+#define LIT_FOG_CAP     9   /* a lit surface never fogs darker than this (-2 per light level) */
+#define SIDE_SHADE      1   /* N/S-facing faces are this many shades darker (form cue) */
 
 static void init_lights(void) {
     num_lights = 0;
-    for (int my = 1; my < MAP_H - 1; my += 2) {
-        for (int mx = 1; mx < MAP_W - 1; mx += 2) {
-            if (world_map[my][mx] != 0) continue;
-            if (num_lights >= MAX_LIGHTS) return;
-            lights[num_lights].x = FX(mx) + FX(0.5);
-            lights[num_lights].y = FX(my) + FX(0.5);
-            num_lights++;
+    if (g_lobby_ceiling) {
+        /* Hand-authored lobby ceiling: a fixture in every even column
+         * (x=2,4,6,8) down rows 2-5 and 7 (skip the entrance row 6) — gives
+         * continuous fluorescent runs like the reference photo. */
+        for (int my = 2; my <= 7 && num_lights < MAX_LIGHTS; my++) {
+            if (my == 6) continue;
+            for (int mx = 2; mx <= 8 && num_lights < MAX_LIGHTS; mx += 2) {
+                if (world_map[my][mx] != 0) continue;
+                lights[num_lights].x = FX(mx) + FX(0.5);
+                lights[num_lights].y = FX(my) + FX(0.5);
+                num_lights++;
+            }
+        }
+    } else {
+        for (int my = 1; my < MAP_H - 1 && num_lights < MAX_LIGHTS; my += 2) {
+            for (int mx = 1; mx < MAP_W - 1 && num_lights < MAX_LIGHTS; mx += 2) {
+                if (world_map[my][mx] != 0) continue;
+                lights[num_lights].x = FX(mx) + FX(0.5);
+                lights[num_lights].y = FX(my) + FX(0.5);
+                num_lights++;
+            }
+        }
+    }
+    /* Build the per-cell light boost from the placed fixtures. */
+    for (int y = 0; y < MAP_H; y++)
+        for (int x = 0; x < MAP_W; x++) cell_light[y][x] = 0;
+    for (int i = 0; i < num_lights; i++) {
+        int lcx = FX_INT(lights[i].x), lcy = FX_INT(lights[i].y);
+        for (int dy = -1; dy <= 1; dy++) {
+            int cy = lcy + dy; if (cy < 0 || cy >= MAP_H) continue;
+            for (int dx = -1; dx <= 1; dx++) {
+                int cx = lcx + dx; if (cx < 0 || cx >= MAP_W) continue;
+                int v = cell_light[cy][cx] + ((dx == 0 && dy == 0) ? 2 : 1);
+                if (v > LIGHT_BOOST_MAX) v = LIGHT_BOOST_MAX;
+                cell_light[cy][cx] = (uint8_t)v;
+            }
         }
     }
 }
@@ -297,6 +384,14 @@ static void init_lights(void) {
 #define WALL_TILE_Y        4
 #define WALL_TILE_HI_X     4
 #define WALL_TILE_HI_Y     4
+/* Spotted partition wallpaper. PARTITION_TILE = how many times the 64x64 dot
+ * tile repeats per cell (overall dot scale). PARTITION_DETAIL = peak dot
+ * darkness vs the yellow — kept low so the dots read as a faint tint up
+ * close, and it's distance-faded in the draw loop so far partitions fade to
+ * plain yellow (you only notice the dots on the near wall). */
+#define PARTITION_TILE_X   8
+#define PARTITION_TILE_Y   8
+#define PARTITION_DETAIL   8
 #define WALL_LOD_THRESHOLD FX(2)
 #define TEX_W_MASK  (TEX_W - 1)
 #define TEX_H_MASK  (TEX_H - 1)
@@ -383,6 +478,15 @@ void raycast_set_brightness(int lvl) {
         for (int i = 0; i < 8; i++)
             Hw32xSetBGColor(NEANDER_BASE + i, nb[i][0]*lvl/FADE_STEPS, nb[i][1]*lvl/FADE_STEPS, nb[i][2]*lvl/FADE_STEPS);
     }
+    {
+        static const uint8_t ob[OUTLET_LEVELS][3] = {{2,2,2},{9,9,8},{16,15,13},{22,21,18},{28,27,23}};
+        for (int i = 0; i < OUTLET_LEVELS; i++)
+            Hw32xSetBGColor(OUTLET_BASE + i, ob[i][0]*lvl/FADE_STEPS, ob[i][1]*lvl/FADE_STEPS, ob[i][2]*lvl/FADE_STEPS);
+    }
+    for (int i = 0; i < SHADE_LEVELS; i++) {
+        Hw32xSetBGColor(PARTITION_BASE + i,
+            MIX(24,FOG_R,i)*lvl/FADE_STEPS, MIX(25,FOG_G,i)*lvl/FADE_STEPS, MIX(15,FOG_B,i)*lvl/FADE_STEPS);
+    }
 }
 
 static void build_palette(void) {
@@ -431,6 +535,21 @@ static void build_palette(void) {
     Hw32xSetBGColor(NEANDER_BASE + 5, 19, 16, 13);
     Hw32xSetBGColor(NEANDER_BASE + 6, 23, 20, 17);
     Hw32xSetBGColor(NEANDER_BASE + 7, 26, 22, 19);
+    /* Electrical outlet decal: slot-dark -> warm plate-white. */
+    Hw32xSetBGColor(OUTLET_BASE + 0,  2,  2,  2);
+    Hw32xSetBGColor(OUTLET_BASE + 1,  9,  9,  8);
+    Hw32xSetBGColor(OUTLET_BASE + 2, 16, 15, 13);
+    Hw32xSetBGColor(OUTLET_BASE + 3, 22, 21, 18);
+    Hw32xSetBGColor(OUTLET_BASE + 4, 28, 27, 23);
+    /* Partition wallpaper: muted olive-green eggshell (the spotted divider
+     * in the reference) — greener / less saturated than the yellow walls,
+     * bright..fog like the wall ramp so distance shading + dot motif work. */
+    for (int i = 0; i < SHADE_LEVELS; i++) {
+        Hw32xSetBGColor(PARTITION_BASE + i,
+                        MIX(24, FOG_R, i),
+                        MIX(25, FOG_G, i),
+                        MIX(15, FOG_B, i));
+    }
 }
 
 /* Byte pointer to the start of pixel data in the current back framebuffer.
@@ -481,6 +600,9 @@ void raycast_load_fixed(void) {
     partitions[0] = (partition_t){ FX(22), FX(22), FX(26), FX(22) };
     partitions[1] = (partition_t){ FX(20), FX(11), FX(20), FX(14) };
     num_partitions = 2;
+    partition_style[0] = 0; partition_style[1] = 0;   /* both chevron */
+    g_lobby_ceiling = 0;
+    num_decals = 0;                       /* outlet is lobby-only */
     player.x = FX(16.5); player.y = FX(28.5); player.angle = 192;
 }
 
@@ -497,11 +619,22 @@ void raycast_load_lobby(void) {
      *  - T-divider top-left: vertical stem (x=3, rows 2-3) + arm (row 3, x3->5)
      *  - entrance wall (row 5) split by a centre gap (cols 3-4) you walk up. */
     partitions[0] = (partition_t){ FX(3), FX(2), FX(3), FX(4) };  /* T stem     */
-    partitions[1] = (partition_t){ FX(3), FX(3), FX(5), FX(3) };  /* T arm      */
-    partitions[2] = (partition_t){ FX(2), FX(5), FX(3), FX(5) };  /* entrance L */
-    partitions[3] = (partition_t){ FX(4), FX(5), FX(7), FX(5) };  /* entrance R (closed in 1 cell) */
+    partitions[1] = (partition_t){ FX(3), FX(3), FX(4), FX(3) };  /* T arm (1 cell) */
+    partitions[2] = (partition_t){ FX(2), FX(6), FX(4), FX(6) };  /* entrance L (depth +1, wall @ y=6) */
+    partitions[3] = (partition_t){ FX(5), FX(6), FX(7), FX(6) };  /* entrance R */
     num_partitions = 4;
-    player.x = FX(4.0); player.y = FX(6.6); player.angle = 184;
+    /* T-stem, T-arm, entrance-L = spotted olive wallpaper; entrance-R (the
+     * outlet wall) = chevron, same as the main walls (per the reference). */
+    partition_style[0] = 1; partition_style[1] = 1;
+    partition_style[2] = 1; partition_style[3] = 0;
+    g_lobby_ceiling = 1;                  /* hand-authored fluorescent runs */
+    /* Outlet on entrance-R's south face (the photo's right-hand partition),
+     * low and right-of-center in the spawn/menu view. Placed FX(0.16) south
+     * of the y=5 wall line so it sits just in front of the face, not inside
+     * it; z=0.15 = standard receptacle height up the 1.0-tall wall. */
+    decals[0] = (decal_t){ FX(5.33), FX(6.16), FX(0.20) };
+    num_decals = 1;
+    player.x = FX(5.0); player.y = FX(7.6); player.angle = 184;
 }
 
 /* Per-frame palette nudge on the brightest wall and ceiling entries —
@@ -726,6 +859,63 @@ void player_update(void) {
  * horizon places the figure's feet on the floor and head 1 world unit up.
  * Front/back is dot(player - standup, standup_forward) — positive = front
  * (sample texture), negative = back (cardboard fill). */
+/* Wall-mounted outlet decals. Same camera-space billboard transform as the
+ * standups, but anchored at a height fraction (z, plate centre) rather than
+ * the floor, and sized by DECAL_OUTLET_H. Per-stripe wall z-test so a nearer
+ * wall occludes it; the decal sits just in front of its partition so it isn't
+ * self-occluded. Full opaque rect (an outlet plate IS a rectangle). */
+static void draw_decals(uint8_t *fb,
+                        fx_t dirX, fx_t dirY, fx_t planeX, fx_t planeY) {
+    if (num_decals <= 0) return;
+    fx_t det = FX_MUL(planeX, dirY) - FX_MUL(dirX, planeY);
+    if (det == 0) return;
+    fx_t inv_det = FX_DIV(FX_ONE, det);
+    int horizon_y = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
+    int eye_focal = (SCREEN_H * (int)SHARED_UC->eye_h) >> 8;
+
+    for (int i = 0; i < num_decals; i++) {
+        fx_t sx = decals[i].x - player.x;
+        fx_t sy = decals[i].y - player.y;
+        fx_t transformX = FX_MUL(inv_det, FX_MUL( dirY, sx) - FX_MUL( dirX, sy));
+        fx_t transformY = FX_MUL(inv_det, FX_MUL(-planeY, sx) + FX_MUL( planeX, sy));
+        if (transformY < FX(0.08))       continue;   /* essentially on top of it */
+        if (transformY >= MAX_VIEW_DIST) continue;   /* beyond fog */
+
+        fx_t ratio = FX_DIV(transformX, transformY);
+        int screenX = (SCREEN_W >> 1)
+                    + (int)(((int32_t)(SCREEN_W >> 1) * ratio) >> FX_SHIFT);
+
+        int spriteHeight = (int)(((int64_t)SCREEN_H * DECAL_OUTLET_H) / transformY);
+        int spriteWidth  = spriteHeight * OUTLET_TEX_WIDTH / OUTLET_TEX_HEIGHT;
+        if (spriteHeight < 1 || spriteWidth < 1) continue;
+
+        int floor_y  = horizon_y + (int)(((int32_t)eye_focal << FX_SHIFT) / transformY);
+        int center_y = floor_y - (int)(((int64_t)SCREEN_H * decals[i].z) / transformY);
+        int drawStartY_u = center_y - (spriteHeight >> 1);
+        int drawStartX_u = screenX  - (spriteWidth  >> 1);
+        int drawEndY_u   = drawStartY_u + spriteHeight;
+        int drawEndX_u   = drawStartX_u + spriteWidth;
+
+        int drawStartY = drawStartY_u < 0 ? 0 : drawStartY_u;
+        int drawEndY   = drawEndY_u >= SCREEN_H ? SCREEN_H - 1 : drawEndY_u;
+        int drawStartX = drawStartX_u < 0 ? 0 : drawStartX_u;
+        int drawEndX   = drawEndX_u >= SCREEN_W ? SCREEN_W - 1 : drawEndX_u;
+
+        for (int stripe = drawStartX; stripe <= drawEndX; stripe++) {
+            if (transformY >= WALL_DIST(stripe)) continue;
+            int texX = ((stripe - drawStartX_u) * OUTLET_TEX_WIDTH) / spriteWidth;
+            if (texX < 0 || texX >= OUTLET_TEX_WIDTH) continue;
+            uint8_t *p = fb + drawStartY * SCREEN_W + stripe;
+            for (int y = drawStartY; y <= drawEndY; y++) {
+                int texY = ((y - drawStartY_u) * OUTLET_TEX_HEIGHT) / spriteHeight;
+                if (texY >= 0 && texY < OUTLET_TEX_HEIGHT)
+                    *p = (uint8_t)(OUTLET_BASE + outlet_tex[texY][texX]);
+                p += SCREEN_W;
+            }
+        }
+    }
+}
+
 static void draw_standups(uint8_t *fb,
                           fx_t dirX, fx_t dirY, fx_t planeX, fx_t planeY) {
     fx_t det = FX_MUL(planeX, dirY) - FX_MUL(dirX, planeY);
@@ -914,6 +1104,7 @@ static void partition_build_faces(void) {
         int show_north = player.y < ymin;
         int show_south = player.y > ymax;
         if (!(show_west || show_east || show_north || show_south)) continue;
+        int face_start = n;
 
         if (show_west && n < MAX_PARTITION_FACES) {
             /* West face: x = xmin, y from ymin..ymax. U = world Y. */
@@ -941,6 +1132,8 @@ static void partition_build_faces(void) {
             PFACE_UA(n) = xmin; PFACE_UB(n) = xmax;
             n++;
         }
+        /* Tag every face of this partition with its wallpaper style. */
+        for (int k = face_start; k < n; k++) PFACE_STYLE(k) = partition_style[i];
     }
     PFACE_COUNT = n;
 }
@@ -1423,6 +1616,7 @@ void raycast_draw_walls(int col_start, int col_end) {
          * angles where the wall DDA would similarly lose precision — same
          * trap that originally pushed us to projection. */
         int  partition_hit       = 0;
+        int  part_style          = 0;
         fx_t partition_wallhit_w = 0;
         int  n_faces = PFACE_COUNT;
         for (int fi = 0; fi < n_faces; fi++) {
@@ -1436,15 +1630,18 @@ void raycast_draw_walls(int col_start, int col_end) {
             fx_t cy  = ay - py;
 
             fx_t denom = FX_MUL(rayDirY, dxs) - FX_MUL(rayDirX, dys);
-            if (denom == 0) continue;
+            /* |denom| < 128 (~0.1deg off parallel): an edge-on sliver with no
+             * visible width. Skipping it also guarantees both quotients below
+             * stay inside 32 bits, so fx_div_hw needs no overflow saturation. */
+            if (denom < 128 && denom > -128) continue;
 
             fx_t t_num = FX_MUL(cy, dxs) - FX_MUL(cx, dys);
-            fx_t t = fx_div_sat(t_num, denom);
+            fx_t t = fx_div_hw(t_num, denom);
             if (t <= FX(0.1)) continue;
             if (t >= perpDist) continue;
 
             fx_t s_num = FX_MUL(rayDirX, cy) - FX_MUL(rayDirY, cx);
-            fx_t s = fx_div_sat(s_num, denom);
+            fx_t s = fx_div_hw(s_num, denom);
             if (s < 0 || s > FX_ONE) continue;
 
             perpDist = t;
@@ -1452,8 +1649,13 @@ void raycast_draw_walls(int col_start, int col_end) {
             fx_t ub = PFACE_UB(fi);
             partition_wallhit_w = ua + FX_MUL(s, ub - ua);
             partition_hit = 1;
-            side = 0;
+            part_style = PFACE_STYLE(fi);
+            side = (dxs == 0) ? 0 : 1;   /* vertical face = E/W (X-side), horizontal = N/S */
         }
+        /* Spotted olive wallpaper applies only to partitions flagged style 1
+         * (the left + T divider). Chevron partitions (style 0, e.g. the
+         * outlet wall) render exactly like a main wall. */
+        int spotted = partition_hit && part_style;
 
         /* No wall AND no partition in range — leave the column as the
          * sky/ceiling/floor that earlier passes painted. */
@@ -1497,12 +1699,41 @@ void raycast_draw_walls(int col_start, int col_end) {
          * both sides so the wallpaper reads consistently and the
          * chevron sits in the same perceptual region everywhere. */
         wall_shade += 1;
+        /* Subtle directional form cue: faces whose normal runs N/S (side 1)
+         * are one shade darker than E/W faces, so a wall or partition reads
+         * with form — you can see where it turns a corner — instead of flat. */
+        if (side) wall_shade += SIDE_SHADE;
         if (wall_shade < 0) wall_shade = 0;
         /* Final clamp so the baseboard color lookup (WALL_BASE +
          * wall_shade) and any downstream shade-index user can't walk
          * off the end of the wall palette into FLOOR_BASE — that bug
          * was painting distant baseboards as bright carpet yellow. */
         if (wall_shade > SHADE_LEVELS - 1) wall_shade = SHADE_LEVELS - 1;
+
+        /* Light boost: a wall/partition next to a ceiling fixture reads
+         * brighter. Sample the hit cell's precomputed light level and pull
+         * the shade toward bright. Partitions live between cells, so derive
+         * the cell from the actual hit point; solid walls use the DDA cell. */
+        {
+            int litX, litY;
+            if (partition_hit) {
+                litX = FX_INT(px + FX_MUL(perpDist, rayDirX));
+                litY = FX_INT(py + FX_MUL(perpDist, rayDirY));
+                if ((unsigned)litX >= (unsigned)MAP_W ||
+                    (unsigned)litY >= (unsigned)MAP_H) { litX = mapX; litY = mapY; }
+            } else {
+                litX = mapX; litY = mapY;
+            }
+            int lit = CELL_LIGHT(litY, litX);
+            if (lit) {
+                /* A lit surface resists distance fog: cap how dark it gets
+                 * (more headroom the more lit). Near surfaces are already
+                 * below the cap; far-but-lit ones — the rear T-divider —
+                 * stay mid-bright and readable instead of fogging out. */
+                int cap = LIT_FOG_CAP - (lit - 1) * 2;
+                if (wall_shade > cap) wall_shade = cap;
+            }
+        }
 
         /* Distant fluorescent strobe burst. Each cell past
          * FOG_RAMP_DIST has its own pseudo-random phase. Most of the
@@ -1532,7 +1763,14 @@ void raycast_draw_walls(int col_start, int col_end) {
          * the seam tradeoff we accepted up front. */
         const uint8_t *tex_data;
         int tex_w, tex_h, tile_x, tile_y;
-        if (perpDist < WALL_LOD_THRESHOLD) {
+        if (spotted) {
+            /* Spotted partitions use the olive polka-dot wallpaper. */
+            tex_data = (const uint8_t *)partition_tex;
+            tex_w    = PARTITION_TEX_WIDTH;
+            tex_h    = PARTITION_TEX_HEIGHT;
+            tile_x   = PARTITION_TILE_X;
+            tile_y   = PARTITION_TILE_Y;
+        } else if (perpDist < WALL_LOD_THRESHOLD) {
             tex_data = (const uint8_t *)wall_tex_hi;
             tex_w    = WALL_TEX_HI_WIDTH;
             tex_h    = WALL_TEX_HI_HEIGHT;
@@ -1587,7 +1825,18 @@ void raycast_draw_walls(int col_start, int col_end) {
                        (uint32_t)lineHeight);
 
         int detail_factor;
-        if (perpDist < FX(2)) {
+        if (spotted) {
+            /* Subtle up close, fading to nothing with distance — you only
+             * notice the dots on the near partition; far ones go plain yellow. */
+            if (perpDist < FX(2)) {
+                detail_factor = PARTITION_DETAIL;
+            } else if (perpDist < FX(3.5)) {
+                detail_factor = (int)(((FX(3.5) - perpDist) * PARTITION_DETAIL) / FX(1.5));
+                if (detail_factor < 0) detail_factor = 0;
+            } else {
+                detail_factor = 0;
+            }
+        } else if (perpDist < FX(2)) {
             detail_factor = WALL_PATTERN_MAX;
         } else if (perpDist < FX(3.5)) {
             fx_t remaining = FX(3.5) - perpDist;
@@ -1611,15 +1860,19 @@ void raycast_draw_walls(int col_start, int col_end) {
          * × 64 ty ≈ 320 cycles per column × 160 cols per CPU ≈ ~2ms
          * per CPU per frame on wall-heavy scenes. */
         uint8_t lut5[5];
+        /* Both chevron walls and the spotted partitions use the yellow
+         * WALL_BASE ramp — same color scheme, only the motif differs (the
+         * spotted partition just swaps the chevron texture for the dots). */
+        uint8_t lut_base = WALL_BASE;
         for (int v = 0; v < 5; v++) {
             int pattern = (v * detail_factor) >> 4;
             int s = wall_shade + pattern;
             if (s >= SHADE_LEVELS) s = SHADE_LEVELS - 1;
-            lut5[v] = (uint8_t)(WALL_BASE + s);
+            lut5[v] = (uint8_t)(lut_base + s);
         }
         uint8_t shade_lut[WALL_TEX_HI_HEIGHT];
-        for (int ty = 0; ty < tex_h; ty++) {
-            shade_lut[ty] = lut5[wall_col[ty]];
+        if (detail_factor) {   /* uniform when faded — skip the build, flat-fill below */
+            for (int ty = 0; ty < tex_h; ty++) shade_lut[ty] = lut5[wall_col[ty]];
         }
 
         /* Baseboard molding: bottom ~3% of the wall in world space gets
@@ -1636,17 +1889,17 @@ void raycast_draw_walls(int col_start, int col_end) {
         if      (base_y > drawEnd)    wall_end = drawEnd;
         else if (base_y <= drawStart) wall_end = drawStart - 1;
         else                          wall_end = base_y - 1;
-        /* Molding color = wall_shade with no chevron pattern offset, so
-         * the strip reads as the wallpaper's background yellow with the
-         * chevron motif simply stopping at the molding line. */
-        uint8_t base_color = (uint8_t)(WALL_BASE + wall_shade);
+        /* Molding color = the yellow wall background (no chevron/dot offset),
+         * the same on the main walls and the spotted partitions. */
+        uint8_t mold_base  = WALL_BASE;
+        uint8_t base_color = (uint8_t)(mold_base + wall_shade);
         /* 1-pixel darker line at the wall/molding boundary suggests
          * the shadow gap of a recessed baseboard — a small depth cue
          * that reads as the molding standing slightly proud of the
          * wall. Two shades darker than the molding base. */
         int shadow_shade = wall_shade + 2;
         if (shadow_shade > SHADE_LEVELS - 1) shadow_shade = SHADE_LEVELS - 1;
-        uint8_t shadow_color = (uint8_t)(WALL_BASE + shadow_shade);
+        uint8_t shadow_color = (uint8_t)(mold_base + shadow_shade);
 
         fx_t tex_step = (fx_t)divu_read();
         fx_t tex_pos  = (fx_t)(drawStart - wall_top) * tex_step;
@@ -1667,7 +1920,15 @@ void raycast_draw_walls(int col_start, int col_end) {
          * (advances exactly (wall_end - drawStart + 1) writes) so the
          * baseboard loop below picks up at the right framebuffer row. */
         int total = wall_end - drawStart + 1;
-        if (total > 0) {
+        if (total > 0 && detail_factor == 0) {
+            /* Faded distance: the pattern adds nothing, so the whole wall
+             * column is one flat color. Skip the shade_lut build (above) and
+             * the per-pixel texture sampling — just fill. Advances p like the
+             * textured path so the baseboard below lines up. Big win for far
+             * walls and (64-tall) spotted partitions. */
+            uint8_t flat = lut5[0];
+            for (int k = 0; k < total; k++) { *p = flat; p += SCREEN_W; }
+        } else if (total > 0) {
             int iters4 = total >> 2;
             int tail   = total & 3;
             if (iters4 > 0) {
@@ -1757,6 +2018,9 @@ void raycast_draw_walls(int col_start, int col_end) {
  * spent spinning on the secondary-done sync after that. */
 volatile uint16_t prof_primary_idle_ticks = 0;
 volatile uint16_t prof_primary_half_ticks = 0;
+/* Per-pass FRT breakdown of the primary's half (clear/ceiling/carpet/walls). */
+volatile uint16_t prof_pass_clear = 0, prof_pass_ceil = 0,
+                  prof_pass_carpet = 0, prof_pass_walls = 0;
 static inline uint16_t prof_frt_read(void) {
     uint8_t hi = SH2_FRT_FRCH;
     uint8_t lo = SH2_FRT_FRCL;
@@ -1864,10 +2128,15 @@ void raycast_render(void) {
      * before walls could start). One sync point at the end. */
     MARS_SYS_COMM4 = MARS_CMD_HALF;
 
+    uint16_t pp = prof_frt_read();
     raycast_clear_half(0, SCREEN_W / 2);
+    { uint16_t n = prof_frt_read(); prof_pass_clear  = (uint16_t)(n - pp); pp = n; }
     raycast_draw_ceiling_grid(0, SCREEN_W / 2);
+    { uint16_t n = prof_frt_read(); prof_pass_ceil   = (uint16_t)(n - pp); pp = n; }
     raycast_draw_carpet(0, SCREEN_W / 2);
+    { uint16_t n = prof_frt_read(); prof_pass_carpet = (uint16_t)(n - pp); pp = n; }
     raycast_draw_walls(0, SCREEN_W / 2);
+    { uint16_t n = prof_frt_read(); prof_pass_walls  = (uint16_t)(n - pp); }
 
     uint16_t idle_start = prof_frt_read();
     prof_primary_half_ticks = (uint16_t)(idle_start - prof_start);
@@ -1899,6 +2168,7 @@ void raycast_render(void) {
      * overrides perpDist if a partition is closer. Drops to the same
      * column-rendering code path as regular walls. */
     draw_standups(fb, dirX, dirY, planeX, planeY);
+    draw_decals(fb, dirX, dirY, planeX, planeY);
 
     /* Vertical head bob via framebuffer line table.
      *

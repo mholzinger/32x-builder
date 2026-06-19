@@ -397,11 +397,15 @@ int g_lobby_ceiling = 0;
 uint8_t ceil_h[MAP_H][MAP_W];      /* extern: procgen/loaders author it */
 #define CEIL_H(y,x) (((volatile uint8_t *)((uintptr_t)ceil_h | 0x20000000))[(y)*MAP_W + (x)])
 
-/* Render-reject bbox over all low cells (world coords) + an "any low ceiling
- * present" flag, both derived from ceil_h[] by the loaders. The slab/bulkhead
- * passes use the bbox to skip rows/columns nowhere near a crawlspace. */
+/* Render-reject bbox over all low cells + an "any low ceiling present" flag.
+ * The slab per-row reject uses the bbox; the bulkhead pass needs PER-CRAWLSPACE
+ * rects (a single union bbox caps the wrong faces when crawlspaces are
+ * disjoint), so each low-ceiling run is recorded as its own rect. */
 int   g_lowceil_active = 0;
 static fx_t g_lowceil_x0, g_lowceil_y0, g_lowceil_x1, g_lowceil_y1;
+#define MAX_LOWCEIL_RECTS 8
+static fx_t lowceil_rect[MAX_LOWCEIL_RECTS][4];   /* {x0,y0,x1,y1} world coords */
+static int  n_lowceil_rect = 0;
 
 /* Reset every cell to full-height open ceiling (called by each map loader).
  * 255 is "full" (u8 cap; the 1/256 difference is invisible). */
@@ -410,13 +414,25 @@ void ceil_h_clear(void) {
     for (int y = 0; y < MAP_H; y++)
         for (int x = 0; x < MAP_W; x++) ceil_h[y][x] = CEIL_H_FULL;
     g_lowceil_active = 0;
+    n_lowceil_rect = 0;
 }
 
-/* Mark cell (cx,cy) as a low crawlspace ceiling and grow the render bbox. */
-void ceil_h_set_low(int cx, int cy) {
-    if (cx < 0 || cx >= MAP_W || cy < 0 || cy >= MAP_H) return;
-    ceil_h[cy][cx] = CRAWL_CEIL_H;
-    fx_t x0 = FX(cx), x1 = FX(cx + 1), y0 = FX(cy), y1 = FX(cy + 1);
+/* Mark a straight run of `len` cells from (cx,cy) along (dx,dy) as a low-ceiling
+ * crawlspace, recording it as one rect (so its mouth gets capped correctly) and
+ * growing the overall render bbox. dx,dy in {0,1}; len>=1. */
+void ceil_h_add_run(int cx, int cy, int dx, int dy, int len) {
+    if (len < 1) return;
+    for (int k = 0; k < len; k++) {
+        int x = cx + dx * k, y = cy + dy * k;
+        if ((unsigned)x < MAP_W && (unsigned)y < MAP_H) ceil_h[y][x] = CRAWL_CEIL_H;
+    }
+    fx_t x0 = FX(cx), y0 = FX(cy);
+    fx_t x1 = FX(cx + dx * (len - 1) + 1), y1 = FX(cy + dy * (len - 1) + 1);
+    if (n_lowceil_rect < MAX_LOWCEIL_RECTS) {
+        lowceil_rect[n_lowceil_rect][0] = x0; lowceil_rect[n_lowceil_rect][1] = y0;
+        lowceil_rect[n_lowceil_rect][2] = x1; lowceil_rect[n_lowceil_rect][3] = y1;
+        n_lowceil_rect++;
+    }
     if (!g_lowceil_active) {
         g_lowceil_x0 = x0; g_lowceil_x1 = x1; g_lowceil_y0 = y0; g_lowceil_y1 = y1;
         g_lowceil_active = 1;
@@ -427,6 +443,9 @@ void ceil_h_set_low(int cx, int cy) {
         if (y1 > g_lowceil_y1) g_lowceil_y1 = y1;
     }
 }
+
+/* Single low-ceiling cell (a 1-long run). */
+void ceil_h_set_low(int cx, int cy) { ceil_h_add_run(cx, cy, 0, 0, 1); }
 /* True if the cell holding world point (wx,wy) is a low crawlspace ceiling. */
 static inline int ceil_is_low(fx_t wx, fx_t wy) {
     int cx = FX_INT(wx), cy = FX_INT(wy);
@@ -465,7 +484,17 @@ static void init_lights(void) {
                 if (world_map[my][mx] != 0) continue;
                 /* No fixtures in a low-ceiling crawlspace cell — the slab is the
                  * ceiling there, so an overhead light would float on top of it. */
-                if (g_lowceil_active && CEIL_H(my, mx) != CEIL_H_FULL) continue;
+                /* Skip a fixture on/around a crawlspace: its own cell AND the
+                 * 4-neighbours, so none floats over the low ceiling or hangs at
+                 * the tunnel mouth where it'd be seen straight through. */
+                if (g_lowceil_active) {
+                    int near_low = CEIL_H(my, mx) != CEIL_H_FULL
+                        || (mx > 0          && CEIL_H(my, mx - 1) != CEIL_H_FULL)
+                        || (mx < MAP_W - 1  && CEIL_H(my, mx + 1) != CEIL_H_FULL)
+                        || (my > 0          && CEIL_H(my - 1, mx) != CEIL_H_FULL)
+                        || (my < MAP_H - 1  && CEIL_H(my + 1, mx) != CEIL_H_FULL);
+                    if (near_low) continue;
+                }
                 lights[num_lights].x = FX(mx) + FX(0.5);
                 lights[num_lights].y = FX(my) + FX(0.5);
                 num_lights++;
@@ -747,8 +776,8 @@ void raycast_init(void) {
  * `target` total. Two passes: count candidates, then place every stride-th so
  * they spread across the whole map instead of clustering in the first rows.
  * Each plate sits at the face's grid plane, centred on the cell, receptacle
- * height. This is the hand-map analogue of the procgen placement to come. */
-static void place_outlets_fixed(int target) {
+ * height. Map-agnostic (scans the live world_map), so procgen reuses it too. */
+void raycast_place_outlets(int target) {
     if (num_decals >= target) return;
     int count = 0;
     for (int y = 1; y < MAP_H - 1; y++)
@@ -856,7 +885,7 @@ void raycast_load_fixed(void) {
      * and the slab render all derive from ceil_h[] now, so this is just "these
      * cells have a low ceiling" — place more anywhere by marking more cells. */
     ceil_h_clear();
-    for (int cy = 22; cy <= 26; cy++) ceil_h_set_low(1, cy);
+    ceil_h_add_run(1, 22, 0, 1, 5);   /* col 1, rows 22-26 — one capped run */
     /* Wall outlet on the east wall of the spawn corridor (col 17, west face,
      * rows 24-28), ~2 cells ahead and just right of spawn so it reads on the
      * way out. X 0.16 west of the X=17 face so it sits just in front; z=0.20
@@ -866,7 +895,7 @@ void raycast_load_fixed(void) {
      * across the map's visible wall faces. */
     num_decals = 0;
     decals[num_decals++] = (decal_t){ FX(17.0), FX(26.5), FX(0.20), 0 };
-    place_outlets_fixed(12);
+    raycast_place_outlets(12);
     player.x = FX(16.5); player.y = FX(28.5); player.angle = 192;
 }
 
@@ -1782,9 +1811,8 @@ static void raycast_draw_bulkheads(int col_start, int col_end) {
     int horizon_y = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
     int eye = (int)SHARED_UC->eye_h;
     int ch  = CRAWL_CEIL_H;
-    fx_t zx0 = g_lowceil_x0, zx1 = g_lowceil_x1;
-    fx_t zy0 = g_lowceil_y0, zy1 = g_lowceil_y1;
-    const fx_t PAR = FX(0.01);   /* skip near-parallel rays (no crossing) */
+    const fx_t PAR  = FX(0.01);   /* skip near-parallel rays (no crossing) */
+    const fx_t STEP = FX(0.03);   /* probe just past a crossing for entry/exit */
 
     for (int col = col_start; col < col_end; col++) {
         fx_t camX = ((fx_t)(2 * col - SCREEN_W) << FX_SHIFT) / SCREEN_W;
@@ -1793,38 +1821,40 @@ static void raycast_draw_bulkheads(int col_start, int col_end) {
 
         fx_t best = 0x7FFFFFFF;
         fx_t hit_along = 0;      /* world coord along the nearest face → texX */
-        /* A face is a header ONLY if the ray is ENTERING the zone there (ceiling
-         * steps down in front of you). The far/exit boundary steps back UP and is
-         * occluded by the slab — drawing it punched chevron through the ceiling
-         * ("transparent"). Test a point just past the crossing: inside zone =
-         * entry (cap it), outside = exit (skip). */
-        const fx_t STEP = FX(0.03);
-        /* Two end faces y=zy0, y=zy1 (span x in [zx0,zx1]). */
-        if (rdy > PAR || rdy < -PAR) {
-            for (int e = 0; e < 2; e++) {
-                fx_t yf = e ? zy1 : zy0;
-                fx_t t  = fx_div_hw(yf - py, rdy);
-                if (t <= PAR) continue;
-                fx_t hx = px + FX_MUL(t, rdx);
-                if (hx < zx0 || hx > zx1) continue;
-                fx_t ex = px + FX_MUL(t + STEP, rdx);
-                fx_t ey = py + FX_MUL(t + STEP, rdy);
-                if (ex < zx0 || ex > zx1 || ey < zy0 || ey > zy1) continue; /* exit */
-                if (t < best) { best = t; hit_along = hx; }
+        /* Cap EACH crawlspace rect independently (a single union bbox caps the
+         * wrong faces for disjoint crawlspaces — that's why one tunnel had no
+         * endcaps). A face is a header only where the ray ENTERS that rect
+         * (ceiling steps down ahead); the far exit step is occluded by the slab,
+         * so probe a point just past the crossing and skip it if it's outside
+         * the rect. Take the nearest entry face over all rects. */
+        for (int r = 0; r < n_lowceil_rect; r++) {
+            fx_t zx0 = lowceil_rect[r][0], zy0 = lowceil_rect[r][1];
+            fx_t zx1 = lowceil_rect[r][2], zy1 = lowceil_rect[r][3];
+            if (rdy > PAR || rdy < -PAR) {
+                for (int e = 0; e < 2; e++) {
+                    fx_t yf = e ? zy1 : zy0;
+                    fx_t t  = fx_div_hw(yf - py, rdy);
+                    if (t <= PAR) continue;
+                    fx_t hx = px + FX_MUL(t, rdx);
+                    if (hx < zx0 || hx > zx1) continue;
+                    fx_t ex = px + FX_MUL(t + STEP, rdx);
+                    fx_t ey = py + FX_MUL(t + STEP, rdy);
+                    if (ex < zx0 || ex > zx1 || ey < zy0 || ey > zy1) continue;
+                    if (t < best) { best = t; hit_along = hx; }
+                }
             }
-        }
-        /* Two side faces x=zx0, x=zx1 (span y in [zy0,zy1]). */
-        if (rdx > PAR || rdx < -PAR) {
-            for (int e = 0; e < 2; e++) {
-                fx_t xf = e ? zx1 : zx0;
-                fx_t t  = fx_div_hw(xf - px, rdx);
-                if (t <= PAR) continue;
-                fx_t hy = py + FX_MUL(t, rdy);
-                if (hy < zy0 || hy > zy1) continue;
-                fx_t ex = px + FX_MUL(t + STEP, rdx);
-                fx_t ey = py + FX_MUL(t + STEP, rdy);
-                if (ex < zx0 || ex > zx1 || ey < zy0 || ey > zy1) continue; /* exit */
-                if (t < best) { best = t; hit_along = hy; }
+            if (rdx > PAR || rdx < -PAR) {
+                for (int e = 0; e < 2; e++) {
+                    fx_t xf = e ? zx1 : zx0;
+                    fx_t t  = fx_div_hw(xf - px, rdx);
+                    if (t <= PAR) continue;
+                    fx_t hy = py + FX_MUL(t, rdy);
+                    if (hy < zy0 || hy > zy1) continue;
+                    fx_t ex = px + FX_MUL(t + STEP, rdx);
+                    fx_t ey = py + FX_MUL(t + STEP, rdy);
+                    if (ex < zx0 || ex > zx1 || ey < zy0 || ey > zy1) continue;
+                    if (t < best) { best = t; hit_along = hy; }
+                }
             }
         }
         if (best == 0x7FFFFFFF) continue;

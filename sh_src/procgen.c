@@ -17,6 +17,29 @@ static int xs32_range(int lo, int hi) {
     return lo + (int)(xs32() % (uint32_t)(hi - lo + 1));
 }
 
+/* ── Player-tunable weights ───────────────────────────────────────────
+ * g_procgen_params drives every density/ratio below. A weight of w in
+ * 0..PROCGEN_MAX_W maps to a w/MAX probability (0,25,50,75,100%) via
+ * prob(), and scales counts directly elsewhere. The lobby tuning screen
+ * writes these before generation; procgen_params_default() is the preset. */
+procgen_params_t g_procgen_params = { 2, 2, 2, 2, 2, 2 };
+
+void procgen_params_default(void) {
+    g_procgen_params = (procgen_params_t){
+        .openness    = 2,   /* medium room count            */
+        .partitions  = 2,   /* some dividers                */
+        .crawlspaces = 2,   /* a couple of crawl tubes      */
+        .outlets     = 2,   /* outlets here and there       */
+        .spotted     = 2,   /* ~half spotted, half chevron  */
+        .lowdivs     = 2,   /* ~half see-over dividers      */
+    };
+}
+
+/* True with probability weight/PROCGEN_MAX_W (so 0 => never, MAX => always). */
+static int prob(int weight) {
+    return (int)(xs32() % PROCGEN_MAX_W) < weight;
+}
+
 /* ─────────────────────────────────────────────────────────────────────
  * Building-block-based generator.
  *
@@ -132,7 +155,7 @@ static void place_side_rooms(void) {
     /* Try up to N times to place rooms branching off the spine.
      * Some attempts will fail because they collide with prior rooms;
      * the surprise factor comes from how many actually land. */
-    int target_count = xs32_range(4, 7);
+    int target_count = xs32_range(3, 4 + g_procgen_params.openness);
     int attempts = target_count * 4;
     int placed = 0;
     while (attempts-- > 0 && placed < target_count) {
@@ -158,8 +181,9 @@ static void place_side_rooms(void) {
         int door_y = (side == 0) ? (ry + h) : (ry - 1);
         open_cell(door_x, door_y);
 
-        /* Mark this room for the partition pass if it's "big enough". */
-        if (w >= 4 && h >= 4 && (xs32() & 1) && num_partitions < NUM_PARTITIONS_MAX) {
+        /* Drop a divider in big rooms, gated by the partition-density weight. */
+        if (w >= 4 && h >= 4 && prob(g_procgen_params.partitions) &&
+            num_partitions < NUM_PARTITIONS_MAX) {
             /* Place a partition straddling the interior, leaving a
              * 1-cell pad from each side so collision feels right. */
             if (xs32() & 1) {
@@ -185,7 +209,7 @@ static void place_room_pair_clusters(void) {
     /* Two rooms side-by-side joined by a single-cell door, dropped
      * into otherwise-unclaimed map space, connected back to the spine
      * via a snaking corridor. */
-    int target = xs32_range(2, 4);
+    int target = xs32_range(1, 1 + g_procgen_params.openness);
     int attempts = target * 5;
     int placed = 0;
     while (attempts-- > 0 && placed < target) {
@@ -228,7 +252,8 @@ static void scatter_pockets(void) {
     /* Single-cell alcoves perpendicular to the spine. About 1 per 6
      * corridor cells; just enough to add discoverable nooks. */
     for (int x = 2; x < MAP_W - 2; x++) {
-        if ((xs32() % 6) != 0) continue;
+        /* More open => more discoverable nooks. */
+        if ((int)(xs32() % 7) > g_procgen_params.openness) continue;
         int side = (xs32() & 1);
         int py = (side == 0) ? (spine_y - spine_w) : (spine_y + 1);
         /* The pocket only lands if it doesn't already open into an
@@ -267,6 +292,99 @@ static void clear_spawn_vestibule(void) {
     }
 }
 
+/* ── Element passes (the new lobby features) ──────────────────────────── */
+
+/* True if every cell in the inclusive rect [x0,x1]x[y0,y1] is open floor. */
+static int cells_open(int x0, int y0, int x1, int y1) {
+    if (x0 < 0 || y0 < 0 || x1 >= MAP_W || y1 >= MAP_H) return 0;
+    for (int y = y0; y <= y1; y++)
+        for (int x = x0; x <= x1; x++)
+            if (world_map[y][x] != 0) return 0;
+    return 1;
+}
+
+/* True if (mx,my) is >= 4 cells from every existing partition centre. */
+static int far_from_partitions(fx_t mx, fx_t my) {
+    for (int i = 0; i < num_partitions; i++) {
+        fx_t ox = (partitions[i].x1 + partitions[i].x2) >> 1;
+        fx_t oy = (partitions[i].y1 + partitions[i].y2) >> 1;
+        fx_t dx = mx > ox ? mx - ox : ox - mx;
+        fx_t dy = my > oy ? my - oy : oy - my;
+        if (dx < FX(4) && dy < FX(4)) return 0;
+    }
+    return 1;
+}
+
+/* Scatter up to `add` free-standing wallpaper dividers into open areas — each
+ * floats with a 1-cell walkable margin all around, so it never seals a path.
+ * (Style/height get assigned afterward by assign_partition_decor.) */
+static void scatter_partitions(int add) {
+    const int L = 3;
+    int placed = 0, attempts = add * 10;
+    while (attempts-- > 0 && placed < add && num_partitions < NUM_PARTITIONS_MAX) {
+        int horiz = xs32() & 1;
+        if (horiz) {
+            int cx = xs32_range(2, MAP_W - 3 - L);
+            int cy = xs32_range(2, MAP_H - 3);
+            if (!cells_open(cx - 1, cy - 1, cx + L + 1, cy + 1)) continue;
+            fx_t my = (fx_t)cy << FX_SHIFT;
+            fx_t mx = ((fx_t)cx << FX_SHIFT) + ((fx_t)L << (FX_SHIFT - 1));
+            if (!far_from_partitions(mx, my)) continue;
+            add_partition((fx_t)cx << FX_SHIFT, my, (fx_t)(cx + L) << FX_SHIFT, my);
+        } else {
+            int cx = xs32_range(2, MAP_W - 3);
+            int cy = xs32_range(2, MAP_H - 3 - L);
+            if (!cells_open(cx - 1, cy - 1, cx + 1, cy + L + 1)) continue;
+            fx_t mx = (fx_t)cx << FX_SHIFT;
+            fx_t my = ((fx_t)cy << FX_SHIFT) + ((fx_t)L << (FX_SHIFT - 1));
+            if (!far_from_partitions(mx, my)) continue;
+            add_partition(mx, (fx_t)cy << FX_SHIFT, mx, (fx_t)(cy + L) << FX_SHIFT);
+        }
+        placed++;
+    }
+}
+
+/* Assign per-partition decor from the weights: spotted-vs-chevron wallpaper and
+ * full-vs-partial (see-over) height, rolled independently for each divider. */
+static void assign_partition_decor(void) {
+    for (int i = 0; i < num_partitions; i++) {
+        partition_style[i]  = prob(g_procgen_params.spotted) ? 1 : 0;
+        partition_height[i] = prob(g_procgen_params.lowdivs) ? 192 : 0;
+    }
+}
+
+/* Carve `count` low-ceiling crawl tubes: straight 1-wide corridor runs (walls
+ * on both sides, both ends opening into walkable space) marked low via
+ * ceil_h_set_low, so the player must crouch to pass through. */
+static void place_crawlspaces(int count) {
+    int placed = 0, attempts = count * 40;
+    while (attempts-- > 0 && placed < count) {
+        int horiz = xs32() & 1;
+        int dx = horiz ? 1 : 0, dy = horiz ? 0 : 1;
+        int L  = xs32_range(3, 5);
+        int x = xs32_range(2, MAP_W - 3 - (horiz ? L : 0));
+        int y = xs32_range(2, MAP_H - 3 - (horiz ? 0 : L));
+        int ok = 1;
+        for (int k = 0; k < L && ok; k++) {
+            int cx = x + dx * k, cy = y + dy * k;
+            if (world_map[cy][cx] != 0) { ok = 0; break; }   /* run must be floor   */
+            /* 1-wide tube: a wall on each perpendicular side (dy,dx is perp). */
+            if (world_map[cy + dx][cx + dy] == 0 ||
+                world_map[cy - dx][cx - dy] == 0) { ok = 0; break; }
+            if (ceil_h[cy][cx] != 255) { ok = 0; break; }    /* not already low     */
+            int ddx = cx - SPAWN_CX, ddy = cy - SPAWN_CY;    /* keep clear of spawn */
+            if (ddx > -2 && ddx < 2 && ddy > -2 && ddy < 2) { ok = 0; break; }
+        }
+        /* Both ends must open into walkable space so the tube is reachable. */
+        if (ok && (world_map[y - dy][x - dx] != 0 ||
+                   world_map[y + dy * L][x + dx * L] != 0)) ok = 0;
+        if (ok) {
+            ceil_h_add_run(x, y, dx, dy, L);   /* one run = one capped crawlspace */
+            placed++;
+        }
+    }
+}
+
 /* ── Driver ───────────────────────────────────────────────────────── */
 
 void procgen_run(uint32_t seed) {
@@ -284,6 +402,7 @@ void procgen_run(uint32_t seed) {
         partition_crawl[i]  = 0;   /* solid foot */
     }
 
+    /* Layout (weights scale room/pocket density). */
     fill_walls();
     carve_spine();
     place_side_rooms();
@@ -291,4 +410,14 @@ void procgen_run(uint32_t seed) {
     scatter_pockets();
     enforce_boundary();
     clear_spawn_vestibule();
+
+    /* Elements (the lobby features), all weight-driven:
+     *  - extra free-standing dividers on top of the room dividers
+     *  - per-divider spotted/partial-height decor
+     *  - low-ceiling crawl tubes carved into 1-wide corridors
+     *  - electrical outlets peppered across visible wall faces */
+    scatter_partitions(g_procgen_params.partitions * 2);
+    assign_partition_decor();
+    place_crawlspaces(g_procgen_params.crawlspaces);
+    raycast_place_outlets(g_procgen_params.outlets * 3);
 }

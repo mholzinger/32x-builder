@@ -310,6 +310,59 @@ int m_main(void) {
         }
     }
 
+    /* Phase A.5 — procedural weight tuning. Only when PROCEDURAL is chosen:
+     * the player dials the generation mix (or leaves the balanced default)
+     * before walking out. UP/DOWN pick a knob, LEFT/RIGHT adjust it, C resets
+     * to defaults, START locks it in. Drawn over the live lobby view. */
+    if (menu_selection == 1) {
+        static const char *const labels[6] = {
+            "OPENNESS    ", "PARTITIONS  ", "CRAWLSPACES ",
+            "OUTLETS     ", "SPOTTED     ", "SEE-OVER    " };
+        uint8_t *const wv[6] = {
+            &g_procgen_params.openness,  &g_procgen_params.partitions,
+            &g_procgen_params.crawlspaces, &g_procgen_params.outlets,
+            &g_procgen_params.spotted,   &g_procgen_params.lowdivs };
+        int row = 0;
+        uint16_t prev_pad = 0xFFFF;
+        for (;;) {
+            HwMdReadPad(0);
+            uint16_t pad = MARS_SYS_COMM8;
+            uint16_t pressed = (uint16_t)(pad & ~prev_pad);
+            prev_pad = pad;
+            if ((pressed & SEGA_CTRL_UP)    && row > 0) row--;
+            if ((pressed & SEGA_CTRL_DOWN)  && row < 5) row++;
+            if ((pressed & SEGA_CTRL_LEFT)  && *wv[row] > 0) (*wv[row])--;
+            if ((pressed & SEGA_CTRL_RIGHT) && *wv[row] < PROCGEN_MAX_W) (*wv[row])++;
+            if (pressed & SEGA_CTRL_C) procgen_params_default();
+            if (pressed & SEGA_CTRL_START) break;     /* lock in, generate */
+            metrics_mode_check(pad);
+            frame++;
+
+            SHARED_UC->frame_count++;
+            raycast_render();                          /* live lobby behind */
+            uint8_t *fb_text = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
+            font_draw_string(fb_text, (SCREEN_W - 15 * 8) / 2, 36,
+                             "TUNE PROCEDURAL", 49);
+            for (int i = 0; i < 6; i++) {
+                char line[32]; int n = 0;
+                line[n++] = (i == row) ? '>' : ' ';
+                line[n++] = ' ';
+                for (const char *p = labels[i]; *p; p++) line[n++] = *p;
+                line[n++] = '[';
+                for (int b = 0; b < PROCGEN_MAX_W; b++)
+                    line[n++] = (b < *wv[i]) ? '#' : '-';
+                line[n++] = ']';
+                line[n]   = 0;
+                font_draw_string(fb_text, (SCREEN_W - n * 8) / 2, 64 + i * 14, line, 49);
+            }
+            font_draw_string(fb_text, (SCREEN_W - 23 * 8) / 2, SCREEN_H - 28,
+                             "L/R ADJUST   C DEFAULTS", 49);
+            font_draw_string(fb_text, (SCREEN_W - 14 * 8) / 2, SCREEN_H - 14,
+                             "START GENERATE", 49);
+            swapBuffers();
+        }
+    }
+
     /* Phase B — menu dismissed, choice locked. Walk through the lobby and
      * into the black doorway (col 7) on the east wall. No prompt. */
     {

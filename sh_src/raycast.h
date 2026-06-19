@@ -51,11 +51,17 @@ extern int g_lowceil_active;
  * culling and the slab render all read this. Loaders/procgen author it. */
 extern uint8_t ceil_h[MAP_H][MAP_W];
 void ceil_h_clear(void);          /* reset all cells to full-height ceiling */
-void ceil_h_set_low(int cx, int cy);  /* mark a cell as a low crawlspace ceiling */
+void ceil_h_set_low(int cx, int cy);  /* mark a single cell as a low ceiling */
+/* Mark a straight run of `len` cells from (cx,cy) along (dx,dy) as ONE
+ * crawlspace (so its mouth is capped as a unit). dx,dy in {0,1}. */
+void ceil_h_add_run(int cx, int cy, int dx, int dy, int len);
 
 /* Wall-mounted decals (the lobby outlet). Count is reset per-map so the
  * outlet only renders in the lobby; the array itself lives in raycast.c. */
 extern int num_decals;
+/* Pepper outlets across the live world_map's visible wall faces until decals[]
+ * holds `target` total. Map-agnostic; loaders and procgen both call it. */
+void raycast_place_outlets(int target);
 
 void raycast_init(void);
 /* Scale the gameplay palette to brightness 0..FADE_STEPS (full..black) for

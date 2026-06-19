@@ -125,6 +125,28 @@ static void prof_sample_and_draw(uint8_t *fb) {
         t2[pos] = 0;
         font_draw_string(fb, 4, SCREEN_H - 12, t2, 49);
     }
+
+    /* Third line: the SERIAL TAIL — primary-only post-sync work that the
+     * C/G/R/W line does NOT cover. L = low-ceiling slab + bulkheads
+     * (crawlspace, scene-dependent), P = lights + standups sprites. This is
+     * the ~25%-of-frame block that was invisible until now. */
+    {
+        extern volatile uint16_t prof_pass_slab, prof_pass_sprite;
+        static const char lbl[2] = {'L', 'P'};
+        uint16_t pv[2] = { prof_pass_slab, prof_pass_sprite };
+        char t3[20];
+        int pos = 0;
+        for (int i = 0; i < 2; i++) {
+            t3[pos++] = lbl[i];
+            t3[pos++] = ':';
+            uint16_t x = pv[i];
+            for (int d = 4; d >= 0; d--) { t3[pos + d] = '0' + (x % 10); x /= 10; }
+            pos += 5;
+            t3[pos++] = ' ';
+        }
+        t3[pos] = 0;
+        font_draw_string(fb, 4, SCREEN_H - 24, t3, 49);
+    }
 }
 
 /* Top-left position + angle overlay for debugging map locations.
@@ -344,14 +366,19 @@ int m_main(void) {
             font_draw_string(fb_text, (SCREEN_W - 15 * 8) / 2, 36,
                              "TUNE PROCEDURAL", 49);
             for (int i = 0; i < 6; i++) {
+                /* "> OPENNESS    0 --|-- 4" — a slider | along a 0..MAX track,
+                 * min on the left, max value on the right, so the level reads
+                 * unambiguously (the old [##--] bar was unclear). */
                 char line[32]; int n = 0;
                 line[n++] = (i == row) ? '>' : ' ';
                 line[n++] = ' ';
                 for (const char *p = labels[i]; *p; p++) line[n++] = *p;
-                line[n++] = '[';
-                for (int b = 0; b < PROCGEN_MAX_W; b++)
-                    line[n++] = (b < *wv[i]) ? '#' : '-';
-                line[n++] = ']';
+                line[n++] = '0';
+                line[n++] = ' ';
+                for (int b = 0; b <= PROCGEN_MAX_W; b++)
+                    line[n++] = (b == *wv[i]) ? '|' : '-';
+                line[n++] = ' ';
+                line[n++] = (char)('0' + PROCGEN_MAX_W);
                 line[n]   = 0;
                 font_draw_string(fb_text, (SCREEN_W - n * 8) / 2, 64 + i * 14, line, 49);
             }

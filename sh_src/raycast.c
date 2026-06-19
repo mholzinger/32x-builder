@@ -446,11 +446,29 @@ void ceil_h_add_run(int cx, int cy, int dx, int dy, int len) {
 
 /* Single low-ceiling cell (a 1-long run). */
 void ceil_h_set_low(int cx, int cy) { ceil_h_add_run(cx, cy, 0, 0, 1); }
-/* True if the cell holding world point (wx,wy) is a low crawlspace ceiling. */
+
+/* Drop the secondary's stale cache of the crawlspace render geometry before it
+ * runs the tail pass (CMD_TAIL). These are written ONCE by the primary at map
+ * load; the secondary purges the lines so it re-reads the fresh values from
+ * SDRAM (write-through means the primary's writes are already there). ceil_h is
+ * accessed uncached (CEIL_H) so it needs no purge. Primary never calls this. */
+void raycast_purge_lowceil_cache(void) {
+    purge_cache_range(&g_lowceil_active, sizeof g_lowceil_active);
+    purge_cache_range(&g_lowceil_x0,     4 * sizeof(fx_t));   /* x0,y0,x1,y1 */
+    purge_cache_range(&n_lowceil_rect,   sizeof n_lowceil_rect);
+    purge_cache_range(lowceil_rect,      sizeof lowceil_rect);
+    purge_cache_range(ceil_h,            sizeof ceil_h);  /* slab reads it cached */
+}
+
+/* True if the cell holding world point (wx,wy) is a low crawlspace ceiling.
+ * Reads ceil_h CACHED (not the uncached CEIL_H alias) — this runs per-pixel in
+ * the slab's hot loop, so the ~12-cyc uncached tax would dominate. Coherency:
+ * the secondary purges ceil_h in raycast_purge_lowceil_cache before the tail
+ * pass; the primary wrote it write-through, so its own cache is already fresh. */
 static inline int ceil_is_low(fx_t wx, fx_t wy) {
     int cx = FX_INT(wx), cy = FX_INT(wy);
     if ((unsigned)cx >= MAP_W || (unsigned)cy >= MAP_H) return 0;
-    return CEIL_H(cy, cx) != 255;
+    return ceil_h[cy][cx] != CEIL_H_FULL;
 }
 
 /* Per-cell light boost (0..LIGHT_BOOST_MAX): each fixture brightens its own
@@ -1746,9 +1764,13 @@ static void raycast_draw_low_ceiling(int col_start, int col_end) {
     /* Per-column farthest slab depth, captured so we can stamp the z-buffer
      * AFTER the row loop (writing it mid-loop would corrupt the wall-occlusion
      * read below). Without this the slab never occludes the distant corridor
-     * ceiling lights, which then draw straight through the ceiling. */
+     * ceiling lights, which then draw straight through the ceiling.
+     * wd[] snapshots the per-column wall depth (the z-test) into cache ONCE, so
+     * the per-pixel test below isn't an uncached WALL_DIST read every pixel —
+     * the slab fills a lot of screen inside a tunnel, so that read dominated. */
     static fx_t slab_far[SCREEN_W];
-    for (int c = col_start; c < col_end; c++) slab_far[c] = 0;
+    static fx_t wd[SCREEN_W];
+    for (int c = col_start; c < col_end; c++) { slab_far[c] = 0; wd[c] = WALL_DIST(c); }
 
     for (int y = 0; y < horizon_y && y < SCREEN_H; y++) {
         int prow = horizon_y - y;
@@ -1768,16 +1790,45 @@ static void raycast_draw_low_ceiling(int col_start, int col_end) {
 
         fx_t stepx = (wxR - wxL) / SCREEN_W;
         fx_t stepy = (wyR - wyL) / SCREEN_W;
-        fx_t wx = wxL + stepx * col_start;
-        fx_t wy = wyL + stepy * col_start;
 
-        /* Dark-beige drop-panel: fill + darker seam on a half-cell world lattice.
-         * The seams give the surface a parallax/structure cue so it reads as a
-         * solid ceiling rather than a flat dark void (which looked transparent). */
+        /* Column-clip: solve for the column sub-range whose world position lands
+         * in the zone bbox, instead of scanning all 320 columns per row. The
+         * crawlspace is narrow, so this is THE win — it turns a full-width
+         * per-pixel scan into a handful of columns. Two hardware divides per axis
+         * give the entry/exit columns; per-pixel ceil_is_low still confirms inside
+         * the clipped span so multi-cell / disjoint zones stay correct. */
+        int cA = col_start, cB = col_end - 1;
+        const fx_t SLAB_EPS = 16;   /* treat |step| below this as "constant across row" */
+        if (stepx > SLAB_EPS || stepx < -SLAB_EPS) {
+            int a = (int)(fx_div_hw(zx0 - wxL, stepx) >> FX_SHIFT);
+            int b = (int)(fx_div_hw(zx1 - wxL, stepx) >> FX_SHIFT);
+            if (a > b) { int t = a; a = b; b = t; }
+            if (a > cA) cA = a;
+            if (b < cB) cB = b;
+        } else if (wxL < zx0 || wxL > zx1) {
+            continue;
+        }
+        if (stepy > SLAB_EPS || stepy < -SLAB_EPS) {
+            int a = (int)(fx_div_hw(zy0 - wyL, stepy) >> FX_SHIFT);
+            int b = (int)(fx_div_hw(zy1 - wyL, stepy) >> FX_SHIFT);
+            if (a > b) { int t = a; a = b; b = t; }
+            if (a > cA) cA = a;
+            if (b < cB) cB = b;
+        } else if (wyL < zy0 || wyL > zy1) {
+            continue;
+        }
+        if (cA < col_start) cA = col_start;
+        if (cB > col_end - 1) cB = col_end - 1;
+        if (cA > cB) continue;      /* no zone columns in this row */
+
+        /* Dark-beige drop-panel: fill + darker seam on a half-cell world lattice
+         * (a parallax/structure cue so it reads as a solid ceiling). */
         uint8_t *row_p = fb + y * SCREEN_W;
-        for (int col = col_start; col < col_end; col++, wx += stepx, wy += stepy) {
+        fx_t wx = wxL + stepx * cA;
+        fx_t wy = wyL + stepy * cA;
+        for (int col = cA; col <= cB; col++, wx += stepx, wy += stepy) {
             if (!ceil_is_low(wx, wy)) continue;        /* this cell's ceiling is full */
-            if (rowDist >= WALL_DIST(col)) continue;   /* behind a nearer wall */
+            if (rowDist >= wd[col]) continue;          /* behind a nearer wall (cached) */
             int seam = (((int)wx & 0x7FFF) < LOWCEIL_SEAM_W) ||
                        (((int)wy & 0x7FFF) < LOWCEIL_SEAM_W);
             row_p[col] = seam ? LOWCEIL_SEAM : LOWCEIL_COLOR;
@@ -1914,6 +1965,16 @@ static void raycast_draw_bulkheads(int col_start, int col_end) {
         }
         WALL_DIST(col) = best;   /* occlude lights/sprites behind the header */
     }
+}
+
+/* Crawlspace tail: the low-ceiling slab + its bulkhead caps for a column range.
+ * Both passes z-test the combined WALL_DIST (filled by both halves' wall pass),
+ * so this runs AFTER the wall barrier. Split across both SH-2s via CMD_TAIL —
+ * the primary calls [0,split), the secondary [split,SCREEN_W) — so the
+ * crawlspace cost (which spiked single-CPU) is shared instead of serial. */
+void raycast_draw_tail(int col_start, int col_end) {
+    raycast_draw_low_ceiling(col_start, col_end);
+    raycast_draw_bulkheads(col_start, col_end);
 }
 
 /* Carpet wear pass — stamps dark "stains" across the floor (bottom
@@ -2775,6 +2836,11 @@ volatile uint16_t prof_primary_half_ticks = 0;
 /* Per-pass FRT breakdown of the primary's half (clear/ceiling/carpet/walls). */
 volatile uint16_t prof_pass_clear = 0, prof_pass_ceil = 0,
                   prof_pass_carpet = 0, prof_pass_walls = 0;
+/* SERIAL TAIL — the primary-only passes that run AFTER the sync barrier while
+ * the secondary idles, previously unmeasured (~25% of the frame). slab =
+ * low_ceiling + bulkheads (crawlspace, scene-dependent); sprite = lights +
+ * standups. The line-table head-bob (~0.05ms) is left out. */
+volatile uint16_t prof_pass_slab = 0, prof_pass_sprite = 0;
 static inline uint16_t prof_frt_read(void) {
     uint8_t hi = SH2_FRT_FRCH;
     uint8_t lo = SH2_FRT_FRCL;
@@ -2934,12 +3000,27 @@ void raycast_render(void) {
      * the next swapBuffers() makes them visible via the VDP page flip. */
     __asm__ __volatile__("" ::: "memory");
 
-    /* Low-ceiling crawlspace slab + its bulkhead caps. Full-width on the primary
-     * now that both halves' WALL_DIST is committed, so they z-test against every
-     * column. Bulkheads draw after the slab so the entrance header overdraws the
-     * interior slab at the mouth. */
-    raycast_draw_low_ceiling(0, SCREEN_W);
-    raycast_draw_bulkheads(0, SCREEN_W);
+    /* Crawlspace tail (low-ceiling slab + bulkhead caps). Both halves' WALL_DIST
+     * is committed, so it z-tests against every column. When a crawlspace is
+     * active, PARALLELIZE it: hand the secondary its column half via CMD_TAIL and
+     * draw [0,split) here meanwhile, then barrier — so the slab+caps cost (which
+     * spiked single-CPU while crawling) is shared across both SH-2s. With no
+     * crawlspace, the passes early-out instantly, so skip the dispatch round-trip
+     * and run them inline. */
+    uint16_t ps = prof_frt_read();
+    if (g_lowceil_active) {
+        MARS_SYS_COMM4 = MARS_CMD_TAIL;          /* secondary draws [split, W) */
+        raycast_draw_tail(0, split);             /* primary draws [0, split)   */
+        while (MARS_SYS_COMM4 != MARS_CMD_NONE) {
+            __asm__ __volatile__("nop\n\tnop\n\tnop\n\tnop\n\t"
+                                 "nop\n\tnop\n\tnop\n\tnop\n\t"
+                                 "nop\n\tnop\n\tnop\n\tnop\n\t"
+                                 "nop\n\tnop\n\tnop\n\tnop");
+        }
+    } else {
+        raycast_draw_tail(0, SCREEN_W);
+    }
+    { uint16_t n = prof_frt_read(); prof_pass_slab = (uint16_t)(n - ps); ps = n; }
 
     /* Lights first, then standups — so foreground sprites (like the
      * neanderthal) overpaint any ceiling-panel pixels that project
@@ -2951,6 +3032,7 @@ void raycast_render(void) {
      * overrides perpDist if a partition is closer. Drops to the same
      * column-rendering code path as regular walls. */
     draw_standups(fb, dirX, dirY, planeX, planeY);
+    { uint16_t n = prof_frt_read(); prof_pass_sprite = (uint16_t)(n - ps); }
 
     /* Vertical head bob via framebuffer line table.
      *

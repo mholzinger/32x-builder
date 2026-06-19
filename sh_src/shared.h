@@ -21,6 +21,7 @@
 #define MARS_CMD_NONE     0
 #define MARS_CMD_HALF     1   /* Secondary draws clear+ceiling+carpet+walls for cols 160..319 */
 #define MARS_CMD_BOX      2   /* Secondary rasterizes the box title's bottom band (rows 112..223) */
+#define MARS_CMD_TAIL     3   /* Secondary draws low-ceiling slab+bulkheads for cols [split,320) */
 
 /* Snapshot of the primary's player state for the secondary to render from.
  * Primary writes this just before signaling CMD_CEILING; secondary reads

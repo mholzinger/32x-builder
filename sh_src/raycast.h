@@ -82,5 +82,10 @@ void raycast_draw_walls(int col_start, int col_end);
  * it re-reads the primary's fresh per-frame writes. Primary never calls this. */
 void raycast_purge_partition_cache(void);
 void raycast_clear_half(int col_start, int col_end);
+/* Crawlspace tail (low-ceiling slab + bulkhead caps) for a column range — runs
+ * after the wall barrier, split across both SH-2s via CMD_TAIL. */
+void raycast_draw_tail(int col_start, int col_end);
+/* Secondary CPU: drop stale crawlspace-geometry cache lines before CMD_TAIL. */
+void raycast_purge_lowceil_cache(void);
 
 #endif

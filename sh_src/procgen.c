@@ -353,35 +353,36 @@ static void assign_partition_decor(void) {
     }
 }
 
-/* Carve `count` low-ceiling crawl tubes: straight 1-wide corridor runs (walls
- * on both sides, both ends opening into walkable space) marked low via
- * ceil_h_set_low, so the player must crouch to pass through. */
+/* Carve `count` low-ceiling crouch tubes. Rather than HUNT for an existing
+ * 1-wide walled corridor (which open procgen maps rarely have — so the old
+ * version often placed zero), CARVE a 1-wide passage THROUGH a wall connecting
+ * two open areas: open just before, L wall cells (perpendicular sides also wall
+ * so it stays a 1-wide choke you can't walk around), open just after. Walls
+ * separating open areas are everywhere, so this places reliably, and carving a
+ * fresh choke guarantees a real forced-crouch crawlspace. */
 static void place_crawlspaces(int count) {
-    int placed = 0, attempts = count * 40;
+    int placed = 0, attempts = count * 80;
     while (attempts-- > 0 && placed < count) {
         int horiz = xs32() & 1;
         int dx = horiz ? 1 : 0, dy = horiz ? 0 : 1;
-        int L  = xs32_range(3, 5);
+        int L  = xs32_range(1, 3);   /* wall thickness to tunnel through */
         int x = xs32_range(2, MAP_W - 3 - (horiz ? L : 0));
         int y = xs32_range(2, MAP_H - 3 - (horiz ? 0 : L));
+        if (world_map[y - dy][x - dx] != 0) continue;          /* entrance open */
+        if (world_map[y + dy * L][x + dx * L] != 0) continue;  /* exit open     */
         int ok = 1;
         for (int k = 0; k < L && ok; k++) {
             int cx = x + dx * k, cy = y + dy * k;
-            if (world_map[cy][cx] != 0) { ok = 0; break; }   /* run must be floor   */
-            /* 1-wide tube: a wall on each perpendicular side (dy,dx is perp). */
-            if (world_map[cy + dx][cx + dy] == 0 ||
-                world_map[cy - dx][cx - dy] == 0) { ok = 0; break; }
-            if (ceil_h[cy][cx] != 255) { ok = 0; break; }    /* not already low     */
-            int ddx = cx - SPAWN_CX, ddy = cy - SPAWN_CY;    /* keep clear of spawn */
+            if (world_map[cy][cx] != 1) { ok = 0; break; }       /* must be wall to carve */
+            if (world_map[cy + dx][cx + dy] != 1 ||              /* perp sides wall   */
+                world_map[cy - dx][cx - dy] != 1) { ok = 0; break; }
+            int ddx = cx - SPAWN_CX, ddy = cy - SPAWN_CY;        /* keep clear of spawn */
             if (ddx > -2 && ddx < 2 && ddy > -2 && ddy < 2) { ok = 0; break; }
         }
-        /* Both ends must open into walkable space so the tube is reachable. */
-        if (ok && (world_map[y - dy][x - dx] != 0 ||
-                   world_map[y + dy * L][x + dx * L] != 0)) ok = 0;
-        if (ok) {
-            ceil_h_add_run(x, y, dx, dy, L);   /* one run = one capped crawlspace */
-            placed++;
-        }
+        if (!ok) continue;
+        for (int k = 0; k < L; k++) world_map[y + dy * k][x + dx * k] = 0;  /* carve passage */
+        ceil_h_add_run(x, y, dx, dy, L);                                    /* mark it low   */
+        placed++;
     }
 }
 

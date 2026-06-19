@@ -69,6 +69,17 @@ void s_main(void) {
             SHARED_UC->secondary_render_ticks = (uint16_t)(secondary_frt_read() - t0);
             break;
         }
+        case MARS_CMD_TAIL: {
+            /* Second render phase (after the wall barrier): the crawlspace slab
+             * + bulkhead caps for the secondary's column half. WALL_DIST is now
+             * committed for all columns; we touch only [split, SCREEN_W), disjoint
+             * from the primary's [0, split). Purge the crawlspace geometry first
+             * so we don't draw stale caps from a previous level. */
+            int split = (int)SHARED_UC->split_col;
+            raycast_purge_lowceil_cache();
+            raycast_draw_tail(split, SCREEN_W);
+            break;
+        }
         case MARS_CMD_BOX: {
             /* Title screen: secondary rasterizes the box's bottom band from
              * the primary-built shared draw-list. Disjoint framebuffer

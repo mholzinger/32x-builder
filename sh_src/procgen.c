@@ -277,9 +277,11 @@ void procgen_run(uint32_t seed) {
     num_partitions = 0;
     num_decals = 0;                       /* outlet is lobby-only */
     g_lobby_ceiling = 0;                  /* auto-grid ceiling for procgen */
+    ceil_h_clear();                       /* full ceilings; mark crawlspaces below */
     for (int i = 0; i < NUM_PARTITIONS_MAX; i++) {
         partition_style[i]  = 0;   /* chevron */
         partition_height[i] = 0;   /* full height */
+        partition_crawl[i]  = 0;   /* solid foot */
     }
 
     fill_walls();

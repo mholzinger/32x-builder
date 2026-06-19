@@ -145,6 +145,9 @@ uint8_t world_map[MAP_H][MAP_W];
 #define OUTLET_BASE   72    /* 5 entries: 0=slot-dark .. 4=plate-white */
 #define OUTLET_LEVELS 5
 #define PARTITION_BASE 77   /* 16 entries: olive spotted-wallpaper, bright..fog */
+#define LOWCEIL_COLOR  93   /* dark-beige panel fill for the crawlspace ceiling */
+#define LOWCEIL_SEAM   94   /* darker-beige panel seam (grid lines) */
+#define LOWCEIL_SEAM_W 0x1000   /* seam half-width, 16.16 (lattice every 0.5 cell) */
 
 /* Wall texture comes from wall_tex.h (generated from images/walltile.jpg). */
 #define TEX_W WALL_TEX_WIDTH
@@ -206,6 +209,7 @@ static fx_t pface_ua[MAX_PARTITION_FACES];
 static fx_t pface_ub[MAX_PARTITION_FACES];
 static uint8_t pface_style[MAX_PARTITION_FACES];   /* 0=chevron, 1=spotted */
 static uint8_t pface_height[MAX_PARTITION_FACES];  /* 0=full, 1..255 = fraction*256 */
+static uint8_t pface_crawl[MAX_PARTITION_FACES];   /* 1 = crawl-under (gap at foot) */
 static int  pface_count = 0;
 /* pface_* are now read CACHED (no 0x20000000 alias). They're written once per
  * frame by the primary in partition_build_faces, then read thousands of times
@@ -222,6 +226,7 @@ static int  pface_count = 0;
 #define PFACE_UB(i)    (((volatile fx_t *)pface_ub)[i])
 #define PFACE_STYLE(i) (((volatile uint8_t *)pface_style)[i])
 #define PFACE_HEIGHT(i)(((volatile uint8_t *)pface_height)[i])
+#define PFACE_CRAWL(i) (((volatile uint8_t *)pface_crawl)[i])
 #define PFACE_COUNT    (*(volatile int *)&pface_count)
 
 /* Purge a byte range from the SH-2 cache via the 0x40000000 alias (one store
@@ -242,6 +247,7 @@ void raycast_purge_partition_cache(void) {
     purge_cache_range(pface_ub,     sizeof pface_ub);
     purge_cache_range(pface_style,  sizeof pface_style);
     purge_cache_range(pface_height, sizeof pface_height);
+    purge_cache_range(pface_crawl,  sizeof pface_crawl);
     purge_cache_range(&pface_count, sizeof pface_count);
 }
 
@@ -338,6 +344,25 @@ uint8_t partition_style[NUM_PARTITIONS_MAX] = {0};
  * the floor — the ceiling shows above it. Matches the HobbyTown reference's
  * low office partitions. */
 uint8_t partition_height[NUM_PARTITIONS_MAX] = {0};
+/* Per-partition crawl-under beam: 1 = render as a free-floating solid band
+ * [BEAM_LOW, BEAM_HIGH] — open below (crawl under) and open above (see over),
+ * drawn as a foreground overlay. Collides only when standing; crouch low and
+ * you pass beneath it. (partition_height is ignored for these.) */
+uint8_t partition_crawl[NUM_PARTITIONS_MAX] = {0};
+/* Crawl-under gap height (fraction*256 of the wall) and the eye-height below
+ * which the player fits under it. ~0.4 wall = a clear crawl opening; the eye
+ * eases to CROUCH_EYE(=40) crouched, STAND_EYE(=128) standing. */
+/* Crawl-under "see-over" beam: a free-floating solid band [BEAM_LOW, BEAM_HIGH]
+ * (fraction*256 of the wall height). Open BELOW it (crawl under, crouched) and
+ * open ABOVE it (see over into the room) — drawn as an overlay band on top of
+ * the background wall, exactly like the partial-height see-over divider but
+ * floating instead of floor-anchored. A full-height wall could never show a
+ * crawlspace ceiling (its underside is a 1px sliver); a floating beam reads as
+ * a bar you duck under with the room visible above and below. Collides only
+ * while standing; crouch (eye_h < CRAWL_PASS_EYE) and you pass beneath. */
+#define BEAM_LOW       102   /* underside of the beam (0.40 up the wall) */
+#define BEAM_HIGH      200   /* top of the beam (0.78); above it you see over */
+#define CRAWL_PASS_EYE 100   /* eye_h below this passes under the beam (crouched) */
 #define NUM_PARTITIONS num_partitions
 #define NUM_STANDUPS (int)(sizeof(standups) / sizeof(standups[0]))
 
@@ -361,6 +386,53 @@ static int num_lights = 0;
 /* When set, init_lights uses the lobby's hand-authored fluorescent runs
  * instead of the default every-other-cell auto-grid. Set per-map. */
 int g_lobby_ceiling = 0;
+
+/* Per-cell ceiling height (fraction*256 of the wall): 256 = full open ceiling,
+ * CRAWL_CEIL_H = a low crawlspace slab. This is the first-class data model —
+ * ceiling height is a property of every cell, like walkable/wall is. Any run of
+ * low cells is a crawlspace; collision, forced-crouch, light culling and the
+ * slab render all read this array, so crawlspaces can be placed anywhere (and
+ * by procgen) without special-casing a single zone. */
+#define CRAWL_CEIL_H 135           /* 0.53 of wall height */
+uint8_t ceil_h[MAP_H][MAP_W];      /* extern: procgen/loaders author it */
+#define CEIL_H(y,x) (((volatile uint8_t *)((uintptr_t)ceil_h | 0x20000000))[(y)*MAP_W + (x)])
+
+/* Render-reject bbox over all low cells (world coords) + an "any low ceiling
+ * present" flag, both derived from ceil_h[] by the loaders. The slab/bulkhead
+ * passes use the bbox to skip rows/columns nowhere near a crawlspace. */
+int   g_lowceil_active = 0;
+static fx_t g_lowceil_x0, g_lowceil_y0, g_lowceil_x1, g_lowceil_y1;
+
+/* Reset every cell to full-height open ceiling (called by each map loader).
+ * 255 is "full" (u8 cap; the 1/256 difference is invisible). */
+#define CEIL_H_FULL 255
+void ceil_h_clear(void) {
+    for (int y = 0; y < MAP_H; y++)
+        for (int x = 0; x < MAP_W; x++) ceil_h[y][x] = CEIL_H_FULL;
+    g_lowceil_active = 0;
+}
+
+/* Mark cell (cx,cy) as a low crawlspace ceiling and grow the render bbox. */
+void ceil_h_set_low(int cx, int cy) {
+    if (cx < 0 || cx >= MAP_W || cy < 0 || cy >= MAP_H) return;
+    ceil_h[cy][cx] = CRAWL_CEIL_H;
+    fx_t x0 = FX(cx), x1 = FX(cx + 1), y0 = FX(cy), y1 = FX(cy + 1);
+    if (!g_lowceil_active) {
+        g_lowceil_x0 = x0; g_lowceil_x1 = x1; g_lowceil_y0 = y0; g_lowceil_y1 = y1;
+        g_lowceil_active = 1;
+    } else {
+        if (x0 < g_lowceil_x0) g_lowceil_x0 = x0;
+        if (x1 > g_lowceil_x1) g_lowceil_x1 = x1;
+        if (y0 < g_lowceil_y0) g_lowceil_y0 = y0;
+        if (y1 > g_lowceil_y1) g_lowceil_y1 = y1;
+    }
+}
+/* True if the cell holding world point (wx,wy) is a low crawlspace ceiling. */
+static inline int ceil_is_low(fx_t wx, fx_t wy) {
+    int cx = FX_INT(wx), cy = FX_INT(wy);
+    if ((unsigned)cx >= MAP_W || (unsigned)cy >= MAP_H) return 0;
+    return CEIL_H(cy, cx) != 255;
+}
 
 /* Per-cell light boost (0..LIGHT_BOOST_MAX): each fixture brightens its own
  * cell and its neighbours, so a wall or partition adjacent to a light reads
@@ -391,6 +463,9 @@ static void init_lights(void) {
         for (int my = 1; my < MAP_H - 1 && num_lights < MAX_LIGHTS; my += 2) {
             for (int mx = 1; mx < MAP_W - 1 && num_lights < MAX_LIGHTS; mx += 2) {
                 if (world_map[my][mx] != 0) continue;
+                /* No fixtures in a low-ceiling crawlspace cell — the slab is the
+                 * ceiling there, so an overhead light would float on top of it. */
+                if (g_lowceil_active && CEIL_H(my, mx) != CEIL_H_FULL) continue;
                 lights[num_lights].x = FX(mx) + FX(0.5);
                 lights[num_lights].y = FX(my) + FX(0.5);
                 num_lights++;
@@ -565,6 +640,11 @@ static void build_palette(void) {
                         MIX(23, FOG_G, i),
                         MIX(16, FOG_B, i));
     }
+    /* Crawlspace ceiling: dark-beige drop-panel. The fill is a warm muted tan;
+     * the seam is a darker tan for the panel grid, which gives the surface the
+     * parallax/structure cue that a flat fill lacked (flat read as a void). */
+    Hw32xSetBGColor(LOWCEIL_COLOR, 16, 14, 10);
+    Hw32xSetBGColor(LOWCEIL_SEAM,  10,  8,  5);
     /* Fluorescent lights: 4 brightness states for flicker (full / 75 / 50 / 25%). */
     Hw32xSetBGColor(LIGHT_BASE + 0, 31, 31, 28);
     Hw32xSetBGColor(LIGHT_BASE + 1, 23, 23, 21);
@@ -766,9 +846,17 @@ void raycast_load_fixed(void) {
      * (HobbyTown look). They sit in open bands with walls far behind, so the
      * ceiling correctly shows above them — and partial columns draw fewer
      * pixels, lightening the partition-heavy fixed map. */
-    for (int i = 0; i < NUM_PARTITIONS_MAX; i++)
+    for (int i = 0; i < NUM_PARTITIONS_MAX; i++) {
         partition_height[i] = (i < num_partitions) ? 192 : 0;
+        partition_crawl[i]  = 0;   /* no crawl-unders in the fixed map yet */
+    }
     g_lobby_ceiling = 0;
+    /* Low-ceiling crawlspace tunnel: mark the long west-edge corridor (column 1,
+     * rows 22-26) as low-ceiling cells. Collision, forced-crouch, light culling
+     * and the slab render all derive from ceil_h[] now, so this is just "these
+     * cells have a low ceiling" — place more anywhere by marking more cells. */
+    ceil_h_clear();
+    for (int cy = 22; cy <= 26; cy++) ceil_h_set_low(1, cy);
     /* Wall outlet on the east wall of the spawn corridor (col 17, west face,
      * rows 24-28), ~2 cells ahead and just right of spawn so it reads on the
      * way out. X 0.16 west of the X=17 face so it sits just in front; z=0.20
@@ -809,7 +897,10 @@ void raycast_load_lobby(void) {
      * walls stay full (room boundary / outlet wall). */
     partition_height[0] = 0;   partition_height[1] = 192;   /* stem full, arm 3/4 */
     partition_height[2] = 0;   partition_height[3] = 0;
+    /* Crawl-under beam shelved — no crawl elements placed for now. */
+    for (int i = 0; i < NUM_PARTITIONS_MAX; i++) partition_crawl[i] = 0;
     g_lobby_ceiling = 1;                  /* hand-authored fluorescent runs */
+    ceil_h_clear();                       /* no crawlspaces in the lobby */
     /* Outlet on entrance-R's south face (the photo's right-hand partition),
      * low and right-of-center in the spawn/menu view. Placed FX(0.16) south
      * of the y=5 wall line so it sits just in front of the face, not inside
@@ -866,7 +957,11 @@ static int cell_passable(int x, int y) {
 static int partition_collides(fx_t px, fx_t py) {
     const fx_t PARTITION_HALF_THICK = FX(0.15);   /* matches HALF_THICK in partition_project_all */
     fx_t margin = PARTITION_HALF_THICK + PLAYER_RADIUS;
+    int crouched = (int)SHARED_UC->eye_h < CRAWL_PASS_EYE;
     for (int i = 0; i < NUM_PARTITIONS; i++) {
+        /* Crawl-under dividers are passable while crouched — the body fits
+         * through the open gap at the foot. Standing, they block like any wall. */
+        if (partition_crawl[i] && crouched) continue;
         fx_t x1 = partitions[i].x1, x2 = partitions[i].x2;
         fx_t y1 = partitions[i].y1, y2 = partitions[i].y2;
         if (x1 > x2) { fx_t t = x1; x1 = x2; x2 = t; }
@@ -915,6 +1010,14 @@ static int position_clear(fx_t px, fx_t py) {
     if (!cell_passable(xR, yB)) return 0;
     if (partition_collides(px, py)) return 0;
     if (standup_collides(px, py))   return 0;
+    /* Low-ceiling crawlspace: a low-ceiling cell hangs below standing head
+     * height, so you can't enter it unless crouched (eye below CRAWL_PASS_EYE).
+     * Per-cell via ceil_h[], so this gates every crawlspace, anywhere. */
+    if (g_lowceil_active && (int)SHARED_UC->eye_h >= CRAWL_PASS_EYE) {
+        int cx = FX_INT(px), cy = FX_INT(py);
+        if ((unsigned)cx < MAP_W && (unsigned)cy < MAP_H &&
+            CEIL_H(cy, cx) != CEIL_H_FULL) return 0;
+    }
     return 1;
 }
 
@@ -994,6 +1097,16 @@ void player_update(uint16_t pad) {
      * collision-free on every pad. Trade-off: holding sprint+strafe now
      * crouch-strafes instead of sprint-strafing. */
     int crouching = (pad & SEGA_CTRL_A) && (pad & SEGA_CTRL_B);
+    /* Forced crouch inside a low-ceiling crawlspace: while the player's body is
+     * within the zone the slab is overhead, so they stay stuck crouching until
+     * they crawl all the way out — releasing A+B mid-tunnel does NOT stand them
+     * up (they'd clip through the ceiling). Standing only returns once the body
+     * clears the zone. */
+    if (g_lowceil_active) {
+        int cx = FX_INT(player.x), cy = FX_INT(player.y);
+        if ((unsigned)cx < MAP_W && (unsigned)cy < MAP_H &&
+            CEIL_H(cy, cx) != CEIL_H_FULL) crouching = 1;
+    }
     {
         int target = crouching ? CROUCH_EYE : STAND_EYE;
         int d = target - eye_smooth;
@@ -1292,6 +1405,7 @@ static void partition_build_faces(void) {
         for (int k = face_start; k < n; k++) {
             PFACE_STYLE(k)  = partition_style[i];
             PFACE_HEIGHT(k) = partition_height[i];
+            PFACE_CRAWL(k)  = partition_crawl[i];
         }
     }
     PFACE_COUNT = n;
@@ -1568,6 +1682,210 @@ void raycast_draw_ceiling_grid(int col_start, int col_end) {
     }
 }
 
+/* ── Low-ceiling zone ───────────────────────────────────────────────────────
+ * Cast the low ceiling as a horizontal plane at height g_lowceil_h over the
+ * zone rectangle. This is REAL floor/ceiling casting (each screen row maps to
+ * one world distance), the same primitive the open ceiling/carpet use — which
+ * is why it reads as a genuine 3D slab overhead, unlike the vertical-band crawl
+ * tricks. Run AFTER the wall pass (WALL_DIST valid) and z-tested per column so
+ * the slab occludes the far wall-tops/ceiling behind it and is hidden by nearer
+ * walls — a sector ceiling. One full-width pass on the primary post-sync. */
+static void raycast_draw_low_ceiling(int col_start, int col_end) {
+    if (!g_lowceil_active) return;
+    int eye = (int)SHARED_UC->eye_h;
+    if (eye >= CRAWL_CEIL_H) return;    /* eye at/above the slab: not overhead */
+
+    fx_t px = SHARED_UC->player.x;
+    fx_t py = SHARED_UC->player.y;
+    uint8_t angle = (uint8_t)SHARED_UC->player.angle;
+    fx_t dirX   = COS_FX(angle);
+    fx_t dirY   = SIN_FX(angle);
+    fx_t planeX = FX_MUL(-dirY, FX(0.66));
+    fx_t planeY = FX_MUL( dirX, FX(0.66));
+    fx_t leftDirX  = dirX - planeX, leftDirY  = dirY - planeY;
+    fx_t rightDirX = dirX + planeX, rightDirY = dirY + planeY;
+
+    uint8_t *fb = fb_pixels();
+    int horizon_y = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
+    /* Depth-per-row uses the slab's height above the eye, same focal form as the
+     * open ceiling (which uses 256-eye). A lower slab => nearer => looms larger. */
+    int focal = (SCREEN_H * (CRAWL_CEIL_H - eye)) >> 8;   /* > 0 here */
+
+    fx_t zx0 = g_lowceil_x0, zx1 = g_lowceil_x1;
+    fx_t zy0 = g_lowceil_y0, zy1 = g_lowceil_y1;
+
+    /* Per-column farthest slab depth, captured so we can stamp the z-buffer
+     * AFTER the row loop (writing it mid-loop would corrupt the wall-occlusion
+     * read below). Without this the slab never occludes the distant corridor
+     * ceiling lights, which then draw straight through the ceiling. */
+    static fx_t slab_far[SCREEN_W];
+    for (int c = col_start; c < col_end; c++) slab_far[c] = 0;
+
+    for (int y = 0; y < horizon_y && y < SCREEN_H; y++) {
+        int prow = horizon_y - y;
+        if (prow <= 0) continue;
+        fx_t rowDist = (fx_t)divu_u32((uint32_t)((fx_t)focal << FX_SHIFT),
+                                      (uint32_t)prow);
+
+        fx_t wxL = px + FX_MUL(rowDist, leftDirX);
+        fx_t wyL = py + FX_MUL(rowDist, leftDirY);
+        fx_t wxR = px + FX_MUL(rowDist, rightDirX);
+        fx_t wyR = py + FX_MUL(rowDist, rightDirY);
+
+        /* Per-row reject: skip rows whose entire world span misses the zone. */
+        fx_t minx = wxL < wxR ? wxL : wxR, maxx = wxL < wxR ? wxR : wxL;
+        fx_t miny = wyL < wyR ? wyL : wyR, maxy = wyL < wyR ? wyR : wyL;
+        if (maxx < zx0 || minx > zx1 || maxy < zy0 || miny > zy1) continue;
+
+        fx_t stepx = (wxR - wxL) / SCREEN_W;
+        fx_t stepy = (wyR - wyL) / SCREEN_W;
+        fx_t wx = wxL + stepx * col_start;
+        fx_t wy = wyL + stepy * col_start;
+
+        /* Dark-beige drop-panel: fill + darker seam on a half-cell world lattice.
+         * The seams give the surface a parallax/structure cue so it reads as a
+         * solid ceiling rather than a flat dark void (which looked transparent). */
+        uint8_t *row_p = fb + y * SCREEN_W;
+        for (int col = col_start; col < col_end; col++, wx += stepx, wy += stepy) {
+            if (!ceil_is_low(wx, wy)) continue;        /* this cell's ceiling is full */
+            if (rowDist >= WALL_DIST(col)) continue;   /* behind a nearer wall */
+            int seam = (((int)wx & 0x7FFF) < LOWCEIL_SEAM_W) ||
+                       (((int)wy & 0x7FFF) < LOWCEIL_SEAM_W);
+            row_p[col] = seam ? LOWCEIL_SEAM : LOWCEIL_COLOR;
+            slab_far[col] = rowDist;   /* rows go top->horizon, so last = farthest */
+        }
+    }
+    /* Stamp the z-buffer with the slab's far edge so draw_lights occludes any
+     * fixture beyond it — the distant corridor lights no longer bleed through. */
+    for (int c = col_start; c < col_end; c++)
+        if (slab_far[c]) WALL_DIST(c) = slab_far[c];
+}
+
+/* ── Low-ceiling bulkheads ───────────────────────────────────────────────────
+ * Cap the crawlspace at its four boundary faces with a vertical wall band from
+ * the slab (g_lowceil_h) up to the full ceiling (256), so the entrance reads as
+ * a solid low header you crawl under — not a floating slab / invisible barrier.
+ * Each face is a short vertical wall; for every column we take the nearest face
+ * the ray crosses (in front of any real wall) and fill its [h, 256] band. Real
+ * corridor walls (e.g. the west boundary) z-cull the side faces automatically;
+ * the open ends and any open side get a visible cap. Runs post-sync with the
+ * slab, both reading the committed WALL_DIST z-buffer. */
+static void raycast_draw_bulkheads(int col_start, int col_end) {
+    if (!g_lowceil_active) return;
+    fx_t px = SHARED_UC->player.x;
+    fx_t py = SHARED_UC->player.y;
+    uint8_t angle = (uint8_t)SHARED_UC->player.angle;
+    fx_t dirX = COS_FX(angle), dirY = SIN_FX(angle);
+    fx_t planeX = FX_MUL(-dirY, FX(0.66)), planeY = FX_MUL(dirX, FX(0.66));
+
+    uint8_t *fb = fb_pixels();
+    int horizon_y = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
+    int eye = (int)SHARED_UC->eye_h;
+    int ch  = CRAWL_CEIL_H;
+    fx_t zx0 = g_lowceil_x0, zx1 = g_lowceil_x1;
+    fx_t zy0 = g_lowceil_y0, zy1 = g_lowceil_y1;
+    const fx_t PAR = FX(0.01);   /* skip near-parallel rays (no crossing) */
+
+    for (int col = col_start; col < col_end; col++) {
+        fx_t camX = ((fx_t)(2 * col - SCREEN_W) << FX_SHIFT) / SCREEN_W;
+        fx_t rdx = dirX + FX_MUL(planeX, camX);
+        fx_t rdy = dirY + FX_MUL(planeY, camX);
+
+        fx_t best = 0x7FFFFFFF;
+        fx_t hit_along = 0;      /* world coord along the nearest face → texX */
+        /* A face is a header ONLY if the ray is ENTERING the zone there (ceiling
+         * steps down in front of you). The far/exit boundary steps back UP and is
+         * occluded by the slab — drawing it punched chevron through the ceiling
+         * ("transparent"). Test a point just past the crossing: inside zone =
+         * entry (cap it), outside = exit (skip). */
+        const fx_t STEP = FX(0.03);
+        /* Two end faces y=zy0, y=zy1 (span x in [zx0,zx1]). */
+        if (rdy > PAR || rdy < -PAR) {
+            for (int e = 0; e < 2; e++) {
+                fx_t yf = e ? zy1 : zy0;
+                fx_t t  = fx_div_hw(yf - py, rdy);
+                if (t <= PAR) continue;
+                fx_t hx = px + FX_MUL(t, rdx);
+                if (hx < zx0 || hx > zx1) continue;
+                fx_t ex = px + FX_MUL(t + STEP, rdx);
+                fx_t ey = py + FX_MUL(t + STEP, rdy);
+                if (ex < zx0 || ex > zx1 || ey < zy0 || ey > zy1) continue; /* exit */
+                if (t < best) { best = t; hit_along = hx; }
+            }
+        }
+        /* Two side faces x=zx0, x=zx1 (span y in [zy0,zy1]). */
+        if (rdx > PAR || rdx < -PAR) {
+            for (int e = 0; e < 2; e++) {
+                fx_t xf = e ? zx1 : zx0;
+                fx_t t  = fx_div_hw(xf - px, rdx);
+                if (t <= PAR) continue;
+                fx_t hy = py + FX_MUL(t, rdy);
+                if (hy < zy0 || hy > zy1) continue;
+                fx_t ex = px + FX_MUL(t + STEP, rdx);
+                fx_t ey = py + FX_MUL(t + STEP, rdy);
+                if (ex < zx0 || ex > zx1 || ey < zy0 || ey > zy1) continue; /* exit */
+                if (t < best) { best = t; hit_along = hy; }
+            }
+        }
+        if (best == 0x7FFFFFFF) continue;
+        if (best >= WALL_DIST(col)) continue;          /* behind a real wall */
+
+        int lineHeight = (int)divu_u32((uint32_t)(SCREEN_H << FX_SHIFT),
+                                       (uint32_t)best);
+        int wall_bot  = horizon_y + ((lineHeight * eye) >> 8);
+        int wall_top  = wall_bot - lineHeight;         /* height 256 (unclamped) */
+        int top = wall_top < 0 ? 0 : wall_top;
+        int bot = wall_bot - ((lineHeight * ch) >> 8); /* slab, height ch */
+        if (bot > SCREEN_H - 1) bot = SCREEN_H - 1;
+        if (top > bot) continue;
+
+        /* Distance-fog shade, a touch darker (a header in shadow). */
+        int bsh;
+        if (best < FX(2.5)) bsh = (int)((best * 2) / FX(2.5));
+        else { fx_t past = best - FX(2.5); fx_t span = FOG_RAMP_DIST - FX(2.5);
+               bsh = 2 + (int)((past * 13) / span); }
+        bsh += 2;
+        if (bsh > SHADE_LEVELS - 1) bsh = SHADE_LEVELS - 1;
+
+        /* Chevron wallpaper, same texture as the walls, so the header reads as
+         * part of the structure. The texture maps over the FULL wall height; the
+         * band only draws its upper [ch,256] slice, aligning with adjacent walls.
+         * LOD + chevron detail-fade mirror the main wall pass. */
+        const uint8_t *btex; int btw, bth, btlx, btly;
+        if (best < WALL_LOD_THRESHOLD) {
+            btex = (const uint8_t *)wall_tex_hi_ram;
+            btw = WALL_TEX_HI_WIDTH; bth = WALL_TEX_HI_HEIGHT;
+            btlx = WALL_TILE_HI_X;   btly = WALL_TILE_HI_Y;
+        } else {
+            btex = (const uint8_t *)wall_tex_ram;
+            btw = WALL_TEX_WIDTH; bth = WALL_TEX_HEIGHT;
+            btlx = WALL_TILE_X;   btly = WALL_TILE_Y;
+        }
+        int bdetail;
+        if (best < FX(2)) bdetail = WALL_PATTERN_MAX;
+        else if (best < FX(3.5)) { bdetail = (int)(((FX(3.5) - best) * WALL_PATTERN_MAX) / FX(1.5)); if (bdetail < 0) bdetail = 0; }
+        else bdetail = 0;
+        fx_t bwh = hit_along - ((fx_t)FX_INT(hit_along) << FX_SHIFT);
+        int btexX = (int)(((uint32_t)bwh * (uint32_t)(btw * btlx)) >> FX_SHIFT) & (btw - 1);
+        const uint8_t *bcol = btex + btexX * bth;
+        uint8_t blut[5];
+        for (int v = 0; v < 5; v++) {
+            int s = bsh + ((v * bdetail) >> 4);
+            if (s >= SHADE_LEVELS) s = SHADE_LEVELS - 1;
+            blut[v] = (uint8_t)(WALL_BASE + s);
+        }
+        int bmask = bth - 1;
+        fx_t bstep = ((fx_t)(bth * btly) << FX_SHIFT) / lineHeight;
+        fx_t bpos  = (fx_t)(top - wall_top) * bstep;   /* texel at the first drawn row */
+        uint8_t *p = fb + col + top * SCREEN_W;
+        for (int yy = top; yy <= bot; yy++) {
+            *p = blut[bcol[(bpos >> FX_SHIFT) & bmask]];
+            p += SCREEN_W; bpos += bstep;
+        }
+        WALL_DIST(col) = best;   /* occlude lights/sprites behind the header */
+    }
+}
+
 /* Carpet wear pass — stamps dark "stains" across the floor (bottom
  * half of screen) at world-position-hashed locations. Reads player
  * from the shared snapshot so the secondary can run it alongside the
@@ -1823,11 +2141,12 @@ void raycast_draw_walls(int col_start, int col_end) {
         int  part_style          = 0;
         int  part_height         = 0;   /* background is always full height (0) */
         fx_t partition_wallhit_w = 0;
-        /* Foreground = nearest PARTIAL-height partition. Drawn as a band OVER
-         * the background (solid wall / full partition) after the main column
-         * draw, so a surface behind it (e.g. the lobby T-stem) shows above it.
-         * Same renderer the crawl-under gap will use. */
-        int  fg_hit = 0, fg_style = 0, fg_height = 0, fg_side = 0;
+        /* Foreground = nearest PARTIAL-height partition OR crawl-under beam.
+         * Drawn as a band OVER the background (solid wall / full partition) after
+         * the main column draw, so a surface behind it (e.g. the lobby T-stem)
+         * shows above it. A beam (fg_beam) floats between BEAM_LOW and BEAM_HIGH;
+         * a partial divider is floor-anchored. */
+        int  fg_hit = 0, fg_style = 0, fg_height = 0, fg_side = 0, fg_beam = 0;
         fx_t fg_t = 0, fg_wallhit = 0;
         int  n_faces = PFACE_COUNT;
         for (int fi = 0; fi < n_faces; fi++) {
@@ -1849,23 +2168,29 @@ void raycast_draw_walls(int col_start, int col_end) {
             fx_t t_num = FX_MUL(cy, dxs) - FX_MUL(cx, dys);
             fx_t t = fx_div_hw(t_num, denom);
             if (t <= FX(0.1)) continue;
-            int fh = PFACE_HEIGHT(fi);
-            if (fh == 0) {
+            int fh   = PFACE_HEIGHT(fi);
+            int beam = PFACE_CRAWL(fi);   /* floating see-over beam, not floor-anchored */
+            if (!beam && fh == 0) {
                 if (t >= perpDist) continue;          /* full: behind the background */
             } else {
-                if (fg_hit && t >= fg_t) continue;    /* partial: not the closest one */
+                if (fg_hit && t >= fg_t) continue;    /* partial/beam: not the closest one */
             }
             fx_t s_num = FX_MUL(rayDirX, cy) - FX_MUL(rayDirY, cx);
             fx_t s = fx_div_hw(s_num, denom);
             if (s < 0 || s > FX_ONE) continue;
             fx_t wh = PFACE_UA(fi) + FX_MUL(s, PFACE_UB(fi) - PFACE_UA(fi));
             int sd = (dxs == 0) ? 0 : 1;   /* vertical face = E/W (X-side), horizontal = N/S */
-            if (fh == 0) {
+            if (!beam && fh == 0) {
                 perpDist = t; partition_wallhit_w = wh; partition_hit = 1;
                 part_style = PFACE_STYLE(fi); side = sd;
             } else {
+                /* Partial divider or floating beam — both draw as a foreground
+                 * overlay band. A beam's band spans BEAM_HIGH-BEAM_LOW and floats
+                 * (fg_beam); a partial's is fg_height tall and floor-anchored. */
                 fg_hit = 1; fg_t = t; fg_wallhit = wh;
-                fg_style = PFACE_STYLE(fi); fg_height = fh; fg_side = sd;
+                fg_style = PFACE_STYLE(fi); fg_side = sd;
+                fg_beam  = beam;
+                fg_height = beam ? (BEAM_HIGH - BEAM_LOW) : fh;
             }
         }
         /* Partial partition only shows if in front of the final background. */
@@ -1883,8 +2208,13 @@ void raycast_draw_walls(int col_start, int col_end) {
          * world height h/256 at distance d sits above the horizon ~(h-eye)/d, so
          * the full (h=256) background pokes above the partial (h=fg_height) iff
          * (256-eye)*fg_t > (fg_height-eye)*perpDist. */
-        if (fg_hit) {
-            /* See-over ONLY when the background is a FULL-height PARTITION (the
+        if (fg_hit && !fg_beam) {
+            /* A floating beam ALWAYS overlays — it never fills floor-to-ceiling,
+             * so it can't be promoted to the fast main path (that would erase the
+             * see-over above and the crawl gap below). Only floor-anchored
+             * partials reach this promote test.
+             *
+             * See-over ONLY when the background is a FULL-height PARTITION (the
              * lobby T-stem) — not a solid wall. A partial divider with a wall
              * behind it should read as a plain low divider (ceiling above), the
              * simple look; revealing the wall over it is unwanted. So require
@@ -2326,7 +2656,12 @@ void raycast_draw_walls(int col_start, int col_end) {
             int flh  = (int)divu_u32((uint32_t)(SCREEN_H << FX_SHIFT), (uint32_t)fg_t);
             int fdlh = (flh * fg_height) >> 8;          /* band height in px */
             if (fdlh > 0) {
+                /* fbot = bottom edge of the band. A floor-anchored partial sits
+                 * on the floor line; a floating beam's underside is lifted to
+                 * BEAM_LOW so the crawl gap opens beneath it (carpet shows) and
+                 * the band's top edge (BEAM_HIGH) leaves the room visible above. */
                 int fbot = horizon_y + ((flh * eye_h) >> 8);
+                if (fg_beam) fbot -= (flh * BEAM_LOW) >> 8;
                 int ftop = fbot - fdlh;
                 int fds  = ftop < 0 ? 0 : ftop;
                 int fde  = fbot >= SCREEN_H ? SCREEN_H - 1 : fbot;
@@ -2568,6 +2903,13 @@ void raycast_render(void) {
     /* Commit any reordered stores from the non-volatile draw loops before
      * the next swapBuffers() makes them visible via the VDP page flip. */
     __asm__ __volatile__("" ::: "memory");
+
+    /* Low-ceiling crawlspace slab + its bulkhead caps. Full-width on the primary
+     * now that both halves' WALL_DIST is committed, so they z-test against every
+     * column. Bulkheads draw after the slab so the entrance header overdraws the
+     * interior slab at the mouth. */
+    raycast_draw_low_ceiling(0, SCREEN_W);
+    raycast_draw_bulkheads(0, SCREEN_W);
 
     /* Lights first, then standups — so foreground sprites (like the
      * neanderthal) overpaint any ceiling-panel pixels that project

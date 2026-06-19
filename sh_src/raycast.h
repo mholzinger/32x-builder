@@ -39,8 +39,19 @@ extern uint8_t partition_style[NUM_PARTITIONS_MAX];
 /* Per-partition render height: 0 = full, else fraction*256 (192 = 3/4 height)
  * for a low cubicle-style divider you see over (ceiling shows above). */
 extern uint8_t partition_height[NUM_PARTITIONS_MAX];
+/* Per-partition crawl-under: 1 = open gap at the foot, solid above; collides
+ * only when standing (crouch low to crawl under). */
+extern uint8_t partition_crawl[NUM_PARTITIONS_MAX];
 /* When set, the ceiling uses the lobby's hand-authored fluorescent runs. */
 extern int g_lobby_ceiling;
+/* When set, at least one low-ceiling crawlspace cell exists this map. */
+extern int g_lowceil_active;
+/* Per-cell ceiling height (255 = full open ceiling, lower = crawlspace slab).
+ * The first-class crawlspace data model: collision, forced-crouch, light
+ * culling and the slab render all read this. Loaders/procgen author it. */
+extern uint8_t ceil_h[MAP_H][MAP_W];
+void ceil_h_clear(void);          /* reset all cells to full-height ceiling */
+void ceil_h_set_low(int cx, int cy);  /* mark a cell as a low crawlspace ceiling */
 
 /* Wall-mounted decals (the lobby outlet). Count is reset per-map so the
  * outlet only renders in the lobby; the array itself lives in raycast.c. */

@@ -402,6 +402,10 @@ uint8_t ceil_h[MAP_H][MAP_W];      /* extern: procgen/loaders author it */
  * rects (a single union bbox caps the wrong faces when crawlspaces are
  * disjoint), so each low-ceiling run is recorded as its own rect. */
 int   g_lowceil_active = 0;
+/* Replicate a palette byte into both lanes of a 16-bit word for the half-res
+ * wall word-stores. The toggle itself lives in SHARED_UC->wall_halfres (both
+ * CPUs run draw_walls, so it must be cache-through coherent). */
+#define WDUP(c) ((uint16_t)(((uint16_t)(uint8_t)(c) << 8) | (uint8_t)(c)))
 static fx_t g_lowceil_x0, g_lowceil_y0, g_lowceil_x1, g_lowceil_y1;
 #define MAX_LOWCEIL_RECTS 8
 static fx_t lowceil_rect[MAX_LOWCEIL_RECTS][4];   /* {x0,y0,x1,y1} world coords */
@@ -1232,8 +1236,19 @@ void player_update(uint16_t pad) {
  * of raycast_draw_walls). decals[] just carries where/how big it is; there is
  * no billboard pass any more. */
 
-static void draw_standups(uint8_t *fb,
-                          fx_t dirX, fx_t dirY, fx_t planeX, fx_t planeY) {
+static void draw_standups(int col_start, int col_end) {
+    /* Self-contained for the dual-CPU split: read the player snapshot and
+     * derive the camera basis locally (same as the ceiling/carpet passes) so
+     * the secondary can draw its column half [col_start,col_end) coherently
+     * without the primary threading dir/plane through shared memory. */
+    fx_t px = SHARED_UC->player.x;
+    fx_t py = SHARED_UC->player.y;
+    uint8_t angle = (uint8_t)SHARED_UC->player.angle;
+    fx_t dirX   = COS_FX(angle);
+    fx_t dirY   = SIN_FX(angle);
+    fx_t planeX = FX_MUL(-dirY, FX(0.66));
+    fx_t planeY = FX_MUL( dirX, FX(0.66));
+    uint8_t *fb = fb_pixels();
     fx_t det = FX_MUL(planeX, dirY) - FX_MUL(dirX, planeY);
     if (det == 0) return;
     fx_t inv_det = fx_div_hw(FX_ONE, det);   /* det == -0.66 const; bounded */
@@ -1242,8 +1257,8 @@ static void draw_standups(uint8_t *fb,
     int horizon_y = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
 
     for (int i = 0; i < NUM_STANDUPS; i++) {
-        fx_t sx = standups[i].x - player.x;
-        fx_t sy = standups[i].y - player.y;
+        fx_t sx = standups[i].x - px;
+        fx_t sy = standups[i].y - py;
 
         fx_t transformX = FX_MUL(inv_det,
                             FX_MUL( dirY,  sx) - FX_MUL( dirX,  sy));
@@ -1283,6 +1298,10 @@ static void draw_standups(uint8_t *fb,
         int drawEndY   = drawEndY_u >= SCREEN_H ? SCREEN_H - 1 : drawEndY_u;
         int drawStartX = drawStartX_u < 0 ? 0 : drawStartX_u;
         int drawEndX   = drawEndX_u >= SCREEN_W ? SCREEN_W - 1 : drawEndX_u;
+        /* Clip to this CPU's column half so the two SH-2s draw disjoint spans. */
+        if (drawStartX < col_start) drawStartX = col_start;
+        if (drawEndX   > col_end - 1) drawEndX = col_end - 1;
+        if (drawStartX > drawEndX) continue;
 
         /* Front/back: standup forward is (cos angle, sin angle).
          * sx, sy = standup - player, so player - standup = -sx, -sy.
@@ -1461,8 +1480,18 @@ static void partition_build_faces(void) {
 /* Project each ceiling light to screen space, paint a small bright bar
  * with z-test against wall_dist, apply per-light flicker. The math is the
  * sprite-billboard transform; the cost is ~50-100 cycles per light. */
-static void draw_lights(uint8_t *fb,
-                        fx_t dirX, fx_t dirY, fx_t planeX, fx_t planeY) {
+static void draw_lights(int col_start, int col_end) {
+    /* Self-contained for the dual-CPU split (see draw_standups): snapshot the
+     * player + derive the basis locally so the secondary can fill its column
+     * half [col_start,col_end). */
+    fx_t px = SHARED_UC->player.x;
+    fx_t py = SHARED_UC->player.y;
+    uint8_t angle = (uint8_t)SHARED_UC->player.angle;
+    fx_t dirX   = COS_FX(angle);
+    fx_t dirY   = SIN_FX(angle);
+    fx_t planeX = FX_MUL(-dirY, FX(0.66));
+    fx_t planeY = FX_MUL( dirX, FX(0.66));
+    uint8_t *fb = fb_pixels();
     fx_t det = FX_MUL(planeX, dirY) - FX_MUL(dirX, planeY);
     if (det == 0) return;
     fx_t inv_det = fx_div_hw(FX_ONE, det);   /* det == -0.66 const; bounded */
@@ -1470,8 +1499,11 @@ static void draw_lights(uint8_t *fb,
      * on the ceiling when the camera pitches up or down. */
     int horizon_y = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
 
-    static uint32_t light_frame = 0;
-    light_frame++;
+    /* Flicker RNG seed: use the shared per-frame counter, not a local static.
+     * Both CPUs run this pass now (column split), so a per-CPU counter would
+     * desync the flicker roll across the seam for a light straddling it —
+     * same fix the wall strobe uses. */
+    uint32_t light_frame = SHARED_UC->frame_count;
 
     /* Lights are now CEILING TILES — flat axis-aligned rectangles in
      * the ceiling plane at world position (lx, ly). Each tile spans
@@ -1491,8 +1523,8 @@ static void draw_lights(uint8_t *fb,
         fx_t ly = lights[i].y;
 
         /* Center-distance check for view culling. */
-        fx_t cx = lx - player.x;
-        fx_t cy = ly - player.y;
+        fx_t cx = lx - px;
+        fx_t cy = ly - py;
         fx_t centerY = FX_MUL(inv_det,
                               FX_MUL(-planeY, cx) + FX_MUL(planeX, cy));
         if (centerY < FX(0.5)) continue;
@@ -1510,8 +1542,8 @@ static void draw_lights(uint8_t *fb,
         int min_y = SCREEN_H, max_y = -1;
         int valid = 1;
         for (int k = 0; k < 4; k++) {
-            fx_t rx = (lx + corner_dx[k]) - player.x;
-            fx_t ry = (ly + corner_dy[k]) - player.y;
+            fx_t rx = (lx + corner_dx[k]) - px;
+            fx_t ry = (ly + corner_dy[k]) - py;
             fx_t tX = FX_MUL(inv_det, FX_MUL( dirY,  rx) - FX_MUL( dirX,  ry));
             fx_t tY = FX_MUL(inv_det, FX_MUL(-planeY, rx) + FX_MUL( planeX, ry));
             if (tY < FX(0.2)) { valid = 0; break; }
@@ -1585,6 +1617,10 @@ static void draw_lights(uint8_t *fb,
             int rx_s = xs[0] > xs[1] ? xs[0] : xs[1];
             if (lx_s < 0)         lx_s = 0;
             if (rx_s >= SCREEN_W) rx_s = SCREEN_W - 1;
+            /* Clip to this CPU's column half. */
+            if (lx_s < col_start) lx_s = col_start;
+            if (rx_s > col_end - 1) rx_s = col_end - 1;
+            if (lx_s > rx_s) continue;
 
             /* Pick row brightness from the bulb pattern, then add
              * flicker offset and clamp to the 4-entry light ramp. */
@@ -1604,6 +1640,24 @@ static void draw_lights(uint8_t *fb,
             }
         }
     }
+}
+
+/* Combined sprite pass for a column range. The secondary calls this from its
+ * CMD_TAIL handler to draw [split, SCREEN_W); the primary calls the two halves
+ * directly (for separate L/P profiling). Lights first, then standups, so the
+ * foreground neanderthal overpaints any ceiling-panel pixels in shared rows. */
+void raycast_draw_sprites(int col_start, int col_end) {
+    draw_lights(col_start, col_end);
+    draw_standups(col_start, col_end);
+}
+
+/* Secondary: drop stale lights[] before drawing sprites. init_lights rebuilds
+ * lights[] on the primary at each map load; purge so this CPU re-reads the
+ * current map's fixtures instead of a previous level's cached lines. standups[]
+ * is const (ROM) and WALL_DIST is cache-through, so neither needs a purge. */
+void raycast_purge_sprite_cache(void) {
+    purge_cache_range(lights,      sizeof lights);
+    purge_cache_range(&num_lights, sizeof num_lights);
 }
 
 /* Drop-ceiling grid pass — called from the secondary SH-2's dispatch loop
@@ -1874,7 +1928,44 @@ static void raycast_draw_bulkheads(int col_start, int col_end) {
     const fx_t PAR  = FX(0.01);   /* skip near-parallel rays (no crossing) */
     const fx_t STEP = FX(0.03);   /* probe just past a crossing for entry/exit */
 
-    for (int col = col_start; col < col_end; col++) {
+    /* Column-clip: project each crawlspace rect to a screen-column span and scan
+     * only the union. When no crawlspace is in view (common — it exists in the
+     * map but you're not looking at it), this skips the whole per-column
+     * rect/face/divide loop. When you're standing inside one a corner projects
+     * behind the camera, so we fall back to full width (no clip, no harm). */
+    fx_t det = FX_MUL(planeX, dirY) - FX_MUL(dirX, planeY);
+    int bcA = col_end, bcB = col_start - 1;
+    if (det == 0) { bcA = col_start; bcB = col_end - 1; }
+    else {
+        fx_t inv_det = fx_div_hw(FX_ONE, det);
+        for (int r = 0; r < n_lowceil_rect; r++) {
+            fx_t rcx[2] = { lowceil_rect[r][0], lowceil_rect[r][2] };
+            fx_t rcy[2] = { lowceil_rect[r][1], lowceil_rect[r][3] };
+            int rmin = col_end, rmax = col_start - 1, behind = 0;
+            for (int a = 0; a < 2 && !behind; a++)
+            for (int b = 0; b < 2; b++) {
+                fx_t rx = rcx[a] - px, ry = rcy[b] - py;
+                fx_t tY = FX_MUL(inv_det, FX_MUL(-planeY, rx) + FX_MUL(planeX, ry));
+                if (tY < FX(0.2)) { behind = 1; break; }
+                fx_t tX = FX_MUL(inv_det, FX_MUL(dirY, rx) - FX_MUL(dirX, ry));
+                int sc = (SCREEN_W >> 1)
+                       + (int)(((int64_t)(SCREEN_W >> 1) * fx_div_hw(tX, tY)) >> FX_SHIFT);
+                if (sc < rmin) rmin = sc;
+                if (sc > rmax) rmax = sc;
+            }
+            if (behind) { bcA = col_start; bcB = col_end - 1; break; }
+            if (rmin < col_start)   rmin = col_start;
+            if (rmax > col_end - 1) rmax = col_end - 1;
+            if (rmin > rmax) continue;          /* this rect is off-screen */
+            if (rmin < bcA) bcA = rmin;
+            if (rmax > bcB) bcB = rmax;
+        }
+    }
+    if (bcA > bcB) return;                       /* no crawlspace on screen */
+    if (--bcA < col_start)   bcA = col_start;    /* widen 1px for cap edges */
+    if (++bcB > col_end - 1) bcB = col_end - 1;
+
+    for (int col = bcA; col <= bcB; col++) {
         fx_t camX = ((fx_t)(2 * col - SCREEN_W) << FX_SHIFT) / SCREEN_W;
         fx_t rdx = dirX + FX_MUL(planeX, camX);
         fx_t rdy = dirY + FX_MUL(planeY, camX);
@@ -2159,8 +2250,14 @@ void raycast_draw_walls(int col_start, int col_end) {
         }
     }
 
-    for (int col = col_start; col < col_end; col++) {
+    /* Half-res: step 2 columns at a time, drawing col's result into the
+     * (col,col+1) pair via word-stores. col_start/col_end are multiples of 4
+     * (split is), so col+1 always stays inside this CPU's half. */
+    const int hr = SHARED_UC->wall_halfres;
+    const int cstep = hr ? 2 : 1;
+    for (int col = col_start; col < col_end; col += cstep) {
         WALL_DIST(col) = 0x7FFFFFFF;
+        if (hr) WALL_DIST(col + 1) = 0x7FFFFFFF;
         fx_t cameraX = cameraX_table[col];
         fx_t rayDirX = dirX + FX_MUL(planeX, cameraX);
         fx_t rayDirY = dirY + FX_MUL(planeY, cameraX);
@@ -2331,6 +2428,7 @@ void raycast_draw_walls(int col_start, int col_end) {
         }
 
         WALL_DIST(col) = perpDist;
+        if (hr) WALL_DIST(col + 1) = perpDist;
         /* No hard cutoff at MAX_VIEW_DIST — let walls render through
          * fog. The shade ramp clamps them to shade 15 past FOG_RAMP_DIST
          * so they're already fog-colored before they would have popped
@@ -2489,7 +2587,8 @@ void raycast_draw_walls(int col_start, int col_end) {
          * occlude it (they override perpDist above). */
         if (hit_cell == 2 && !partition_hit) {
             uint8_t *pb = (uint8_t *)fb + col + drawStart * SCREEN_W;
-            for (int y = drawStart; y <= drawEnd; y++) { *pb = 0; pb += SCREEN_W; }
+            if (hr) for (int y = drawStart; y <= drawEnd; y++) { *(uint16_t *)pb = 0; pb += SCREEN_W; }
+            else    for (int y = drawStart; y <= drawEnd; y++) { *pb = 0; pb += SCREEN_W; }
             continue;
         }
 
@@ -2596,6 +2695,28 @@ void raycast_draw_walls(int col_start, int col_end) {
          * (advances exactly (wall_end - drawStart + 1) writes) so the
          * baseboard loop below picks up at the right framebuffer row. */
         int total = wall_end - drawStart + 1;
+        if (hr) {
+            /* Half-res path: word-store the (col,col+1) pair per row. A single C
+             * loop covers both flat and textured (no asm) — we already pay only
+             * half the columns, and the word-store halves the byte-traffic, so
+             * the per-pixel C overhead is dwarfed by what we skipped. */
+            if (total > 0) {
+                if (detail_factor == 0) {
+                    uint16_t fw = WDUP(lut5[0]);
+                    for (int k = 0; k < total; k++) { *(uint16_t *)p = fw; p += SCREEN_W; }
+                } else {
+                    for (int k = 0; k < total; k++) {
+                        uint8_t pix = shade_lut[(tex_pos >> FX_SHIFT) & tex_h_mask];
+                        *(uint16_t *)p = WDUP(pix);
+                        p += SCREEN_W;
+                        tex_pos += tex_step;
+                    }
+                }
+            }
+            int by = wall_end + 1;
+            if (by <= drawEnd) { *(uint16_t *)p = WDUP(shadow_color); p += SCREEN_W; by++; }
+            for (; by <= drawEnd; by++) { *(uint16_t *)p = WDUP(base_color); p += SCREEN_W; }
+        } else {
         if (total > 0 && detail_factor == 0) {
             /* Faded distance: the pattern adds nothing, so the whole wall
              * column is one flat color. Skip the shade_lut build (above) and
@@ -2681,6 +2802,7 @@ void raycast_draw_walls(int col_start, int col_end) {
             *p = base_color;
             p += SCREEN_W;
         }
+        }   /* end full-res fill path (else of `if (hr)`) */
 
         /* ── Wall-embedded outlet ───────────────────────────────────────────
          * Paint the outlet plate INTO this finished wall column when the hit
@@ -2732,7 +2854,8 @@ void raycast_draw_walls(int col_start, int col_end) {
                     if ((unsigned)oty < (unsigned)OUTLET_TEX_HEIGHT) {
                         int ob = (int)outlet_tex[oty][otx] - oshade;
                         if (ob < 0) ob = 0;
-                        *po = (uint8_t)(OUTLET_BASE + ob);
+                        uint8_t oc8 = (uint8_t)(OUTLET_BASE + ob);
+                        if (hr) *(uint16_t *)po = WDUP(oc8); else *po = oc8;
                     }
                     po += SCREEN_W;
                 }
@@ -2753,6 +2876,7 @@ void raycast_draw_walls(int col_start, int col_end) {
              * sprite z-buffer must read its depth — otherwise the ceiling
              * lights (drawn later, z-tested per column) bleed through it. */
             WALL_DIST(col) = fg_t;
+            if (hr) WALL_DIST(col + 1) = fg_t;
             int flh  = (int)divu_u32((uint32_t)(SCREEN_H << FX_SHIFT), (uint32_t)fg_t);
             int fdlh = (flh * fg_height) >> 8;          /* band height in px */
             if (fdlh > 0) {
@@ -2820,13 +2944,21 @@ void raycast_draw_walls(int col_start, int col_end) {
                 uint8_t *fp = (uint8_t *)fb + col + fds * SCREEN_W;
                 int y = fds;
                 for (; y <= ftex_end; y++) {
-                    *fp = flut[fcol[(fpos >> FX_SHIFT) & fmask]];
+                    uint8_t fc8 = flut[fcol[(fpos >> FX_SHIFT) & fmask]];
+                    if (hr) *(uint16_t *)fp = WDUP(fc8); else *fp = fc8;
                     fp += SCREEN_W; fpos += fstep;
                 }
                 int fshadow = fsh + 2; if (fshadow > SHADE_LEVELS - 1) fshadow = SHADE_LEVELS - 1;
-                if (y <= fde) { *fp = (uint8_t)(WALL_BASE + fshadow); fp += SCREEN_W; y++; }
+                if (y <= fde) {
+                    uint8_t fs8 = (uint8_t)(WALL_BASE + fshadow);
+                    if (hr) *(uint16_t *)fp = WDUP(fs8); else *fp = fs8;
+                    fp += SCREEN_W; y++;
+                }
                 uint8_t fmold = (uint8_t)(WALL_BASE + fsh);
-                for (; y <= fde; y++) { *fp = fmold; fp += SCREEN_W; }
+                for (; y <= fde; y++) {
+                    if (hr) *(uint16_t *)fp = WDUP(fmold); else *fp = fmold;
+                    fp += SCREEN_W;
+                }
             }
         }
     }
@@ -2900,19 +3032,15 @@ void raycast_clear_half(int col_start, int col_end) {
 }
 
 void raycast_render(void) {
-    uint8_t *fb = fb_pixels();
     uint16_t prof_start = prof_frt_read();
 
     /* Vertical head bob is applied below via the framebuffer line table —
      * no position translation needed (lateral sway felt like drunk
      * swagger, not walking). */
 
-    /* Camera basis: forward = (cos a, sin a); camera plane perpendicular,
-     * length 0.66 -> ~66° horizontal FOV. */
-    fx_t dirX   = COS_FX(player.angle);
-    fx_t dirY   = SIN_FX(player.angle);
-    fx_t planeX = FX_MUL(-dirY, FX(0.66));
-    fx_t planeY = FX_MUL( dirX, FX(0.66));
+    /* The camera basis (dir/plane) is derived per-pass from the player snapshot
+     * now — the wall pass and the self-contained sprite/tail passes each build
+     * their own, so raycast_render no longer threads it through. */
 
     /* Snapshot player state for the secondary to read via cache-through.
      * Must land before COMM4 wakes the secondary so it sees the new frame. */
@@ -3009,39 +3137,31 @@ void raycast_render(void) {
      * the next swapBuffers() makes them visible via the VDP page flip. */
     __asm__ __volatile__("" ::: "memory");
 
-    /* Crawlspace tail (low-ceiling slab + bulkhead caps). Both halves' WALL_DIST
-     * is committed, so it z-tests against every column. When a crawlspace is
-     * active, PARALLELIZE it: hand the secondary its column half via CMD_TAIL and
-     * draw [0,split) here meanwhile, then barrier — so the slab+caps cost (which
-     * spiked single-CPU while crawling) is shared across both SH-2s. With no
-     * crawlspace, the passes early-out instantly, so skip the dispatch round-trip
-     * and run them inline. */
+    /* Crawlspace tail (slab + bulkhead caps) AND the sprite pass, both
+     * parallelized across the two SH-2s. WALL_DIST is committed for every
+     * column, so dispatch CMD_TAIL: the secondary draws its half — tail THEN
+     * lights+standups, in that order so the slab's z-stamp occludes sprites —
+     * while the primary does the same for [0,split) here. Sprites alone were
+     * ~10k serial ticks in a normal room; splitting reclaims most of it, so we
+     * dispatch unconditionally now (the tail early-outs cheaply with no
+     * crawlspace, and the round-trip pays for itself on the sprites). */
     uint16_t ps = prof_frt_read();
-    if (g_lowceil_active) {
-        MARS_SYS_COMM4 = MARS_CMD_TAIL;          /* secondary draws [split, W) */
-        raycast_draw_tail(0, split);             /* primary draws [0, split)   */
-        while (MARS_SYS_COMM4 != MARS_CMD_NONE) {
-            __asm__ __volatile__("nop\n\tnop\n\tnop\n\tnop\n\t"
-                                 "nop\n\tnop\n\tnop\n\tnop\n\t"
-                                 "nop\n\tnop\n\tnop\n\tnop\n\t"
-                                 "nop\n\tnop\n\tnop\n\tnop");
-        }
-    } else {
-        raycast_draw_tail(0, SCREEN_W);
-    }
+    MARS_SYS_COMM4 = MARS_CMD_TAIL;          /* secondary: tail+sprites [split,W) */
+    raycast_draw_tail(0, split);             /* primary:   tail        [0,split)  */
     { uint16_t n = prof_frt_read(); prof_pass_slab = (uint16_t)(n - ps); ps = n; }
-
-    /* Lights first, then standups — so foreground sprites (like the
-     * neanderthal) overpaint any ceiling-panel pixels that project
-     * into the same screen rows. The light z-test handles walls; the
-     * draw-order handles sprites. */
-    draw_lights(fb, dirX, dirY, planeX, planeY);
-    /* Partitions are now tested inline in the wall-column DDA — each
-     * ray does a ray-segment intersection against partitions[] and
-     * overrides perpDist if a partition is closer. Drops to the same
-     * column-rendering code path as regular walls. */
-    draw_standups(fb, dirX, dirY, planeX, planeY);
+    /* Lights first, then standups — foreground sprites overpaint ceiling-panel
+     * pixels in shared rows; the per-column z-test handles walls. */
+    draw_lights(0, split);
+    draw_standups(0, split);
     { uint16_t n = prof_frt_read(); prof_pass_sprite = (uint16_t)(n - ps); }
+    /* Barrier: wait for the secondary to finish its tail+sprite half before the
+     * page flip makes the frame visible. */
+    while (MARS_SYS_COMM4 != MARS_CMD_NONE) {
+        __asm__ __volatile__("nop\n\tnop\n\tnop\n\tnop\n\t"
+                             "nop\n\tnop\n\tnop\n\tnop\n\t"
+                             "nop\n\tnop\n\tnop\n\tnop\n\t"
+                             "nop\n\tnop\n\tnop\n\tnop");
+    }
 
     /* Vertical head bob via framebuffer line table.
      *

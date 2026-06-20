@@ -20,6 +20,8 @@ uint8_t g_metrics_on = 0;
 static void metrics_mode_check(uint16_t pad) {
     static uint16_t prev = 0xFFFF;
     if ((pad & SEGA_CTRL_MODE) && !(prev & SEGA_CTRL_MODE)) g_metrics_on ^= 1;
+    /* X toggles half-res walls live (also reachable via the VISUALS menu tab). */
+    if ((pad & SEGA_CTRL_X) && !(prev & SEGA_CTRL_X)) SHARED_UC->wall_halfres ^= 1;
     prev = pad;
 }
 
@@ -31,7 +33,7 @@ static void metrics_mode_check(uint16_t pad) {
  * immediate without being visually noisy. Remove this block when
  * we're done with the optimization pass. */
 static uint16_t prof_prev_frt = 0;
-static uint16_t prof_smoothed = 0;
+static uint32_t prof_smoothed = 0;   /* 32-bit: a sub-15fps frame exceeds the 16-bit FRT range */
 static uint16_t prof_secondary_smoothed = 0;
 static uint16_t prof_half_smoothed = 0;
 
@@ -54,10 +56,15 @@ static inline void prof_init(void) {
 
 static void prof_sample_and_draw(uint8_t *fb) {
     uint16_t now = prof_read_frt();
-    uint16_t delta = (uint16_t)(now - prof_prev_frt);  /* mod-16 wrap is fine for <91ms frames */
+    uint16_t raw = (uint16_t)(now - prof_prev_frt);
     prof_prev_frt = now;
+    /* The 16-bit FRT wraps once per ~91ms. A frame under ~15fps (>48000 ticks)
+     * still fits, but a sub-11fps frame (>65536) wraps and reads tiny. Unwrap
+     * the single overflow the same way the FPS calc does: a "frame" shorter
+     * than 12000 ticks (>60fps) can't be real here, so it's a wrapped long one. */
+    uint32_t delta = (raw < 12000) ? (uint32_t)raw + 65536u : raw;
     /* EMA: 7/8 old + 1/8 new — ~8-frame time constant. */
-    prof_smoothed = (uint16_t)((prof_smoothed - (prof_smoothed >> 3)) + (delta >> 3));
+    prof_smoothed = (prof_smoothed - (prof_smoothed >> 3)) + (delta >> 3);
     uint16_t secondary = SHARED_UC->secondary_render_ticks;
     prof_secondary_smoothed = (uint16_t)((prof_secondary_smoothed - (prof_secondary_smoothed >> 3)) + (secondary >> 3));
     uint16_t half = prof_primary_half_ticks;

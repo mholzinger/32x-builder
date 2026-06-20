@@ -13,4 +13,5 @@ shared_t shared = {
     .amb_volume = 128,
     .step_volume = 140,
     .lighting_flags = LIGHTING_FLICKER | LIGHTING_STROBE | LIGHTING_SHIMMER,
+    .wall_halfres = 1,   /* default on — the FPS win outweighs the slight chevron softening */
 };

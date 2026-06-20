@@ -20,11 +20,13 @@ extern uint8_t g_metrics_on;
 
 #define TAB_AUDIO    0
 #define TAB_LIGHTING 1
-#define TAB_CREDITS  2
-#define NUM_TABS     3
+#define TAB_VISUALS  2
+#define TAB_CREDITS  3
+#define NUM_TABS     4
 
 #define AUDIO_CONTENT_ROWS    2   /* AMBIENCE, FOOTSTEPS */
 #define LIGHTING_CONTENT_ROWS 4   /* FLICKER, STROBES, SHIMMER, METRICS */
+#define VISUALS_CONTENT_ROWS  1   /* WALLS (full / half res) */
 #define CREDITS_CONTENT_ROWS  0   /* BUILD/DATE/SHA are read-only display */
 
 static int      menu_active = 0;
@@ -53,6 +55,7 @@ static int content_rows_for(int tab) {
     switch (tab) {
     case TAB_AUDIO:    return AUDIO_CONTENT_ROWS;
     case TAB_LIGHTING: return LIGHTING_CONTENT_ROWS;
+    case TAB_VISUALS:  return VISUALS_CONTENT_ROWS;
     default:           return CREDITS_CONTENT_ROWS;
     }
 }
@@ -111,6 +114,9 @@ void menu_update(uint16_t pad) {
             }
             SHARED_UC->lighting_flags ^= bit;
         }
+    } else if (menu_tab == TAB_VISUALS) {
+        /* Single row: WALLS half/full res. LEFT and RIGHT both flip. */
+        if (menu_row == 1) SHARED_UC->wall_halfres ^= 1;
     }
 }
 
@@ -169,8 +175,11 @@ void menu_render(uint8_t *fb) {
     case TAB_LIGHTING:
         tab_text = tab_sel ? "> AUDIO |LIGHTING|" : "  AUDIO |LIGHTING|";
         break;
+    case TAB_VISUALS:
+        tab_text = tab_sel ? "> LIGHTING |VISUALS|" : "  LIGHTING |VISUALS|";
+        break;
     default: /* TAB_CREDITS */
-        tab_text = tab_sel ? "> LIGHTING |CREDITS|" : "  LIGHTING |CREDITS|";
+        tab_text = tab_sel ? "> VISUALS |CREDITS|" : "  VISUALS |CREDITS|";
         break;
     }
     font_draw_string(fb, X, Y + 16, tab_text, MENU_FG_COLOR);
@@ -192,6 +201,9 @@ void menu_render(uint8_t *fb) {
                  (f & LIGHTING_SHIMMER) ? " ON" : "OFF");
         draw_row(fb, 56, menu_row == 4, "METRICS",
                  g_metrics_on ? " ON" : "OFF");
+    } else if (menu_tab == TAB_VISUALS) {
+        draw_row(fb, 32, menu_row == 1, "WALLS",
+                 SHARED_UC->wall_halfres ? "HALF" : "FULL");
     } else {
         /* CREDITS — read-only build stamp (no selection cursor). */
         font_draw_string(fb, X + 8, Y + 32, "BUILD " VERSION_BUILD_STR, MENU_FG_COLOR);

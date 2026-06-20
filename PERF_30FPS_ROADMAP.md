@@ -1,5 +1,44 @@
 # Road to 30fps — corrected cost model (2026-06-19)
 
+> ## Session results — 2026-06-19 (shipped, MiSTer-verified)
+>
+> Banked this batch (squashed). All numbers are MiSTer (truth), not Ares.
+>
+> | Win | Effect | Notes |
+> |-----|--------|-------|
+> | **Profiler T-unwrap** | honest `T:` | 16-bit FRT wraps past ~65536 (sub-11fps); `T:` now 32-bit so a slow frame reads ~71936 not the wrapped 6400. The on-screen frame total was lying to us. |
+> | **Parallelize the serial tail (lever A)** | tail split both CPUs | `CMD_TAIL` now also carries the sprite pass; secondary draws slab+caps+lights+standups for `[split,W)` while primary does `[0,split)`. |
+> | **Parallelize sprites** | `P:10000 → 6000` | lights+standups made self-contained (player snapshot + local basis + column-clip). Flicker reseeded from `SHARED_UC->frame_count` so it matches across the split seam. Secondary purges `lights[]` (rebuilt at map load); `standups[]` is const ROM, `WALL_DIST` is cache-through. |
+> | **Bulkhead column-clip** | `L:18400(tunnel) / 4000(open)` | slab/cap scan skips when no crawlspace is on-screen — confirmed by `L:4000` in a wide room. |
+> | **Half-res walls (lever B, horizontal)** | `W:29000 → 17000`, **F:12 → 15** | every other column, word-store the `(col,col+1)` pair — halves per-column DDA/setup AND framebuffer stores. All 6 store paths handle it (flat, textured C word-loop replacing asm in HR mode, baseboard, black-exit, outlet, overlay). `WALL_DIST` stamped for both cols. |
+> | **VISUALS menu tab** | live FULL/HALF toggle | `SHARED_UC->wall_halfres` (cache-through coherent — both CPUs draw half the columns). Reachable lobby + mid-game; default HALF; X-button shortcut too. |
+>
+> **Quality:** half-res walls read as "smoother, not a loss" in normal play. ONE
+> artifact: the fog-dither in the lobby's dark expanse coarsens into 2px blocks —
+> hence the toggle (flip to FULL for those moments).
+>
+> ### Horizontal half-res is now TAPPED OUT — don't chase it further
+> Opened the remaining passes; none give a clean slab-style win:
+> - **Ceiling grid** = sparse grid-*line* drawer (`row_p[col]=grid_c` at crossings
+>   only; the fog background is the clear pass). Cost is per-row projection, not
+>   stores → column half-res saves nothing, row-skip breaks the grid.
+> - **Carpet** = sparse stain stamp with distance LOD already. Only lever is
+>   *thinning* far stains (visible).
+> - **Light tiles** = fillable but fills are tiny; cost is per-light projection
+>   setup. ~1k for edge-chunk. Not worth it.
+>
+> ### The one lever left: VERTICAL half-res (line-table) — next big swing
+> In-loop row duplication saves compute, NOT the uncached-FB *stores* (the real
+> bottleneck). To win, use the **line table**: map display rows so each pair shows
+> one even framebuffer row, then have every pass render **only even rows** and skip
+> odd-row stores entirely. Halves the WHOLE frame at once (walls + ceiling + carpet
+> + clear + sprites + slab), potentially F:15 → low-20s. Touches every pass + the
+> horizon math + the line table (reuse the head-bob mechanism). Real prototype,
+> needs iteration — deliberately deferred so it doesn't gate this stable batch.
+>
+> ---
+
+
 **This supersedes the lever priorities in `D32XR_MINING.md`.** That doc's top
 bets (SDRAM code/texture placement) were chasing the wrong bottleneck. Built
 from 4 parallel deep-dives (our cost accounting, d32xr viewport/budget, 32X

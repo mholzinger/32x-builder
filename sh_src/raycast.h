@@ -87,5 +87,10 @@ void raycast_clear_half(int col_start, int col_end);
 void raycast_draw_tail(int col_start, int col_end);
 /* Secondary CPU: drop stale crawlspace-geometry cache lines before CMD_TAIL. */
 void raycast_purge_lowceil_cache(void);
+/* Sprite pass (ceiling lights + standups) for a column range — runs after the
+ * tail, split across both SH-2s in the same CMD_TAIL phase. */
+void raycast_draw_sprites(int col_start, int col_end);
+/* Secondary CPU: drop stale lights[] cache lines before the sprite pass. */
+void raycast_purge_sprite_cache(void);
 
 #endif

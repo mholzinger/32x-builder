@@ -103,6 +103,12 @@ typedef struct {
      * balancing). Always a multiple of 4 (the clear pass writes 4-px words).
      * Defaults to SCREEN_W/2; stays there on emulators where the FRT reads 0. */
     volatile uint16_t split_col;
+    /* Half-res wall render toggle (VISUALS menu tab). 1 = draw every other
+     * column and word-store the pair — chunky horizontally, ~halves the wall
+     * pass. 0 = full per-column detail. Lives here (not a plain global) because
+     * draw_walls runs on BOTH CPUs; cache-through keeps the two screen halves
+     * at the same resolution the instant it's toggled. */
+    volatile uint8_t wall_halfres;
 } shared_t;
 
 #define LIGHTING_FLICKER  0x01   /* per-panel random brightness rolls */

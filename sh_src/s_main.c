@@ -77,7 +77,11 @@ void s_main(void) {
              * so we don't draw stale caps from a previous level. */
             int split = (int)SHARED_UC->split_col;
             raycast_purge_lowceil_cache();
+            raycast_purge_sprite_cache();
             raycast_draw_tail(split, SCREEN_W);
+            /* Sprites AFTER the tail so the slab's z-stamp occludes them. Draws
+             * only [split, SCREEN_W) — disjoint from the primary's half. */
+            raycast_draw_sprites(split, SCREEN_W);
             break;
         }
         case MARS_CMD_BOX: {

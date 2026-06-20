@@ -109,6 +109,19 @@ typedef struct {
      * draw_walls runs on BOTH CPUs; cache-through keeps the two screen halves
      * at the same resolution the instant it's toggled. */
     volatile uint8_t wall_halfres;
+    /* WALLS menu mode: 0=FULL, 1=HALF, 2=AUTO. The primary folds this with the
+     * lobby override and (for AUTO) the measured frame time into wall_halfres
+     * above each frame — that effective flag is what both CPUs' draw_walls read.
+     * AUTO uses hysteresis on the frame period so it doesn't flip-flop per frame. */
+    volatile uint8_t wall_res_mode;
+    /* Vertical half-res (VISUALS menu). 1 = the line table maps each display-row
+     * pair onto one even framebuffer row, so the screen shows only even rows
+     * doubled. Defaults OFF and stays a VISUAL option only — judged too chunky to
+     * be worth converting the render passes to skip odd rows, so it currently buys
+     * no FPS (the passes still draw every row; the display just discards the odd
+     * ones). Suspended while the pause menu is open so the overlay text stays
+     * readable. Kept as a toggle in case the pass surgery is revisited. */
+    volatile uint8_t vres_half;
 } shared_t;
 
 #define LIGHTING_FLICKER  0x01   /* per-panel random brightness rolls */

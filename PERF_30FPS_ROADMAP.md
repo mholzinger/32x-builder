@@ -27,6 +27,19 @@
 > - **Light tiles** = fillable but fills are tiny; cost is per-light projection
 >   setup. ~1k for edge-chunk. Not worth it.
 >
+> ### 2026-06-20 addendum — vertical half-res RULED OUT; adaptive res shipped
+> - **Vertical half-res: tried via the line table (Step 1 preview), looks too chunky.**
+>   Kept as a `VERT` VISUALS toggle (default OFF, no FPS gain — pass surgery not done)
+>   in case it's revisited. Suspended while the pause menu is open (the line table
+>   would halve the overlay text too).
+> - **Adaptive resolution shipped — `WALLS: FULL/HALF/AUTO` (default AUTO).** Primary
+>   measures the frame period (FRT EMA) and switches the effective half-res with
+>   hysteresis: >54000 ticks (~F:13.3) → HALF, <45000 (~F:16) → FULL. Self-stabilizes;
+>   lobby always forces FULL. Effective flag computed primary-side, published via
+>   SHARED_UC so both CPUs match. MiSTer-confirmed: crisp when light, half when heavy,
+>   no strobing.
+> - METRICS overlay moved to the VISUALS menu tab (out of LIGHTING).
+>
 > ### The one lever left: VERTICAL half-res (line-table) — next big swing
 > In-loop row duplication saves compute, NOT the uncached-FB *stores* (the real
 > bottleneck). To win, use the **line table**: map display rows so each pair shows

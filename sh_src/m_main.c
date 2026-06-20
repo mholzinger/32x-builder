@@ -20,8 +20,9 @@ uint8_t g_metrics_on = 0;
 static void metrics_mode_check(uint16_t pad) {
     static uint16_t prev = 0xFFFF;
     if ((pad & SEGA_CTRL_MODE) && !(prev & SEGA_CTRL_MODE)) g_metrics_on ^= 1;
-    /* X toggles half-res walls live (also reachable via the VISUALS menu tab). */
-    if ((pad & SEGA_CTRL_X) && !(prev & SEGA_CTRL_X)) SHARED_UC->wall_halfres ^= 1;
+    /* X cycles the WALLS res mode FULL/HALF/AUTO (also in the VISUALS menu tab). */
+    if ((pad & SEGA_CTRL_X) && !(prev & SEGA_CTRL_X))
+        SHARED_UC->wall_res_mode = (uint8_t)((SHARED_UC->wall_res_mode + 1) % 3);
     prev = pad;
 }
 

@@ -25,8 +25,8 @@ extern uint8_t g_metrics_on;
 #define NUM_TABS     4
 
 #define AUDIO_CONTENT_ROWS    2   /* AMBIENCE, FOOTSTEPS */
-#define LIGHTING_CONTENT_ROWS 4   /* FLICKER, STROBES, SHIMMER, METRICS */
-#define VISUALS_CONTENT_ROWS  1   /* WALLS (full / half res) */
+#define LIGHTING_CONTENT_ROWS 3   /* FLICKER, STROBES, SHIMMER */
+#define VISUALS_CONTENT_ROWS  3   /* WALLS (h-res), VERT (v-res), METRICS */
 #define CREDITS_CONTENT_ROWS  0   /* BUILD/DATE/SHA are read-only display */
 
 static int      menu_active = 0;
@@ -100,23 +100,23 @@ void menu_update(uint16_t pad) {
         if (v > 255) v = 255;
         *target = (uint8_t)v;
     } else if (menu_tab == TAB_LIGHTING) {
-        /* LIGHTING tab: toggle the corresponding bit/flag. dir doesn't
-         * matter — LEFT and RIGHT both flip. Row 4 is the METRICS overlay
-         * (any-pad access to what MODE toggles on a 6-button pad). */
-        if (menu_row == 4) {
-            g_metrics_on ^= 1;
-        } else {
-            uint8_t bit;
-            switch (menu_row) {
-            case 1: bit = LIGHTING_FLICKER; break;
-            case 2: bit = LIGHTING_STROBE;  break;
-            default: bit = LIGHTING_SHIMMER; break;
-            }
-            SHARED_UC->lighting_flags ^= bit;
+        /* LIGHTING tab: toggle the corresponding effect bit. dir doesn't
+         * matter — LEFT and RIGHT both flip. */
+        uint8_t bit;
+        switch (menu_row) {
+        case 1: bit = LIGHTING_FLICKER; break;
+        case 2: bit = LIGHTING_STROBE;  break;
+        default: bit = LIGHTING_SHIMMER; break;
         }
+        SHARED_UC->lighting_flags ^= bit;
     } else if (menu_tab == TAB_VISUALS) {
-        /* Single row: WALLS half/full res. LEFT and RIGHT both flip. */
-        if (menu_row == 1) SHARED_UC->wall_halfres ^= 1;
+        /* WALLS res mode cycles FULL/HALF/AUTO (LEFT/RIGHT step the cycle);
+         * VERT (vertical half-res) and METRICS overlay are flips. */
+        if (menu_row == 1) {
+            int m = (int)SHARED_UC->wall_res_mode + dir;
+            SHARED_UC->wall_res_mode = (uint8_t)((m + 3) % 3);
+        } else if (menu_row == 2) SHARED_UC->vres_half ^= 1;
+        else if (menu_row == 3) g_metrics_on ^= 1;
     }
 }
 
@@ -199,11 +199,14 @@ void menu_render(uint8_t *fb) {
                  (f & LIGHTING_STROBE)  ? " ON" : "OFF");
         draw_row(fb, 48, menu_row == 3, "SHIMMER",
                  (f & LIGHTING_SHIMMER) ? " ON" : "OFF");
-        draw_row(fb, 56, menu_row == 4, "METRICS",
-                 g_metrics_on ? " ON" : "OFF");
     } else if (menu_tab == TAB_VISUALS) {
-        draw_row(fb, 32, menu_row == 1, "WALLS",
-                 SHARED_UC->wall_halfres ? "HALF" : "FULL");
+        static const char *res_lbl[3] = { "FULL", "HALF", "AUTO" };
+        uint8_t m = SHARED_UC->wall_res_mode; if (m > 2) m = 1;
+        draw_row(fb, 32, menu_row == 1, "WALLS", res_lbl[m]);
+        draw_row(fb, 40, menu_row == 2, "VERT",
+                 SHARED_UC->vres_half ? "HALF" : "FULL");
+        draw_row(fb, 48, menu_row == 3, "METRICS",
+                 g_metrics_on ? " ON" : "OFF");
     } else {
         /* CREDITS — read-only build stamp (no selection cursor). */
         font_draw_string(fb, X + 8, Y + 32, "BUILD " VERSION_BUILD_STR, MENU_FG_COLOR);

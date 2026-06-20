@@ -1,6 +1,7 @@
 #include "mars.h"
 #include "raycast.h"
 #include "shared.h"
+#include "menu.h"
 #include "sh2_asm.h"
 #include "sin_table.h"
 #include "wall_tex.h"
@@ -2253,6 +2254,9 @@ void raycast_draw_walls(int col_start, int col_end) {
     /* Half-res: step 2 columns at a time, drawing col's result into the
      * (col,col+1) pair via word-stores. col_start/col_end are multiples of 4
      * (split is), so col+1 always stays inside this CPU's half. */
+    /* Effective half-res, resolved by the primary each frame (menu mode + lobby
+     * override + AUTO frame-time decision) and published via cache-through so
+     * both CPUs draw the same resolution. */
     const int hr = SHARED_UC->wall_halfres;
     const int cstep = hr ? 2 : 1;
     for (int col = col_start; col < col_end; col += cstep) {
@@ -3034,6 +3038,38 @@ void raycast_clear_half(int col_start, int col_end) {
 void raycast_render(void) {
     uint16_t prof_start = prof_frt_read();
 
+    /* Frame-period EMA for adaptive resolution (WALLS=AUTO). Delta between
+     * successive raycast_render entries = full frame period in FRT ticks. The
+     * 16-bit FRT wraps past 65536 (sub-11fps), so unwrap a single overflow like
+     * the on-screen T: readout. EMA (7/8 + 1/8) smooths it so AUTO reacts over a
+     * few frames, not to one-frame spikes. */
+    static uint16_t frame_prev_frt = 0;
+    static uint32_t frame_ema = 36000;   /* ~F:20 seed so AUTO doesn't lurch at boot */
+    uint16_t fdraw = (uint16_t)(prof_start - frame_prev_frt);
+    frame_prev_frt = prof_start;
+    uint32_t fdelta = (fdraw < 12000) ? (uint32_t)fdraw + 65536u : fdraw;
+    frame_ema = (frame_ema - (frame_ema >> 3)) + (fdelta >> 3);
+
+    /* Resolve the effective wall half-res from the menu mode. Lobby always full.
+     * AUTO: hysteresis on the frame period — drop to half above ~F:13.3, return
+     * to full below ~F:16; the deadband stops per-frame flip-flop (and the loop
+     * self-stabilizes since switching res moves the period across the band). */
+    static int auto_hr = 1;
+    int eff_hr;
+    if (g_lobby_ceiling) {
+        eff_hr = 0;
+    } else {
+        uint8_t mode = SHARED_UC->wall_res_mode;
+        if      (mode == 0) eff_hr = 0;
+        else if (mode == 1) eff_hr = 1;
+        else {
+            if      (frame_ema > 54000) auto_hr = 1;   /* slower than ~F:13.3 → half */
+            else if (frame_ema < 45000) auto_hr = 0;   /* faster than ~F:16   → full */
+            eff_hr = auto_hr;
+        }
+    }
+    SHARED_UC->wall_halfres = (uint8_t)eff_hr;
+
     /* Vertical head bob is applied below via the framebuffer line table —
      * no position translation needed (lateral sway felt like drunk
      * swagger, not walking). */
@@ -3179,9 +3215,15 @@ void raycast_render(void) {
         /* sin in -FX_ONE..+FX_ONE, scaled to ±2 pixels for a tight micro-bob. */
         bob_y = (int)((SIN_FX(bob_phase) * 2) >> FX_SHIFT);
     }
+    /* Vertical half-res: collapse each display-row pair onto one even framebuffer
+     * row (i & ~1) so the screen shows only even rows, doubled. Suspended while the
+     * pause menu is open — the line table would halve the menu text too and make it
+     * unreadable; full-res rows behind the overlay are fine since play is paused. */
+    int vres = SHARED_UC->vres_half && !menu_is_active() && !g_lobby_ceiling;
     volatile uint16_t *line_table = &MARS_FRAMEBUFFER;
     for (int i = 0; i < SCREEN_H; i++) {
-        int src = i + bob_y;
+        int base = vres ? (i & ~1) : i;
+        int src = base + bob_y;
         if (src < 0)         src = 0;
         if (src >= SCREEN_H) src = SCREEN_H - 1;
         line_table[i] = (uint16_t)(src * 160 + 0x100);

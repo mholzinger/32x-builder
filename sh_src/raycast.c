@@ -1822,17 +1822,26 @@ static void raycast_draw_low_ceiling(int col_start, int col_end) {
         if (cA > cB) continue;      /* no zone columns in this row */
 
         /* Dark-beige drop-panel: fill + darker seam on a half-cell world lattice
-         * (a parallax/structure cue so it reads as a solid ceiling). */
+         * (a parallax/structure cue so it reads as a solid ceiling).
+         * HALF-RES: compute one column, emit a 2-pixel word. The slab is flat
+         * beige, so the horizontal chunkiness is invisible — and it halves both
+         * the per-pixel work and the uncached framebuffer transactions (one
+         * mov.w vs two mov.b), which is the bulk of the L: crawl cost. The odd
+         * partner inherits the even column's test (a 1px edge approximation). */
         uint8_t *row_p = fb + y * SCREEN_W;
-        fx_t wx = wxL + stepx * cA;
-        fx_t wy = wyL + stepy * cA;
-        for (int col = cA; col <= cB; col++, wx += stepx, wy += stepy) {
+        int c0 = cA & ~1;                  /* even-align for the word store */
+        int c1 = cB | 1;                   /* include cB's odd partner      */
+        if (c1 > col_end - 1) c1 = col_end - 1;
+        fx_t wx = wxL + stepx * c0;
+        fx_t wy = wyL + stepy * c0;
+        for (int col = c0; col <= c1; col += 2, wx += stepx * 2, wy += stepy * 2) {
             if (!ceil_is_low(wx, wy)) continue;        /* this cell's ceiling is full */
             if (rowDist >= wd[col]) continue;          /* behind a nearer wall (cached) */
             int seam = (((int)wx & 0x7FFF) < LOWCEIL_SEAM_W) ||
                        (((int)wy & 0x7FFF) < LOWCEIL_SEAM_W);
-            row_p[col] = seam ? LOWCEIL_SEAM : LOWCEIL_COLOR;
-            slab_far[col] = rowDist;   /* rows go top->horizon, so last = farthest */
+            uint8_t cv = seam ? LOWCEIL_SEAM : LOWCEIL_COLOR;
+            *(uint16_t *)(row_p + col) = ((uint16_t)cv << 8) | cv;  /* col & col+1 */
+            slab_far[col] = rowDist; slab_far[col + 1] = rowDist;
         }
     }
     /* Stamp the z-buffer with the slab's far edge so draw_lights occludes any

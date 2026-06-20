@@ -88,7 +88,7 @@ MISTER_TV  ?= root@mister.tv.local
 all: release
 
 release: MDEXTRA  = -O2 -fomit-frame-pointer -flto -fuse-linker-plugin
-release: SHEXTRA  = -Ofast -fomit-frame-pointer -flto -fuse-linker-plugin
+release: SHEXTRA  = -O2 -fomit-frame-pointer -flto -fuse-linker-plugin
 release: $(MDTARGET).bin $(MDTARGET).lst $(TARGET).32x $(TARGET).lst
 
 # Office MiSTer: probe usb0 then usb1 for the S32X dir.

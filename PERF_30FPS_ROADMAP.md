@@ -27,6 +27,29 @@
 > - **Light tiles** = fillable but fills are tiny; cost is per-light projection
 >   setup. ~1k for edge-chunk. Not worth it.
 >
+> ### 2026-06-20 addendum #2 — Lever 1 (code in SDRAM) CONFIRMED win
+> Same-scene A/B on the stable fixed-map spawn, WALLS:FULL (the lobby is useless
+> for A/B — its stand-up animation desyncs the EMAs). Moved the 8 hot renderer
+> functions into a `.ramtext` section copied ROM→cacheable-SDRAM at boot (the MARS
+> header's existing ROM→SDRAM block copy carries it — extend `_sdata` to cover
+> `.data`+`.ramtext`, no crt0 change; see mars.ld).
+>
+> | pass | ROM | SDRAM | Δ |
+> |---|---|---|---|
+> | C clear | 2800 | 3000 | ~0 |
+> | G ceiling | ~3900 | 3700 | ~0 |
+> | R carpet | 7712 | 7471 | ~0 |
+> | **W walls** | **34400** | **24400** | **−29%** |
+> | **H half** | **48700** | **39000** | **−9700** |
+> | **F** | **10** | **12** | **+2** |
+>
+> The fills (C/G/R) are store-bound → unchanged. Only the **walls** (heavy DDA +
+> partition + divide compute) win, because that compute was I-fetch-stalled from
+> ROM. Free fps, zero pixels changed. Textures were already SDRAM-staged
+> (`wall_tex_ram`), so this was the remaining half of Lever 1. NEXT d32xr lever:
+> **Lever 2** — stop always-uncaching `pface_*`/`cell_light` (cache + purge per
+> line); attacks uncached *data* reads, a different bottleneck than this.
+>
 > ### 2026-06-20 addendum — vertical half-res RULED OUT; adaptive res shipped
 > - **Vertical half-res: tried via the line table (Step 1 preview), looks too chunky.**
 >   Kept as a `VERT` VISUALS toggle (default OFF, no FPS gain — pass surgery not done)

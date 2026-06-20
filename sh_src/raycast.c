@@ -11,6 +11,12 @@
 #include "outlet_tex.h"
 #include "partition_tex.h"
 
+/* d32xr Lever 1: place a per-frame-hot renderer function in cacheable SDRAM
+ * (.ramtext, copied from ROM at boot) instead of executing it from slow,
+ * uncacheable ROM. The 32X MARS header's ROM->SDRAM copy carries it over; see
+ * mars.ld. No behavior change — pure instruction-fetch speedup. */
+#define RAMTEXT __attribute__((section(".ramtext")))
+
 /* Player spawn — south end of the col-16 spine corridor in the
  * hand-tuned 32x32 Backrooms map. Walls flank tightly at cols 15/17
  * for the iconic "infinite hallway" first frame. The corridor opens
@@ -1237,7 +1243,7 @@ void player_update(uint16_t pad) {
  * of raycast_draw_walls). decals[] just carries where/how big it is; there is
  * no billboard pass any more. */
 
-static void draw_standups(int col_start, int col_end) {
+RAMTEXT static void draw_standups(int col_start, int col_end) {
     /* Self-contained for the dual-CPU split: read the player snapshot and
      * derive the camera basis locally (same as the ceiling/carpet passes) so
      * the secondary can draw its column half [col_start,col_end) coherently
@@ -1481,7 +1487,7 @@ static void partition_build_faces(void) {
 /* Project each ceiling light to screen space, paint a small bright bar
  * with z-test against wall_dist, apply per-light flicker. The math is the
  * sprite-billboard transform; the cost is ~50-100 cycles per light. */
-static void draw_lights(int col_start, int col_end) {
+RAMTEXT static void draw_lights(int col_start, int col_end) {
     /* Self-contained for the dual-CPU split (see draw_standups): snapshot the
      * player + derive the basis locally so the secondary can fill its column
      * half [col_start,col_end). */
@@ -1672,7 +1678,7 @@ void raycast_purge_sprite_cache(void) {
  * Disjoint from the carpet pass (bottom half) so they run in parallel
  * without races. Walls overwrite grid pixels where they intersect,
  * matching the previous sequential behavior. */
-void raycast_draw_ceiling_grid(int col_start, int col_end) {
+RAMTEXT void raycast_draw_ceiling_grid(int col_start, int col_end) {
     fx_t px = SHARED_UC->player.x;
     fx_t py = SHARED_UC->player.y;
     uint8_t angle = (uint8_t)SHARED_UC->player.angle;
@@ -1792,7 +1798,7 @@ void raycast_draw_ceiling_grid(int col_start, int col_end) {
  * tricks. Run AFTER the wall pass (WALL_DIST valid) and z-tested per column so
  * the slab occludes the far wall-tops/ceiling behind it and is hidden by nearer
  * walls — a sector ceiling. One full-width pass on the primary post-sync. */
-static void raycast_draw_low_ceiling(int col_start, int col_end) {
+RAMTEXT static void raycast_draw_low_ceiling(int col_start, int col_end) {
     if (!g_lowceil_active) return;
     int eye = (int)SHARED_UC->eye_h;
     if (eye >= CRAWL_CEIL_H) return;    /* eye at/above the slab: not overhead */
@@ -1914,7 +1920,7 @@ static void raycast_draw_low_ceiling(int col_start, int col_end) {
  * corridor walls (e.g. the west boundary) z-cull the side faces automatically;
  * the open ends and any open side get a visible cap. Runs post-sync with the
  * slab, both reading the committed WALL_DIST z-buffer. */
-static void raycast_draw_bulkheads(int col_start, int col_end) {
+RAMTEXT static void raycast_draw_bulkheads(int col_start, int col_end) {
     if (!g_lowceil_active) return;
     fx_t px = SHARED_UC->player.x;
     fx_t py = SHARED_UC->player.y;
@@ -2083,7 +2089,7 @@ void raycast_draw_tail(int col_start, int col_end) {
  * from the shared snapshot so the secondary can run it alongside the
  * ceiling grid pass on the top half (disjoint framebuffer regions,
  * no race). */
-void raycast_draw_carpet(int col_start, int col_end) {
+RAMTEXT void raycast_draw_carpet(int col_start, int col_end) {
     fx_t px = SHARED_UC->player.x;
     fx_t py = SHARED_UC->player.y;
     uint8_t angle = (uint8_t)SHARED_UC->player.angle;
@@ -2184,7 +2190,7 @@ void raycast_draw_carpet(int col_start, int col_end) {
  * SCREEN_W). Writes the per-column z-buffer (WALL_DIST) through the
  * cache-through alias so the sprite passes on primary see secondary's
  * writes after the COMM4 sync. Reads player from SHARED_UC. */
-void raycast_draw_walls(int col_start, int col_end) {
+RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
     fx_t px = SHARED_UC->player.x;
     fx_t py = SHARED_UC->player.y;
     uint8_t angle = (uint8_t)SHARED_UC->player.angle;
@@ -2996,7 +3002,7 @@ static inline uint16_t prof_frt_read(void) {
  * per-row constant fill. Each CPU calls this on its own half so the
  * clear runs in parallel and no row is touched twice. col_start must
  * be a multiple of 4 (we use 32-bit stores = 4 pixels per write). */
-void raycast_clear_half(int col_start, int col_end) {
+RAMTEXT void raycast_clear_half(int col_start, int col_end) {
     uint8_t *fb = fb_pixels();
     uint32_t *fb32 = (uint32_t *)fb;
     int col_words = (col_end - col_start) >> 2;

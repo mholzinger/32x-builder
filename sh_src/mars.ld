@@ -78,9 +78,21 @@ SECTIONS {
 		_edata = .;
 		. = ALIGN(0x4);
 	} > ram
-	_sdata = SIZEOF (.data);
 
-	.bss 0x06000000 + SIZEOF(.data) :
+	/* Hot renderer code copied ROM->cacheable SDRAM at boot (d32xr Lever 1).
+	 * Placed contiguously after .data, with its load image contiguous after
+	 * .data's in ROM, so the MARS header's single ROM->SDRAM copy (Source
+	 * _stext, Size _sdata) carries BOTH .data and .ramtext over — no crt0
+	 * change. _sdata is therefore the combined size. Functions opt in via
+	 * __attribute__((section(".ramtext"))). */
+	.ramtext 0x06000000 + SIZEOF(.data) : AT(LOADADDR(.data) + SIZEOF(.data)) {
+		. = ALIGN(0x4);
+		*(.ramtext .ramtext.*)
+		. = ALIGN(0x4);
+	} > ram
+	_sdata = SIZEOF(.data) + SIZEOF(.ramtext);
+
+	.bss 0x06000000 + SIZEOF(.data) + SIZEOF(.ramtext) :
 	{
 		__bss_start = . ;
 		*(.shbss)

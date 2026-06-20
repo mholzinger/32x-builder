@@ -487,7 +487,13 @@ static inline int ceil_is_low(fx_t wx, fx_t wy) {
  * as lit. Built in init_lights; read by both CPUs in the wall loop via the
  * cache-through alias. */
 static uint8_t cell_light[MAP_H][MAP_W];
-#define CELL_LIGHT(y,x) (((volatile uint8_t *)((uintptr_t)cell_light | 0x20000000))[(y)*MAP_W + (x)])
+/* Read CACHED (no 0x20000000 alias). cell_light is rebuilt only at map load by
+ * init_lights on the primary; the per-column wall light-boost then reads it both
+ * CPUs. Uncached (~12 cyc) was waste. Coherency: the primary bumps
+ * SHARED_UC->cell_light_gen after each rebuild; the secondary purges these lines
+ * once when the gen changes (raycast_purge_partition_cache) so it re-reads fresh
+ * but the lines stay warm across frames. The primary wrote them, so it's current. */
+#define CELL_LIGHT(y,x) (((volatile uint8_t *)cell_light)[(y)*MAP_W + (x)])
 #define LIGHT_BOOST_MAX 3
 #define LIT_FOG_CAP     9   /* a lit surface never fogs darker than this (-2 per light level) */
 #define SIDE_SHADE      1   /* N/S-facing faces are this many shades darker (form cue) */
@@ -544,6 +550,22 @@ static void init_lights(void) {
                 cell_light[cy][cx] = (uint8_t)v;
             }
         }
+    }
+    /* Signal the secondary that cell_light changed so it purges its now-stale
+     * cached lines once (see CELL_LIGHT). Write-through already pushed our
+     * writes to SDRAM. */
+    SHARED_UC->cell_light_gen++;
+}
+
+/* Secondary: purge cell_light once per map-load (gen change) before the wall
+ * pass, so CELL_LIGHT reads stay cache-warm across frames yet coherent across
+ * loads. Primary never calls this — it wrote cell_light, so its cache is current. */
+void raycast_purge_cell_light(void) {
+    static uint8_t seen_gen = 0xFF;
+    uint8_t g = SHARED_UC->cell_light_gen;
+    if (g != seen_gen) {
+        purge_cache_range(cell_light, sizeof cell_light);
+        seen_gen = g;
     }
 }
 

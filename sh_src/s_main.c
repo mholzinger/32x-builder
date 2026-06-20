@@ -65,6 +65,7 @@ void s_main(void) {
             raycast_draw_ceiling_grid(split, SCREEN_W);
             raycast_draw_carpet(split, SCREEN_W);
             raycast_purge_partition_cache();   /* fresh pface_* before walls */
+            raycast_purge_cell_light();        /* fresh cell_light on map change */
             raycast_draw_walls(split, SCREEN_W);
             SHARED_UC->secondary_render_ticks = (uint16_t)(secondary_frt_read() - t0);
             break;

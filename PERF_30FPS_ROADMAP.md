@@ -46,9 +46,16 @@
 > The fills (C/G/R) are store-bound → unchanged. Only the **walls** (heavy DDA +
 > partition + divide compute) win, because that compute was I-fetch-stalled from
 > ROM. Free fps, zero pixels changed. Textures were already SDRAM-staged
-> (`wall_tex_ram`), so this was the remaining half of Lever 1. NEXT d32xr lever:
-> **Lever 2** — stop always-uncaching `pface_*`/`cell_light` (cache + purge per
-> line); attacks uncached *data* reads, a different bottleneck than this.
+> (`wall_tex_ram`), so this was the remaining half of Lever 1.
+>
+> **Lever 2 — CLOSED.** `pface_*` (the thousands-of-reads/frame hot array, the bulk
+> of the doc's 4–8fps estimate) was already cached+purged in a prior session. Only
+> `cell_light` remained uncached — but it's ~160 reads/frame (one per wall column),
+> so caching it (gen-gated secondary purge so it stays warm yet coherent across map
+> loads) was a measured wash (W 24400→24000, noise). Kept anyway: correct design,
+> matches `pface_*`. **The d32xr perf mine is now tapped** — Levers 1/2/3 done,
+> Lever 5 we were already ahead of, Lever 4's remaining divides are overflow-risky
+> for ~560 ticks. Practical full-screen ceiling: F:12 full / ~F:15 adaptive.
 >
 > ### 2026-06-20 addendum — vertical half-res RULED OUT; adaptive res shipped
 > - **Vertical half-res: tried via the line table (Step 1 preview), looks too chunky.**

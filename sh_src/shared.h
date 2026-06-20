@@ -122,6 +122,10 @@ typedef struct {
      * ones). Suspended while the pause menu is open so the overlay text stays
      * readable. Kept as a toggle in case the pass surgery is revisited. */
     volatile uint8_t vres_half;
+    /* Bumped by the primary each time init_lights rebuilds cell_light (map load).
+     * The secondary watches it to purge its stale cached cell_light lines once
+     * per change, so cell_light can be read cached instead of uncached. */
+    volatile uint8_t cell_light_gen;
 } shared_t;
 
 #define LIGHTING_FLICKER  0x01   /* per-panel random brightness rolls */

@@ -81,6 +81,8 @@ void raycast_draw_walls(int col_start, int col_end);
 /* Secondary CPU: drop stale partition-face cache lines before the wall pass so
  * it re-reads the primary's fresh per-frame writes. Primary never calls this. */
 void raycast_purge_partition_cache(void);
+/* Secondary CPU: purge cell_light once per map-load (gen change) before walls. */
+void raycast_purge_cell_light(void);
 void raycast_clear_half(int col_start, int col_end);
 /* Crawlspace tail (low-ceiling slab + bulkhead caps) for a column range — runs
  * after the wall barrier, split across both SH-2s via CMD_TAIL. */

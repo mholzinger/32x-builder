@@ -411,6 +411,9 @@ void procgen_run(uint32_t seed) {
     scatter_pockets();
     enforce_boundary();
     clear_spawn_vestibule();
+    /* The way out: every generated level gets the exit door behind spawn. It
+     * carves its own approach and only opens into the NEXT generated level. */
+    raycast_place_exit_door();
 
     /* Elements (the lobby features), all weight-driven:
      *  - extra free-standing dividers on top of the room dividers

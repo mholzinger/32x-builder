@@ -74,6 +74,10 @@ void raycast_load_fixed(void);
 void raycast_load_lobby(void);
 void raycast_render(void);
 void player_update(uint16_t pad);
+/* 1 when the player has stepped into the open EXIT door — fire the procgen portal. */
+int  raycast_door_portal_check(void);
+/* Stamp the recurring exit door (behind spawn) into the live map. procgen calls it. */
+void raycast_place_exit_door(void);
 void raycast_shimmer(void);
 void raycast_draw_ceiling_grid(int col_start, int col_end);
 void raycast_draw_carpet(int col_start, int col_end);

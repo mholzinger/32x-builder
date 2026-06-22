@@ -9,6 +9,7 @@
 #include "neander_tex.h"
 #include "neander_tex_hi.h"
 #include "outlet_tex.h"
+#include "door_tex.h"
 #include "partition_tex.h"
 
 /* d32xr Lever 1: place a per-frame-hot renderer function in cacheable SDRAM
@@ -152,9 +153,26 @@ uint8_t world_map[MAP_H][MAP_W];
 #define OUTLET_BASE   72    /* 5 entries: 0=slot-dark .. 4=plate-white */
 #define OUTLET_LEVELS 5
 #define PARTITION_BASE 77   /* 16 entries: olive spotted-wallpaper, bright..fog */
-#define LOWCEIL_COLOR  93   /* dark-beige panel fill for the crawlspace ceiling */
-#define LOWCEIL_SEAM   94   /* darker-beige panel seam (grid lines) */
+#define LOWCEIL_COLOR  93   /* (legacy) dark-beige panel fill — kept for A/B fallback */
+#define LOWCEIL_SEAM   94   /* (legacy) darker-beige panel seam */
 #define LOWCEIL_SEAM_W 0x1000   /* seam half-width, 16.16 (lattice every 0.5 cell) */
+/* Crawlspace ceiling = the room's ceiling TILE, but LIGHTLESS: the CEIL_BASE
+ * ramp at a dim/unlit shade, with the grid at the same 0.25-cell tile period as
+ * the open ceiling (CEIL_GRID_DENSITY = 4) so the tunnel tiles line up with the
+ * room's. No fluorescent panels are drawn on it — that's the "lightless". */
+#define LOWCEIL_TILE_SHADE 6              /* near (unlit) shade into the CEIL_BASE ramp */
+#define CEIL_TILE_MASK 0x3FFF             /* 0.25-cell period (FX_ONE / CEIL_GRID_DENSITY - 1) */
+#define CEIL_TILE_LINE 0x520              /* grid-line half-width, 16.16 */
+#define DOOR_BASE     96    /* 8 entries: 0-4 grey metal, 5-6 green EXIT sign, 7 white */
+#define DOOR_DARK_BASE 104  /* 4 entries: extra-dark greys BELOW the door ramp, so the
+                             * leaf can darken as it swings away from us into shadow */
+#define STIPPLE_BASE  108   /* 5 entries: the door ramp shades nudged ~1-2 darker — the
+                             * baked stipple dots, a soft almost-imperceptible dapple */
+#define HANDLE_BASE   113   /* 4 entries: warm gold/brass for the door handle hardware
+                             * (dark, mid, light, highlight) so it reads as metal not tan */
+#define FRAME_BASE    117   /* 5 entries: the door jamb/casing — a muted-brown ramp
+                             * (dark..light, +4 lit) so the frame darkens with distance
+                             * like the walls while staying less tan than the door */
 
 /* Wall texture comes from wall_tex.h (generated from images/walltile.jpg). */
 #define TEX_W WALL_TEX_WIDTH
@@ -324,9 +342,33 @@ static const standup_t standups[] = {
  * spans Y, normal +/-X, e.g. a side-corridor wall). Drives the foreshortened,
  * wall-flat projection in draw_decals so the plate doesn't pivot to face the
  * camera like a billboard. */
-typedef struct { fx_t x, y, z; uint8_t axis; } decal_t;
+/* kind: 0 = outlet plate, 1 = the metal fire DOOR (full-height, floor-anchored,
+ * transparent surround so the EXIT sign sits on the wall). Same wall-flat,
+ * foreshortened render — it stays put on the wall instead of swivelling. */
+typedef struct { fx_t x, y, z; uint8_t axis; uint8_t kind; } decal_t;
 #define DECAL_OUTLET_H  FX(0.098)  /* outlet plate height as a fraction of wall (30% smaller) */
 #define DECAL_OUTLET_HW FX(0.031)  /* half the plate's world width; it lies flat on its wall */
+/* Door: H 0.98 of wall centred at z 0.49 -> foot on the floor, head near the
+ * ceiling (the EXIT sign pokes up). HW 0.24 -> ~0.48 cell wide, so the 128x256
+ * texture renders at its true ~1:2 door proportions instead of a square. */
+#define DECAL_DOOR_H   FX(0.98)
+#define DECAL_DOOR_HW  FX(0.24)
+#define DECAL_DOOR_Z   FX(0.49)
+/* Door swing: 0 = closed, DOOR_OPEN_MAX = fully open (edge-on, all void). The
+ * leaf's visible width is driven LINEARLY off this counter (not cos of an angle)
+ * so each frame moves the same amount — even motion instead of a cos end-snap.
+ * 64 steps eased at DOOR_OPEN_STEP/frame ≈ 1.5 s open at ~14 fps. */
+#define DOOR_OPEN_MAX   64
+#define DOOR_OPEN_STEP  12    /* ~0.4s open/close at ~14fps (2x faster again) */
+static int g_door_open = 0, g_door_target = 0;
+/* Leaf rectangle inside the door texture (column-major door_tex[x][y]). Only
+ * this slab swings; the EXIT sign and the wall surround outside it stay static.
+ * The exact bounds are computed by bake_door.py from the door pixels and emitted
+ * into door_tex.h as DOOR_LEAF_*, so the animated region always matches the art. */
+#define LEAF_X0  DOOR_LEAF_X0
+#define LEAF_X1  DOOR_LEAF_X1
+#define LEAF_Y0  DOOR_LEAF_Y0
+#define LEAF_Y1  DOOR_LEAF_Y1
 decal_t decals[16];
 int     num_decals = 0;
 
@@ -680,6 +722,30 @@ void raycast_set_brightness(int lvl) {
         for (int i = 0; i < OUTLET_LEVELS; i++)
             Hw32xSetBGColor(OUTLET_BASE + i, ob[i][0]*lvl/FADE_STEPS, ob[i][1]*lvl/FADE_STEPS, ob[i][2]*lvl/FADE_STEPS);
     }
+    {
+        /* Door: grey metal (0-4) + green EXIT sign (5-6) + white (7). The grey
+         * ramp is lifted + range-compressed vs the bake preview — a lighter,
+         * softer (muted) metal. Fades with the level. */
+        static const uint8_t db[8][3] = {
+            {15,12,9},{18,15,11},{22,18,14},{25,21,16},{29,25,20},{3,12,6},{8,19,10},{29,30,28}};
+        for (int i = 0; i < 8; i++)
+            Hw32xSetBGColor(DOOR_BASE + i, db[i][0]*lvl/FADE_STEPS, db[i][1]*lvl/FADE_STEPS, db[i][2]*lvl/FADE_STEPS);
+        /* Extra-dark warm browns below the door ramp (leaf fades into shadow when open). */
+        static const uint8_t dk[4][3] = { {4,3,2}, {7,5,3}, {9,7,5}, {12,10,7} };
+        for (int i = 0; i < 4; i++)
+            Hw32xSetBGColor(DOOR_DARK_BASE + i, dk[i][0]*lvl/FADE_STEPS, dk[i][1]*lvl/FADE_STEPS, dk[i][2]*lvl/FADE_STEPS);
+        /* Soft stipple dapple shades (door ramp ~1-2 darker). */
+        static const uint8_t sp[5][3] = { {13,11,8},{16,14,10},{20,17,13},{24,20,15},{28,24,18} };
+        for (int i = 0; i < 5; i++)
+            Hw32xSetBGColor(STIPPLE_BASE + i, sp[i][0]*lvl/FADE_STEPS, sp[i][1]*lvl/FADE_STEPS, sp[i][2]*lvl/FADE_STEPS);
+        /* Muted aged-bronze handle hardware. */
+        static const uint8_t gh[4][3] = { {10,8,5},{15,12,8},{21,17,12},{26,22,16} };
+        for (int i = 0; i < 4; i++)
+            Hw32xSetBGColor(HANDLE_BASE + i, gh[i][0]*lvl/FADE_STEPS, gh[i][1]*lvl/FADE_STEPS, gh[i][2]*lvl/FADE_STEPS);
+        static const uint8_t fr[5][3] = { {9,8,7},{12,11,9},{15,13,11},{18,16,13},{21,18,15} };
+        for (int i = 0; i < 5; i++)
+            Hw32xSetBGColor(FRAME_BASE + i, fr[i][0]*lvl/FADE_STEPS, fr[i][1]*lvl/FADE_STEPS, fr[i][2]*lvl/FADE_STEPS);
+    }
     for (int i = 0; i < SHADE_LEVELS; i++) {
         Hw32xSetBGColor(PARTITION_BASE + i,
             MIX(24,FOG_R,i)*lvl/FADE_STEPS, MIX(25,FOG_G,i)*lvl/FADE_STEPS, MIX(15,FOG_B,i)*lvl/FADE_STEPS);
@@ -747,6 +813,41 @@ static void build_palette(void) {
     Hw32xSetBGColor(OUTLET_BASE + 2, 16, 15, 13);
     Hw32xSetBGColor(OUTLET_BASE + 3, 22, 21, 18);
     Hw32xSetBGColor(OUTLET_BASE + 4, 28, 27, 23);
+    /* The metal fire door: warm taupe/brown slab (0-4) + green EXIT sign (5-6)
+     * + white (7). Tinged brown (R>G>B) so it sits in the warm backrooms palette
+     * instead of reading as cold grey; lifted + compressed = lighter & muted. */
+    Hw32xSetBGColor(DOOR_BASE + 0, 15, 12,  9);
+    Hw32xSetBGColor(DOOR_BASE + 1, 18, 15, 11);
+    Hw32xSetBGColor(DOOR_BASE + 2, 22, 18, 14);
+    Hw32xSetBGColor(DOOR_BASE + 3, 25, 21, 16);
+    Hw32xSetBGColor(DOOR_BASE + 4, 29, 25, 20);
+    Hw32xSetBGColor(DOOR_BASE + 5,  3, 12,  6);
+    Hw32xSetBGColor(DOOR_BASE + 6,  8, 19, 10);
+    Hw32xSetBGColor(DOOR_BASE + 7, 29, 30, 28);
+    /* Extra-dark warm browns below the door ramp — the leaf fades into these as
+     * it swings away into the recess shadow (kept warm to match the door). */
+    Hw32xSetBGColor(DOOR_DARK_BASE + 0,  4,  3,  2);
+    Hw32xSetBGColor(DOOR_DARK_BASE + 1,  7,  5,  3);
+    Hw32xSetBGColor(DOOR_DARK_BASE + 2,  9,  7,  5);
+    Hw32xSetBGColor(DOOR_DARK_BASE + 3, 12, 10,  7);
+    /* Soft stipple dapple — the door ramp nudged ~1-2 darker (barely there). */
+    Hw32xSetBGColor(STIPPLE_BASE + 0, 13, 11,  8);
+    Hw32xSetBGColor(STIPPLE_BASE + 1, 16, 14, 10);
+    Hw32xSetBGColor(STIPPLE_BASE + 2, 20, 17, 13);
+    Hw32xSetBGColor(STIPPLE_BASE + 3, 24, 20, 15);
+    Hw32xSetBGColor(STIPPLE_BASE + 4, 28, 24, 18);
+    /* Handle hardware: muted aged bronze (desaturated — reads as metal without
+     * popping). dark -> highlight. */
+    Hw32xSetBGColor(HANDLE_BASE + 0, 10,  8,  5);
+    Hw32xSetBGColor(HANDLE_BASE + 1, 15, 12,  8);
+    Hw32xSetBGColor(HANDLE_BASE + 2, 21, 17, 12);
+    Hw32xSetBGColor(HANDLE_BASE + 3, 26, 22, 16);
+    /* Door jamb/casing: a muted-brown ramp (dark..light), +4 = lit. */
+    Hw32xSetBGColor(FRAME_BASE + 0,  9,  8,  7);
+    Hw32xSetBGColor(FRAME_BASE + 1, 12, 11,  9);
+    Hw32xSetBGColor(FRAME_BASE + 2, 15, 13, 11);
+    Hw32xSetBGColor(FRAME_BASE + 3, 18, 16, 13);
+    Hw32xSetBGColor(FRAME_BASE + 4, 21, 18, 15);
     /* Partition wallpaper: muted olive-green eggshell (the spotted divider
      * in the reference) — greener / less saturated than the yellow walls,
      * bright..fog like the wall ramp so distance shading + dot motif work. */
@@ -945,9 +1046,86 @@ void raycast_load_fixed(void) {
      * plane, y=26.5 — ~2 cells ahead-right of spawn), then ~11 more peppered
      * across the map's visible wall faces. */
     num_decals = 0;
-    decals[num_decals++] = (decal_t){ FX(17.0), FX(26.5), FX(0.20), 0 };
+    decals[num_decals++] = (decal_t){ FX(17.0), FX(26.5), FX(0.20), 0, 0 };
     raycast_place_outlets(12);
+    /* The fire door + green EXIT sign, embedded full-height in the south wall
+     * (y=31) directly behind spawn (player faces north). Turn around and the
+     * "way out" is right there — flat on the wall, foreshortening as you move,
+     * doing nothing. axis 1 = wall runs along X; kind 1 = door. */
+    decals[num_decals++] = (decal_t){ FX(16.5), FX(31.0), DECAL_DOOR_Z, 1, 1 };
+    g_door_open = g_door_target = 0;          /* start shut on every (re)load */
+    SHARED_UC->door_open = 0;
     player.x = FX(16.5); player.y = FX(28.5); player.angle = 192;
+}
+
+/* Stamp the recurring EXIT door into the live map as a SURPRISE you have to
+ * find: flood-fill the cells actually reachable from spawn, then drop the door
+ * on the FARTHEST reachable wall face. Deep in the level, but always walkable-to
+ * (never sealed off). procgen calls this so every generated level has a hidden
+ * way out — which only ever opens into the next generated level. */
+void raycast_place_exit_door(void) {
+    const int SPAWN_CX = 16, SPAWN_CY = 28;   /* must match procgen.c */
+    static uint8_t  reach[MAP_H][MAP_W];
+    static uint16_t queue[MAP_H * MAP_W];
+    for (int y = 0; y < MAP_H; y++)
+        for (int x = 0; x < MAP_W; x++) reach[y][x] = 0;
+
+    /* BFS over open cells from the spawn (16,28 — cleared by the vestibule). */
+    int head = 0, tail = 0;
+    reach[SPAWN_CY][SPAWN_CX] = 1;
+    queue[tail++] = (uint16_t)(SPAWN_CY * MAP_W + SPAWN_CX);
+    static const int dxs[4] = { 1, -1, 0, 0 }, dys[4] = { 0, 0, 1, -1 };
+    while (head < tail) {
+        int c = queue[head++], cx = c % MAP_W, cy = c / MAP_W;
+        for (int k = 0; k < 4; k++) {
+            int nx = cx + dxs[k], ny = cy + dys[k];
+            if (nx < 0 || nx >= MAP_W || ny < 0 || ny >= MAP_H) continue;
+            if (reach[ny][nx] || world_map[ny][nx] != 0) continue;
+            reach[ny][nx] = 1;
+            queue[tail++] = (uint16_t)(ny * MAP_W + nx);
+        }
+    }
+
+    /* Farthest reachable open cell that has a wall face to mount the door on. */
+    int best_d2 = -1, best_axis = 0;
+    fx_t best_px = 0, best_py = 0;
+    for (int oy = 1; oy < MAP_H - 1; oy++) {
+        for (int ox = 1; ox < MAP_W - 1; ox++) {
+            if (!reach[oy][ox]) continue;
+            int d2 = (ox - SPAWN_CX) * (ox - SPAWN_CX)
+                   + (oy - SPAWN_CY) * (oy - SPAWN_CY);
+            if (d2 <= best_d2) continue;
+            fx_t cx = ((fx_t)ox << FX_SHIFT) + FX(0.5);
+            fx_t cy = ((fx_t)oy << FX_SHIFT) + FX(0.5);
+            int axis, found = 1; fx_t px, py;
+            if      (world_map[oy][ox + 1]) { axis = 0; px = (fx_t)(ox + 1) << FX_SHIFT; py = cy; }
+            else if (world_map[oy][ox - 1]) { axis = 0; px = (fx_t)ox       << FX_SHIFT; py = cy; }
+            else if (world_map[oy + 1][ox]) { axis = 1; px = cx; py = (fx_t)(oy + 1) << FX_SHIFT; }
+            else if (world_map[oy - 1][ox]) { axis = 1; px = cx; py = (fx_t)oy       << FX_SHIFT; }
+            else found = 0;
+            if (found) { best_d2 = d2; best_axis = axis; best_px = px; best_py = py; }
+        }
+    }
+
+    if (best_d2 >= 0 && num_decals < (int)(sizeof decals / sizeof decals[0]))
+        decals[num_decals++] =
+            (decal_t){ best_px, best_py, DECAL_DOOR_Z, (uint8_t)best_axis, 1 };
+    g_door_open = g_door_target = 0;
+    SHARED_UC->door_open = 0;
+}
+
+/* Portal check: returns 1 when the EXIT door is open far enough AND the player
+ * has stepped into its doorway — the cue for the game loop to fade through into
+ * a fresh procedurally generated map. The "exit" only loops you deeper in. */
+int raycast_door_portal_check(void) {
+    if (g_door_open < DOOR_OPEN_MAX * 3 / 4) return 0;
+    for (int d = 0; d < num_decals; d++) {
+        if (decals[d].kind != 1) continue;
+        /* Stepped into the doorway (any orientation). */
+        if (FX_ABS(player.x - decals[d].x) < FX(0.7) &&
+            FX_ABS(player.y - decals[d].y) < FX(0.7)) return 1;
+    }
+    return 0;
 }
 
 /* Load the tiny 8x8 lobby: the grid box (lobby_map) plus the free-standing
@@ -1253,6 +1431,33 @@ void player_update(uint16_t pad) {
     /* Track walking state and advance bob phase. */
     is_walking = (dx != 0 || dy != 0);
     if (is_walking) bob_phase += 20;         /* ~4.7 Hz — tight micro-bob cadence */
+
+    /* INTERACT: the run button (A) doubles as "use" when you're within reach of
+     * the door — a rising-edge press toggles it open/closed. Holding A still
+     * just runs (the edge fires once). */
+    static uint16_t prev_pad_pu = 0xFFFF;
+    if ((pad & SEGA_CTRL_A) && !(prev_pad_pu & SEGA_CTRL_A)) {
+        for (int d = 0; d < num_decals; d++) {
+            if (decals[d].kind != 1) continue;
+            /* Arm's reach, orientation-agnostic: you must be right at the door. */
+            if (FX_ABS(decals[d].x - player.x) < FX(1.0) &&
+                FX_ABS(decals[d].y - player.y) < FX(1.0)) {
+                g_door_target = g_door_target ? 0 : DOOR_OPEN_MAX;
+                break;
+            }
+        }
+    }
+    prev_pad_pu = pad;
+    /* Ease the swing toward the target at a fixed velocity (uniform motion),
+     * clamping so we land exactly on the target. Publish for both CPUs. */
+    if (g_door_open < g_door_target) {
+        g_door_open += DOOR_OPEN_STEP;
+        if (g_door_open > g_door_target) g_door_open = g_door_target;
+    } else if (g_door_open > g_door_target) {
+        g_door_open -= DOOR_OPEN_STEP;
+        if (g_door_open < g_door_target) g_door_open = g_door_target;
+    }
+    SHARED_UC->door_open = (uint8_t)g_door_open;
 }
 
 /* Render each cardboard standup as a textured Wolf3D-style billboard.
@@ -1303,11 +1508,8 @@ RAMTEXT static void draw_standups(int col_start, int col_end) {
         int screenX = (SCREEN_W >> 1)
                     + (int)(((int32_t)(SCREEN_W >> 1) * ratio) >> FX_SHIFT);
 
-        /* 2/3 world unit tall, 1:2 aspect. Floor-anchored: bottom (feet)
-         * lands on the floor row at this distance; top (head) is
-         * spriteHeight pixels above. Also benefits texture quality —
-         * keeps apparent sprite from upscaling the 64-row texture too
-         * far past 1:1 at close range. */
+        /* 2/3 world unit tall, 1:2 aspect. Floor-anchored: feet on the floor
+         * row, top spriteHeight above. */
         int spriteHeight = (int)((((int32_t)SCREEN_H * 2) << FX_SHIFT) / (transformY * 3));
         int spriteWidth  = spriteHeight >> 1;
         if (spriteWidth < 1) spriteWidth = 1;
@@ -1861,6 +2063,16 @@ RAMTEXT static void raycast_draw_low_ceiling(int col_start, int col_end) {
         fx_t rowDist = (fx_t)divu_u32((uint32_t)((fx_t)focal << FX_SHIFT),
                                       (uint32_t)prow);
 
+        /* Distance fog for the unlit tile: darken toward the fog end of the
+         * CEIL_BASE ramp with depth, so the crawlspace ceiling fades like the
+         * room's (it's just lightless, not flat). ~2 shade steps per cell. */
+        int tile_shade = LOWCEIL_TILE_SHADE + (int)(rowDist >> 15);
+        if (tile_shade > SHADE_LEVELS - 1) tile_shade = SHADE_LEVELS - 1;
+        int grid_shade = tile_shade + 3;
+        if (grid_shade > SHADE_LEVELS - 1) grid_shade = SHADE_LEVELS - 1;
+        uint8_t lc_tile = (uint8_t)(CEIL_BASE + tile_shade);
+        uint8_t lc_grid = (uint8_t)(CEIL_BASE + grid_shade);
+
         fx_t wxL = px + FX_MUL(rowDist, leftDirX);
         fx_t wyL = py + FX_MUL(rowDist, leftDirY);
         fx_t wxR = px + FX_MUL(rowDist, rightDirX);
@@ -1920,9 +2132,11 @@ RAMTEXT static void raycast_draw_low_ceiling(int col_start, int col_end) {
         for (int col = c0; col <= c1; col += 2, wx += stepx * 2, wy += stepy * 2) {
             if (!ceil_is_low(wx, wy)) continue;        /* this cell's ceiling is full */
             if (rowDist >= wd[col]) continue;          /* behind a nearer wall (cached) */
-            int seam = (((int)wx & 0x7FFF) < LOWCEIL_SEAM_W) ||
-                       (((int)wy & 0x7FFF) < LOWCEIL_SEAM_W);
-            uint8_t cv = seam ? LOWCEIL_SEAM : LOWCEIL_COLOR;
+            /* Lightless ceiling TILE: dim CEIL_BASE fill with a darker grid line
+             * on the 0.25-cell tile lattice (matches the open ceiling's tiles). */
+            int grid = (((int)wx & CEIL_TILE_MASK) < CEIL_TILE_LINE) ||
+                       (((int)wy & CEIL_TILE_MASK) < CEIL_TILE_LINE);
+            uint8_t cv = grid ? lc_grid : lc_tile;
             *(uint16_t *)(row_p + col) = ((uint16_t)cv << 8) | cv;  /* col & col+1 */
             slab_far[col] = rowDist; slab_far[col + 1] = rowDist;
         }
@@ -2202,6 +2416,63 @@ RAMTEXT void raycast_draw_carpet(int col_start, int col_end) {
             worldX += stepWX;
             worldY += stepWY;
         }
+
+        /* Lightless crawlspace floor: cells under a low (unlit) ceiling get no
+         * light from above, so darken the carpet there. Column-clip to the zone
+         * bbox like the slab so it stays cheap; the carpet draws before the
+         * walls, so they overpaint it — no z-test. Re-stamps the stain pattern
+         * (a yet-darker shade) so the carpet stains survive into the shade. */
+        if (g_lowceil_active) {
+            fx_t wx0 = px + FX_MUL(rowDist, leftDirX);
+            fx_t wy0 = py + FX_MUL(rowDist, leftDirY);
+            fx_t wxR = px + FX_MUL(rowDist, rightDirX);
+            fx_t wyR = py + FX_MUL(rowDist, rightDirY);
+            fx_t zx0 = g_lowceil_x0, zx1 = g_lowceil_x1;
+            fx_t zy0 = g_lowceil_y0, zy1 = g_lowceil_y1;
+            fx_t minx = wx0 < wxR ? wx0 : wxR, maxx = wx0 < wxR ? wxR : wx0;
+            fx_t miny = wy0 < wyR ? wy0 : wyR, maxy = wy0 < wyR ? wyR : wy0;
+            if (!(maxx < zx0 || minx > zx1 || maxy < zy0 || miny > zy1)) {
+                int cA = col_start, cB = col_end - 1;
+                const fx_t EPS = 16;
+                if (stepX > EPS || stepX < -EPS) {
+                    int a = (int)(fx_div_hw(zx0 - wx0, stepX) >> FX_SHIFT);
+                    int b = (int)(fx_div_hw(zx1 - wx0, stepX) >> FX_SHIFT);
+                    if (a > b) { int t = a; a = b; b = t; }
+                    if (a > cA) cA = a; if (b < cB) cB = b;
+                }
+                if (stepY > EPS || stepY < -EPS) {
+                    int a = (int)(fx_div_hw(zy0 - wy0, stepY) >> FX_SHIFT);
+                    int b = (int)(fx_div_hw(zy1 - wy0, stepY) >> FX_SHIFT);
+                    if (a > b) { int t = a; a = b; b = t; }
+                    if (a > cA) cA = a; if (b < cB) cB = b;
+                }
+                if (cA < col_start) cA = col_start;
+                if (cB > col_end - 1) cB = col_end - 1;
+                int fsh = base_shade + 3; if (fsh > SHADE_LEVELS - 1) fsh = SHADE_LEVELS - 1;
+                int fss = fsh + 2; if (fss > SHADE_LEVELS - 1) fss = SHADE_LEVELS - 1;
+                uint8_t fdk = (uint8_t)(FLOOR_BASE + fsh);   /* dark floor */
+                uint8_t fst = (uint8_t)(FLOOR_BASE + fss);   /* darker stain */
+                /* HALF-RES like the slab: test one column, word-store the pair.
+                 * The dark flat floor hides the horizontal chunkiness, and it
+                 * halves the uncached FB writes + per-pixel tests. (F:17 in tunnels
+                 * already — no need to go chunkier than this.) */
+                int xmask = x_step - 1;   /* stain-test only at the carpet's LOD (cheap) */
+                int c0 = cA & ~1, c1 = cB | 1;
+                if (c1 > col_end - 1) c1 = col_end - 1;
+                uint8_t *frow = fb + y * SCREEN_W;
+                fx_t fwx = wx0 + stepX * c0, fwy = wy0 + stepY * c0;
+                for (int col = c0; col <= c1; col += 2, fwx += stepX * 2, fwy += stepY * 2) {
+                    if (!ceil_is_low(fwx, fwy)) continue;
+                    uint8_t cv = fdk;
+                    if ((col & xmask) == 0) {
+                        int hwx = (int)(fwx >> 13) & 0xFF;
+                        int hwy = (int)(fwy >> 13) & 0xFF;
+                        if (((hwx * 73 + hwy * 31) & 0xF) < 6) cv = fst;   /* same hash as the carpet */
+                    }
+                    *(uint16_t *)(frow + col) = ((uint16_t)cv << 8) | cv;  /* col & col+1 */
+                }
+            }
+        }
     }
 }
 
@@ -2212,6 +2483,207 @@ RAMTEXT void raycast_draw_carpet(int col_start, int col_end) {
  * SCREEN_W). Writes the per-column z-buffer (WALL_DIST) through the
  * cache-through alias so the sprite passes on primary see secondary's
  * writes after the COMM4 sync. Reads player from SHARED_UC. */
+
+/* Draw ONE door column as the wall (replaces the chevron). Kept OUT of
+ * raycast_draw_walls on purpose: that function is the hot wall loop and must
+ * fit the SH-2's 4 KB instruction cache. Inlining the ~3 KB of door code
+ * blew draw_walls past the cache and thrashed EVERY column every frame. As a
+ * separate function the door code only loads into I-cache on the handful of
+ * columns a door actually covers. `along` = the hit's offset across the door
+ * footprint (0..2*DECAL_DOOR_HW). Renders the static frame/sign, the swinging
+ * leaf, and the one-cell recess behind it. */
+
+RAMTEXT __attribute__((noinline)) static void
+draw_door_column(uint8_t *fb, int col, int hr, fx_t along, int flip,
+                 int drawStart, int drawEnd, int wall_top,
+                 int draw_lineHeight, fx_t perpDist, int wall_shade,
+                 int horizon_y, int eye_h) {
+    /* The door footprint stays full width — frame, hinge edge and the EXIT
+     * sign are painted flat on the wall and never move. `flip` mirrors the whole
+     * render (texture + swing) when the door is viewed from the side that the
+     * world->screen mapping would otherwise reverse, so it reads the same way
+     * (handle, sign, hinge) on every wall orientation. */
+    int otx = (int)(((int64_t)along * DOOR_TEX_WIDTH) / (2 * DECAL_DOOR_HW));
+    if (otx < 0) otx = 0; else if (otx >= DOOR_TEX_WIDTH) otx = DOOR_TEX_WIDTH - 1;
+    if (flip) otx = DOOR_TEX_WIDTH - 1 - otx;
+    const uint8_t *col_base = door_tex[otx];   /* static (frame/sign) column */
+
+    /* DISTANCE/LIGHT FADE: like the walls + the outlet decal, the door darkens
+     * with wall_shade — each material ramp shifts down by `door_shade`. The 9-step
+     * grey ramp (4 extra-dark + 5 door) gives the body its fade range; the frame,
+     * handle and (close-up) stipple fold in too. door_shade tracks ~half the wall
+     * shade so the door fogs at a similar visual rate. */
+    /* FINE 14-step grey ramp: the 4 extra-darks, then the soft stipple shade and
+     * the door shade interleaved (stipple sits HALF a step below its door shade).
+     * Body texel g -> index 5+2g; its stipple -> 4+2g (one fine step softer). The
+     * fade subtracts 2 per door_shade, so the stipple stays soft AND fogs WITH the
+     * body at every distance. */
+    static const uint8_t finegrey[14] = {
+        DOOR_DARK_BASE + 0, DOOR_DARK_BASE + 1, DOOR_DARK_BASE + 2, DOOR_DARK_BASE + 3,
+        STIPPLE_BASE + 0, DOOR_BASE + 0, STIPPLE_BASE + 1, DOOR_BASE + 1,
+        STIPPLE_BASE + 2, DOOR_BASE + 2, STIPPLE_BASE + 3, DOOR_BASE + 3,
+        STIPPLE_BASE + 4, DOOR_BASE + 4 };
+    int door_shade = wall_shade >> 1; if (door_shade > 6) door_shade = 6;
+    int sh2 = door_shade * 2;
+
+    uint8_t dlut[19];
+    dlut[0] = (uint8_t)(WALL_BASE + wall_shade);                 /* surround = wall */
+    for (int g = 0; g < 5; g++) {
+        int bi = 5 + 2 * g - sh2; if (bi < 0) bi = 0;            /* body grey, faded */
+        int si = 4 + 2 * g - sh2; if (si < 0) si = 0;            /* stipple (1 fine step softer) */
+        dlut[1 + g] = finegrey[bi];
+        dlut[9 + g] = finegrey[si];
+    }
+    dlut[6] = (uint8_t)(DOOR_BASE + 5);                          /* EXIT sign (kept lit) */
+    dlut[7] = (uint8_t)(DOOR_BASE + 6);
+    dlut[8] = (uint8_t)(DOOR_BASE + 7);
+    for (int i = 0; i < 4; i++) {
+        int hp = i - door_shade; if (hp < 0) hp = 0;
+        dlut[14 + i] = (uint8_t)(HANDLE_BASE + hp);              /* bronze handle, faded */
+    }
+    { int fp = 4 - door_shade; if (fp < 0) fp = 0;
+      dlut[18] = (uint8_t)(FRAME_BASE + fp); }                  /* muted-brown jamb, faded */
+
+    int dspan = draw_lineHeight; if (dspan < 1) dspan = 1;
+    fx_t ty_step = ((fx_t)DOOR_TEX_HEIGHT << FX_SHIFT) / dspan;
+    fx_t ty = (fx_t)(drawStart - wall_top) * ty_step;
+    uint8_t *pd = (uint8_t *)fb + col + drawStart * SCREEN_W;
+
+    /* CLOSED door (the common "just looking at it" view): pure static texture —
+     * skip ALL the leaf/recess setup (several divides) and the per-pixel region
+     * test, run a tight column loop. */
+    int dopen = (int)SHARED_UC->door_open;
+    if (dopen == 0) {
+        for (int y = drawStart; y <= drawEnd; y++) {
+            int oty = (int)(ty >> FX_SHIFT);
+            if (oty >= DOOR_TEX_HEIGHT) oty = DOOR_TEX_HEIGHT - 1;
+            uint8_t c8 = dlut[col_base[oty]];
+            if (hr) *(uint16_t *)pd = WDUP(c8); else *pd = c8;
+            pd += SCREEN_W;
+            ty += ty_step;
+        }
+        return;
+    }
+
+    /* OPEN: the leaf swings and the recess shows. Per-column setup (the divides)
+     * is paid only while the door is actually moving/open. Hinge at LEAF_X1,
+     * latch at LEAF_X0; the leaf compresses toward the hinge and tapers toward
+     * the receding latch, the recess showing through where it pulls away. */
+    int leaf_col = (otx >= LEAF_X0 && otx <= LEAF_X1);
+    int void_leaf = 0;
+    const uint8_t *leaf_base = col_base;
+    int leaf_cy = (LEAF_Y0 + LEAF_Y1) / 2;
+    int leaf_half = (LEAF_Y1 - LEAF_Y0) / 2;
+    int leaf_halff = leaf_half;
+    fx_t leaf_rscale = FX(1.0);
+    if (leaf_col) {
+        int leaf_w = LEAF_X1 - LEAF_X0;
+        int latch_now = LEAF_X1 - leaf_w * (DOOR_OPEN_MAX - dopen) / DOOR_OPEN_MAX;
+        if (otx < latch_now) {
+            void_leaf = 1;
+        } else {
+            int vis_w = LEAF_X1 - latch_now; if (vis_w < 1) vis_w = 1;
+            int src_lx = LEAF_X0 + (otx - latch_now) * leaf_w / vis_w;
+            if (src_lx < LEAF_X0) src_lx = LEAF_X0;
+            else if (src_lx > LEAF_X1) src_lx = LEAF_X1;
+            leaf_base = door_tex[src_lx];
+            int p_num = LEAF_X1 - otx;
+            fx_t openf = ((fx_t)dopen << FX_SHIFT) / DOOR_OPEN_MAX;
+            fx_t taper = FX_MUL(openf, FX(0.45));
+            fx_t fore = FX(1.0) - (fx_t)(((int64_t)p_num * taper) / vis_w);
+            leaf_halff = (int)(((int64_t)leaf_half * fore) >> FX_SHIFT);
+            if (leaf_halff < 1) leaf_halff = 1;
+            leaf_rscale = ((fx_t)leaf_half << FX_SHIFT) / leaf_halff;
+        }
+    }
+
+    /* Frame-edge columns (the jambs, outside the swinging leaf) never show the
+     * recess and never move — pure static texture. Run the same tight loop as
+     * the closed door and skip the recess + leaf-LUT setup (a divide + a whole
+     * table build) entirely. */
+    if (!leaf_col) {
+        for (int y = drawStart; y <= drawEnd; y++) {
+            int oty = (int)(ty >> FX_SHIFT);
+            if (oty >= DOOR_TEX_HEIGHT) oty = DOOR_TEX_HEIGHT - 1;
+            uint8_t c8 = dlut[col_base[oty]];
+            if (hr) *(uint16_t *)pd = WDUP(c8); else *pd = c8;
+            pd += SCREEN_W;
+            ty += ty_step;
+        }
+        return;
+    }
+
+    /* Fake recess: a back wall ONE cell deeper than the door — shorter, centred
+     * on the horizon, ceiling above + floor below. Shrink = perpDist/(perpDist+1). */
+    fx_t back_scale = (fx_t)(((int64_t)perpDist << FX_SHIFT) / (perpDist + FX(1)));
+    int back_h  = (int)(((int64_t)draw_lineHeight * back_scale) >> FX_SHIFT);
+    /* Position the recess back wall like a real wall one cell deeper: floor line
+     * at the eye-split below the horizon, ceiling above — so it honors free-look
+     * (horizon_y = pitch) AND crouch (eye_h), same as the room's walls. */
+    int rec_bot = horizon_y + ((back_h * eye_h) >> 8);
+    int rec_top = rec_bot - back_h;
+
+    /* The recess reads as the room's own surfaces seen through the doorway, but
+     * FLAT (no texture) and dimmed: ceiling-tile colour up top, wall colour on
+     * the back wall, stained-carpet colour on the floor. RECESS_SHADE sets how
+     * dim (higher = darker). */
+    const int RECESS_SHADE = 6;
+    uint8_t rec_ceil = (uint8_t)(CEIL_BASE  + RECESS_SHADE);
+    uint8_t rec_wall = (uint8_t)(WALL_BASE  + RECESS_SHADE);
+    uint8_t rec_floor = (uint8_t)(FLOOR_BASE + RECESS_SHADE);
+
+    /* Leaf LUT: the swinging LEAF dims as it rotates into the recess (leaf_darken)
+     * AND with distance/light (door_shade) — both shift down the shared grey ramp.
+     * Only the leaf is shaded here; the static frame/sign use dlut. */
+    int leaf_darken = (dopen * 4) / DOOR_OPEN_MAX;       /* 0 shut .. 4 wide open */
+    int lt2 = (leaf_darken + door_shade) * 2;            /* swing + distance, fine steps */
+    uint8_t llut[19];
+    llut[0] = (uint8_t)(WALL_BASE + wall_shade);         /* surround (rare in the leaf) */
+    for (int g = 0; g < 5; g++) {
+        int bi = 5 + 2 * g - lt2; if (bi < 0) bi = 0;
+        int si = 4 + 2 * g - lt2; if (si < 0) si = 0;
+        llut[1 + g] = finegrey[bi];
+        llut[9 + g] = finegrey[si];                      /* stipple stays soft + fades */
+    }
+    llut[6] = (uint8_t)(DOOR_BASE + 5);                  /* green/white unchanged */
+    llut[7] = (uint8_t)(DOOR_BASE + 6);
+    llut[8] = (uint8_t)(DOOR_BASE + 7);
+    for (int i = 0; i <  4; i++) { int hp = i - door_shade; if (hp < 0) hp = 0;
+        llut[14 + i] = (uint8_t)(HANDLE_BASE + hp); }   /* handle, faded */
+    { int fp = 4 - door_shade; if (fp < 0) fp = 0; llut[18] = (uint8_t)(FRAME_BASE + fp); }
+
+    /* Leaf foreshorten as an ACCUMULATOR: srow advances by a fixed step each
+     * scanline instead of a per-pixel multiply (d * leaf_rscale). Tracking the
+     * continuous ty (not the quantized oty) is also a touch smoother. leaf_col
+     * is guaranteed here, so the per-pixel test drops too. */
+    fx_t leaf_cy_fx = (fx_t)leaf_cy << FX_SHIFT;
+    fx_t srow_step  = FX_MUL(ty_step, leaf_rscale);
+    fx_t srow_fx    = leaf_cy_fx + FX_MUL(ty - leaf_cy_fx, leaf_rscale);
+    for (int y = drawStart; y <= drawEnd; y++, ty += ty_step, srow_fx += srow_step) {
+        int oty = (int)(ty >> FX_SHIFT);
+        if (oty >= DOOR_TEX_HEIGHT) oty = DOOR_TEX_HEIGHT - 1;
+        uint8_t c8;
+        if (oty >= LEAF_Y0 && oty <= LEAF_Y1) {
+            int d = oty - leaf_cy;
+            if (void_leaf || d < -leaf_halff || d > leaf_halff) {
+                /* See past the leaf into the recess: ceiling / wall / carpet. */
+                if (y < rec_top)      c8 = rec_ceil;
+                else if (y > rec_bot) c8 = rec_floor;
+                else                  c8 = rec_wall;
+            } else {
+                int srow = (int)(srow_fx >> FX_SHIFT);
+                if (srow < LEAF_Y0) srow = LEAF_Y0;
+                else if (srow > LEAF_Y1) srow = LEAF_Y1;
+                c8 = llut[leaf_base[srow]];   /* leaf: swing-shaded (stipple baked in) */
+            }
+        } else {
+            c8 = dlut[col_base[oty]];
+        }
+        if (hr) *(uint16_t *)pd = WDUP(c8); else *pd = c8;
+        pd += SCREEN_W;
+    }
+}
+
 RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
     fx_t px = SHARED_UC->player.x;
     fx_t py = SHARED_UC->player.y;
@@ -2624,6 +3096,38 @@ RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
             continue;
         }
 
+        /* Embedded DOOR (decal kind 1): on the columns it covers, draw the door
+         * texture full-height AS THE WALL — replacing the chevron, not overlaying
+         * it — so there is no overdraw. Opaque + column-major (sequential reads
+         * down the column). Falls through to the normal chevron everywhere else. */
+        if (!partition_hit && num_decals > 0) {
+            fx_t hx = px + FX_MUL(perpDist, rayDirX);
+            fx_t hy = py + FX_MUL(perpDist, rayDirY);
+            int door_drawn = 0;
+            for (int d = 0; d < num_decals; d++) {
+                if (decals[d].kind != 1) continue;
+                fx_t along; int flip;
+                if (decals[d].axis) {
+                    if (FX_ABS(hy - decals[d].y) > FX(0.2)) continue;
+                    along = hx - (decals[d].x - DECAL_DOOR_HW);
+                    flip = (py > decals[d].y);      /* viewed from the south (looking N) */
+                } else {
+                    if (FX_ABS(hx - decals[d].x) > FX(0.2)) continue;
+                    along = hy - (decals[d].y - DECAL_DOOR_HW);
+                    flip = (px < decals[d].x);      /* viewed from the west (looking E) */
+                }
+                if (along < 0 || along > 2 * DECAL_DOOR_HW) continue;
+                /* Big door fill lives in its own function so this hot loop stays
+                 * inside the SH-2 I-cache (see draw_door_column's comment). */
+                draw_door_column(fb, col, hr, along, flip, drawStart, drawEnd,
+                                 wall_top, draw_lineHeight, perpDist, wall_shade,
+                                 horizon_y, eye_h);
+                door_drawn = 1;
+                break;
+            }
+            if (door_drawn) continue;   /* door drawn as the wall; skip chevron */
+        }
+
         /* DIVU latency hide #2: start tex_step = (tex_h*tile_y
          * << 16) / lineHeight, then do detail_factor + shade_lut in
          * parallel. The shade_lut loop alone is ~256 cycles, far
@@ -2851,47 +3355,72 @@ RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
              * exact integer planes, so this wide band never false-matches them
              * (the nearest other plane is a whole cell away). */
             for (int d = 0; d < num_decals; d++) {
-                fx_t along;
-                if (decals[d].axis) {                 /* wall plane = Y, plate spans X */
-                    if (FX_ABS(hy - decals[d].y) > FX(0.2)) continue;
-                    along = hx - (decals[d].x - DECAL_OUTLET_HW);
-                } else {                              /* wall plane = X, plate spans Y */
-                    if (FX_ABS(hx - decals[d].x) > FX(0.2)) continue;
-                    along = hy - (decals[d].y - DECAL_OUTLET_HW);
-                }
-                if (along < 0 || along > 2 * DECAL_OUTLET_HW) continue;
-                int otx = (int)(((int64_t)along * OUTLET_TEX_WIDTH)
-                                / (2 * DECAL_OUTLET_HW));
-                if (otx < 0) otx = 0;
-                else if (otx >= OUTLET_TEX_WIDTH) otx = OUTLET_TEX_WIDTH - 1;
+                /* 0 = small outlet plate (opaque fill, shaded with the wall),
+                 * 1 = the full-height fire DOOR (own texture; index 0 is
+                 * transparent so the wall shows around the EXIT sign). */
+                int dk = decals[d].kind;
+                if (dk == 1) continue;   /* door drawn as the wall, not an overlay */
+                fx_t dhw = dk ? DECAL_DOOR_HW : DECAL_OUTLET_HW;
+                fx_t dH  = dk ? DECAL_DOOR_H  : DECAL_OUTLET_H;
+                int dtw  = dk ? DOOR_TEX_WIDTH  : OUTLET_TEX_WIDTH;
+                int dth  = dk ? DOOR_TEX_HEIGHT : OUTLET_TEX_HEIGHT;
+                const uint8_t *dtex = dk ? (const uint8_t *)door_tex
+                                         : (const uint8_t *)outlet_tex;
 
-                /* Vertical band: centre at height fraction z, height
-                 * DECAL_OUTLET_H, projected through lineHeight. wall_bot is the
-                 * floor line (fraction 0); up the wall subtracts lineHeight. */
+                fx_t along;
+                if (decals[d].axis) {                 /* wall plane = Y, spans X */
+                    if (FX_ABS(hy - decals[d].y) > FX(0.2)) continue;
+                    along = hx - (decals[d].x - dhw);
+                } else {                              /* wall plane = X, spans Y */
+                    if (FX_ABS(hx - decals[d].x) > FX(0.2)) continue;
+                    along = hy - (decals[d].y - dhw);
+                }
+                if (along < 0 || along > 2 * dhw) continue;
+                int otx = (int)(((int64_t)along * dtw) / (2 * dhw));
+                if (otx < 0) otx = 0;
+                else if (otx >= dtw) otx = dtw - 1;
+                /* Door texture is COLUMN-MAJOR (cache-friendly down a column):
+                 * this column is contiguous bytes, step 1. Outlet is row-major. */
+                const uint8_t *col_base = dk ? (dtex + otx * dth) : (dtex + otx);
+                int col_step = dk ? 1 : dtw;
+
+                /* Vertical band: centre at height fraction z, height dH, through
+                 * lineHeight. wall_bot is the floor line; up the wall subtracts. */
                 int oc = wall_bot - (int)(((int64_t)lineHeight * decals[d].z) >> FX_SHIFT);
-                int oh = (int)(((int64_t)lineHeight * DECAL_OUTLET_H) >> (FX_SHIFT + 1));
+                int oh = (int)(((int64_t)lineHeight * dH) >> (FX_SHIFT + 1));
                 if (oh < 1) oh = 1;
                 int oy0  = oc - oh, oy1 = oc + oh;
                 int span = oy1 - oy0;
+                if (span < 1) span = 1;
                 int ylo  = oy0 < drawStart ? drawStart : oy0;
                 int yhi  = oy1 > drawEnd   ? drawEnd   : oy1;
                 uint8_t *po = (uint8_t *)fb + col + ylo * SCREEN_W;
-                /* Shade the plate with the wall it's mounted on: subtract the
-                 * wall's fog/light shade (0..15, already folded with cell_light)
-                 * scaled into the 5-bucket outlet ramp, so a far or unlit outlet
-                 * darkens with its wall instead of staying bright in the fog. */
-                int oshade = (wall_shade * 5) >> 4;
+                int oshade = (wall_shade * 5) >> 4;   /* outlet fog/light fold */
+                /* Precomputed texture-row step instead of a per-pixel software
+                 * divide (SH-2 has no fast integer divide) — one divide per
+                 * column, then add+shift per pixel. The big door fill made the
+                 * old per-pixel /span the frame-killer. */
+                fx_t oty_step = ((fx_t)dth << FX_SHIFT) / span;
+                fx_t oty_fx   = (fx_t)(ylo - oy0) * oty_step;
                 for (int yy = ylo; yy <= yhi; yy++) {
-                    int oty = ((yy - oy0) * OUTLET_TEX_HEIGHT) / span;
-                    if ((unsigned)oty < (unsigned)OUTLET_TEX_HEIGHT) {
-                        int ob = (int)outlet_tex[oty][otx] - oshade;
-                        if (ob < 0) ob = 0;
-                        uint8_t oc8 = (uint8_t)(OUTLET_BASE + ob);
-                        if (hr) *(uint16_t *)po = WDUP(oc8); else *po = oc8;
+                    int oty = (int)(oty_fx >> FX_SHIFT);
+                    if ((unsigned)oty < (unsigned)dth) {
+                        int tv = col_base[oty * col_step];
+                        if (dk) {
+                            if (tv) {           /* 0 = transparent: keep the wall */
+                                uint8_t oc8 = (uint8_t)(DOOR_BASE + tv - 1);
+                                if (hr) *(uint16_t *)po = WDUP(oc8); else *po = oc8;
+                            }
+                        } else {
+                            int ob = tv - oshade; if (ob < 0) ob = 0;
+                            uint8_t oc8 = (uint8_t)(OUTLET_BASE + ob);
+                            if (hr) *(uint16_t *)po = WDUP(oc8); else *po = oc8;
+                        }
                     }
+                    oty_fx += oty_step;   /* advance the texture row per screen pixel */
                     po += SCREEN_W;
                 }
-                break;   /* one outlet per column */
+                break;   /* one decal per column */
             }
         }
 

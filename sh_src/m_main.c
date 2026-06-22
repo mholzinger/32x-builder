@@ -208,6 +208,32 @@ void swapBuffers(void) {
     lastTick = MARS_SYS_COMM12;
 }
 
+/* One brightness-fade step with its own vblank flip (bypasses raycast_shimmer,
+ * which would reset the bright palette mid-fade). Shared by the lobby walk-
+ * through and the door portal. */
+static void fade_step(int lvl) {
+    SHARED_UC->frame_count++;
+    raycast_render();
+    while (lastTick == MARS_SYS_COMM12);
+    raycast_set_brightness(lvl);
+    MARS_VDP_FBCTL = currentFB ^ 1;
+    while ((MARS_VDP_FBCTL & MARS_VDP_FS) == currentFB);
+    currentFB ^= 1;
+    lastTick = MARS_SYS_COMM12;
+}
+
+/* Walk-through-the-EXIT-door portal: fade to black, generate a fresh procedural
+ * map, drop the player at the standard spawn, fade back up. The "way out" only
+ * loops you deeper into the backrooms. Mirrors the lobby walk-through fade. */
+static void portal_to_procgen(void) {
+    for (int lvl = FADE_STEPS; lvl >= 0; lvl -= 2) fade_step(lvl);
+    procgen_run(SHARED_UC->frame_count * 1000003u + (uint32_t)player.x);
+    player.x = FX(16.5); player.y = FX(28.5); player.angle = 192;
+    raycast_init();                 /* rebuilds full-bright palette... */
+    raycast_set_brightness(0);      /* ...held black until the fade-in */
+    for (int lvl = 0; lvl <= FADE_STEPS; lvl += 2) fade_step(lvl);
+}
+
 int m_main(void) {
     /* Release the secondary SH-2. The crt0 (mars_start.s:271-273) intends
      * to do this after the init JSR but uses a stale r0 — the write
@@ -461,6 +487,8 @@ int m_main(void) {
         metrics_mode_check(pad);
         if (!menu_is_active()) {
             player_update(pad);
+            /* Stepped into the open EXIT door -> portal into a fresh procgen map. */
+            if (raycast_door_portal_check()) { portal_to_procgen(); continue; }
         }
         /* Tick the shared frame counter before render so both CPUs
          * read the same value when computing the distant-wall strobe. */

@@ -114,6 +114,11 @@ typedef struct {
      * above each frame — that effective flag is what both CPUs' draw_walls read.
      * AUTO uses hysteresis on the frame period so it doesn't flip-flop per frame. */
     volatile uint8_t wall_res_mode;
+    /* Door swing animation, 0 = closed .. 16 = fully open. Primary eases it each
+     * frame toward the target (toggled by the interact button near the door);
+     * both CPUs' wall-embedded door fill read it to foreshorten the leaf and
+     * reveal the dark void behind. */
+    volatile uint8_t door_open;
     /* Vertical half-res (VISUALS menu). 1 = the line table maps each display-row
      * pair onto one even framebuffer row, so the screen shows only even rows
      * doubled. Defaults OFF and stays a VISUAL option only — judged too chunky to

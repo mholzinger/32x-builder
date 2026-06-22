@@ -1,0 +1,18 @@
+services:
+  map-editor:
+    build: .
+    container_name: backrooms-map-editor
+    ports:
+      - "5050:5050"
+    environment:
+      - MAP_HOST=0.0.0.0
+      - MAP_PORT=5050
+      - MAP_REPO_ROOT=/repo
+      - MAP_DEBUG=0
+    volumes:
+      # Repo root -> /repo so the editor reads/writes the real maps/, and uses
+      # the same registry.json + tools/mapfmt.py the ROM build does.
+      - ../../:/repo
+      # Live-edit the editor's own source without rebuilding the image.
+      - ./:/app
+    restart: unless-stopped

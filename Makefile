@@ -71,10 +71,13 @@ MDOBJS += $(MDCPPS:.cpp=.o)
 
 # Generate sh object target list
 SHSS    = $(wildcard sh_src/*.s)
-SHCS    = $(wildcard sh_src/*.c)
+# custom_maps.c is generated (and may not exist at glob time on a clean build),
+# so exclude it from the wildcard and add its object explicitly below.
+SHCS    = $(filter-out sh_src/custom_maps.c,$(wildcard sh_src/*.c))
 SHCPPS  = $(wildcard sh_src/*.cpp)
 SHOBJS  = $(SHSS:.s=.o)
 SHOBJS += $(SHCS:.c=.o)
+SHOBJS += sh_src/custom_maps.o
 SHOBJS += $(SHCPPS:.cpp=.o)
 
 .PHONY: all release debug deploy deploy-tv publish
@@ -190,6 +193,14 @@ sh_src/version.h: FORCE
 
 # menu.c draws the version strings, so it must see a fresh version.h.
 sh_src/menu.o: sh_src/version.h
+
+# sh_src/custom_maps.c is codegen'd from maps/*.map + registry.json by the level
+# editor's generator. Regenerate when a .map, the registry, or the generator
+# changes; the sh_src/*.c wildcard then compiles it like any source. Tracked
+# (unlike version.h) so the parse-time wildcard sees it on a clean checkout; the
+# generator only rewrites the file when its contents actually change.
+sh_src/custom_maps.c: $(wildcard maps/*.map) registry.json tools/gen_maps.py
+	@python3 tools/gen_maps.py
 
 # Auto-generated header dependency files. -MMD emits one per .c next to
 # the .o; -include silently ignores them on a clean tree. Without this,

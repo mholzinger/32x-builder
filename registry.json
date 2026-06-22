@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "_comment": "Element catalog shared by the web editor (tools/map-editor) and the codegen (tools/gen_maps.py). Adding a new placeable element here teaches BOTH the editor and the build about it. The engine's own rendering of a new decal kind / wallpaper style is still hand-coded in raycast.c; this file is the editor+format+codegen boundary.",
+
+  "cells": {
+    "_doc": "grid glyph -> engine world_map cell value",
+    "glyphs": { ".": 0, "#": 1, "X": 2 },
+    "palette": [
+      { "value": 0, "id": "open",      "glyph": ".", "label": "Open floor", "color": "#1a1a14" },
+      { "value": 1, "id": "wall",      "glyph": "#", "label": "Wall",       "color": "#b8a85a" },
+      { "value": 2, "id": "blackexit", "glyph": "X", "label": "Black-exit void (walk-through doorway)", "color": "#000000" }
+    ]
+  },
+
+  "facing": {
+    "_doc": "spawn cardinal -> engine angle (0..255). dir=(cos,sin) of angle*360/256; +Y is south. So 0=E(+X) 64=S(+Y) 128=W(-X) 192=N(-Y). Verified vs fixed_map spawn (192, opens north).",
+    "E": 0, "S": 64, "W": 128, "N": 192
+  },
+
+  "partition": {
+    "_doc": "free-standing wallpaper divider: a line segment with decor enums",
+    "style":  { "chevron": 0, "spotted": 1 },
+    "height": { "full": 0, "low": 192 },
+    "crawl":  { "no": 0, "yes": 1 }
+  },
+
+  "crawl": {
+    "_doc": "low-ceiling run -> ceil_h_add_run(cx,cy,dx,dy,len). dir gives dx,dy.",
+    "dir": { "E": [1, 0], "N": [0, -1], "W": [-1, 0], "S": [0, 1] }
+  },
+
+  "decals": {
+    "_doc": "wall-mounted fixed elements. face -> axis (N/S walls run along X => axis 1; E/W walls run along Y => axis 0). z is plate-centre height [0..1]. ADD A NEW WALL ELEMENT BY ADDING AN ENTRY HERE (give it the next kind number).",
+    "face_axis": { "N": 1, "S": 1, "E": 0, "W": 0 },
+    "kinds": [
+      { "id": "outlet", "kind": 0, "z": 0.20, "glyph": "⊟", "color": "#d8c070", "label": "Electrical outlet" },
+      { "id": "door",   "kind": 1, "z": 0.49, "glyph": "▯", "color": "#8a5a3a", "label": "Exit door (swinging, EXIT sign)" }
+    ]
+  },
+
+  "limits": {
+    "_doc": "must match the engine caps; the codegen rejects maps that exceed these",
+    "max_dim": 64,
+    "max_partitions": 32,
+    "max_decals": 16,
+    "max_crawl_runs": 8
+  }
+}

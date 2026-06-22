@@ -11,6 +11,7 @@
 #include "outlet_tex.h"
 #include "door_tex.h"
 #include "partition_tex.h"
+#include "custom_maps.h"
 
 /* d32xr Lever 1: place a per-frame-hot renderer function in cacheable SDRAM
  * (.ramtext, copied from ROM at boot) instead of executing it from slow,
@@ -51,7 +52,7 @@ player_t player = {
  *                                "why is this here" Backrooms vibe).
  *   SPAWN CORRIDOR: tight col-16 N-S corridor from row 17 to 28,
  *                   side-doors at (15,20), (17,23), (15,26). */
-static const uint8_t fixed_map[MAP_H][MAP_W] = {
+static const uint8_t fixed_map[AUTH_H][AUTH_W] = {
     {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
     {1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
     {1,0,0,0,0,0,0,0,1,0,0,0,1,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,1},
@@ -98,7 +99,7 @@ static const uint8_t fixed_map[MAP_H][MAP_W] = {
  *        r4   . . . . . #
  *        r5   == . == . #    entrance wall (partition), gap cols 3-4
  *        r6   . . S . . #    S = spawn (faces north); E = east exit */
-static const uint8_t lobby_map[MAP_H][MAP_W] = {
+static const uint8_t lobby_map[AUTH_H][AUTH_W] = {
     {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
     {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
     {1,1,0,0,0,0,0,0,0,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
@@ -1013,9 +1014,11 @@ static void place_partitions_fixed(int target) {
 
 /* The hand-tuned 32x32 Backrooms map + its two dividers. */
 void raycast_load_fixed(void) {
+    /* Authored 32x32 map at the top-left of the live grid; rest is solid wall
+     * (its own boundary seals the playable area, so the fill is never seen). */
     for (int r = 0; r < MAP_H; r++)
         for (int c = 0; c < MAP_W; c++)
-            world_map[r][c] = fixed_map[r][c];
+            world_map[r][c] = (r < AUTH_H && c < AUTH_W) ? fixed_map[r][c] : 1;
     partitions[0] = (partition_t){ FX(22), FX(22), FX(26), FX(22) };
     partitions[1] = (partition_t){ FX(20), FX(11), FX(20), FX(14) };
     num_partitions = 2;
@@ -1058,13 +1061,59 @@ void raycast_load_fixed(void) {
     player.x = FX(16.5); player.y = FX(28.5); player.angle = 192;
 }
 
+/* Load a hand-authored map from the generated custom_maps[] table. Replays the
+ * POD descriptor (tools/gen_maps.py emits it from a .map file) into the live
+ * world exactly like raycast_load_fixed does — this is the ONE place that knows
+ * the engine-private decal_t / partition decor encodings, so the generated
+ * custom_maps.c stays pure data. */
+void raycast_load_custom(int idx) {
+    if (idx < 0 || idx >= custom_map_count) idx = 0;
+    const custom_map_t *m = &custom_maps[idx];
+
+    /* Grid: authored w*h into the top-left of the live MAP_W*MAP_H, rest wall
+     * (size-aware — no AUTH_W/H assumption). */
+    for (int r = 0; r < MAP_H; r++)
+        for (int c = 0; c < MAP_W; c++)
+            world_map[r][c] = (r < m->h && c < m->w) ? m->grid[r * m->w + c] : 1;
+
+    /* Free-standing partitions + decor. */
+    int np = m->n_parts; if (np > NUM_PARTITIONS_MAX) np = NUM_PARTITIONS_MAX;
+    for (int i = 0; i < np; i++) {
+        partitions[i] = (partition_t){ m->parts[i].x1, m->parts[i].y1,
+                                       m->parts[i].x2, m->parts[i].y2 };
+        partition_style[i]  = m->parts[i].style;
+        partition_height[i] = m->parts[i].height;
+        partition_crawl[i]  = m->parts[i].crawl;
+    }
+    num_partitions = np;
+
+    /* Ceiling: full everywhere, then the low-ceiling crawl runs. */
+    g_lobby_ceiling = m->lobby_ceiling;
+    ceil_h_clear();
+    for (int i = 0; i < m->n_crawls; i++)
+        ceil_h_add_run(m->crawls[i].cx, m->crawls[i].cy,
+                       m->crawls[i].dx, m->crawls[i].dy, m->crawls[i].len);
+
+    /* Decals: explicit placements first, then optional auto-helpers. */
+    num_decals = 0;
+    for (int i = 0; i < m->n_decals && num_decals < 16; i++)
+        decals[num_decals++] = (decal_t){ m->decals[i].x, m->decals[i].y,
+            m->decals[i].z, m->decals[i].axis, m->decals[i].kind };
+    if (m->place_outlets)   raycast_place_outlets(m->place_outlets);
+    if (m->place_exit_door) raycast_place_exit_door();
+    g_door_open = g_door_target = 0;
+    SHARED_UC->door_open = 0;
+
+    player.x = m->spawn_x; player.y = m->spawn_y; player.angle = m->spawn_angle;
+}
+
 /* Stamp the recurring EXIT door into the live map as a SURPRISE you have to
  * find: flood-fill the cells actually reachable from spawn, then drop the door
  * on the FARTHEST reachable wall face. Deep in the level, but always walkable-to
  * (never sealed off). procgen calls this so every generated level has a hidden
  * way out — which only ever opens into the next generated level. */
 void raycast_place_exit_door(void) {
-    const int SPAWN_CX = 16, SPAWN_CY = 28;   /* must match procgen.c */
+    const int SPAWN_CX = 32, SPAWN_CY = 60;   /* must match procgen.c */
     static uint8_t  reach[MAP_H][MAP_W];
     static uint16_t queue[MAP_H * MAP_W];
     for (int y = 0; y < MAP_H; y++)
@@ -1134,9 +1183,10 @@ int raycast_door_portal_check(void) {
  * side, across the top, and out the east exit doorway (col 10, rows 2-4) to
  * enter the chosen level. */
 void raycast_load_lobby(void) {
+    /* Authored 32x32 lobby at the top-left of the live grid; rest solid wall. */
     for (int r = 0; r < MAP_H; r++)
         for (int c = 0; c < MAP_W; c++)
-            world_map[r][c] = lobby_map[r][c];
+            world_map[r][c] = (r < AUTH_H && c < AUTH_W) ? lobby_map[r][c] : 1;
     /* Free-standing wallpaper PARTITION dividers, per the sketch (5x5):
      *  - T-divider top-left: vertical stem (x=3, rows 2-3) + arm (row 3, x3->5)
      *  - entrance wall (row 5) split by a centre gap (cols 3-4) you walk up. */

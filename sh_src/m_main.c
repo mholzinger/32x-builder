@@ -4,6 +4,7 @@
 #include "font.h"
 #include "shared.h"
 #include "procgen.h"
+#include "custom_maps.h"
 #include "box3d.h"
 #include "box_hero.h"
 #include "sound.h"
@@ -17,6 +18,10 @@ uint16_t currentFB = 0;
 /* On-screen debug metrics — off by default, toggled by the six-button
  * controller's MODE button (edge-detected once per frame from any loop). */
 uint8_t g_metrics_on = 0;
+
+/* Pause-menu MAPS tab -> warp request. -1 = none; else a custom_maps[] index.
+ * The menu (menu.c) sets it; the main loop drains it into portal_to_custom. */
+volatile int g_warp_request = -1;
 static void metrics_mode_check(uint16_t pad) {
     static uint16_t prev = 0xFFFF;
     if ((pad & SEGA_CTRL_MODE) && !(prev & SEGA_CTRL_MODE)) g_metrics_on ^= 1;
@@ -228,9 +233,21 @@ static void fade_step(int lvl) {
 static void portal_to_procgen(void) {
     for (int lvl = FADE_STEPS; lvl >= 0; lvl -= 2) fade_step(lvl);
     procgen_run(SHARED_UC->frame_count * 1000003u + (uint32_t)player.x);
-    player.x = FX(16.5); player.y = FX(28.5); player.angle = 192;
+    player.x = FX(32.5); player.y = FX(60.5); player.angle = 192;
     raycast_init();                 /* rebuilds full-bright palette... */
     raycast_set_brightness(0);      /* ...held black until the fade-in */
+    for (int lvl = 0; lvl <= FADE_STEPS; lvl += 2) fade_step(lvl);
+}
+
+/* Pause-menu MAPS-tab warp: the same fade/load/fade as the procgen portal, but
+ * loads a hand-authored custom map by index (it sets its own spawn). Lets you
+ * jump to any compiled-in map mid-session — the editor test-loop + an escape
+ * hatch when the player gets stuck or is done with a map. */
+static void portal_to_custom(int idx) {
+    for (int lvl = FADE_STEPS; lvl >= 0; lvl -= 2) fade_step(lvl);
+    raycast_load_custom(idx);
+    raycast_init();
+    raycast_set_brightness(0);
     for (int lvl = 0; lvl <= FADE_STEPS; lvl += 2) fade_step(lvl);
 }
 
@@ -327,7 +344,7 @@ int m_main(void) {
             uint16_t pressed = (uint16_t)(pad & ~prev_pad);
             prev_pad = pad;
             if ((pressed & SEGA_CTRL_UP)   && menu_selection > 0) menu_selection--;
-            if ((pressed & SEGA_CTRL_DOWN) && menu_selection < 1) menu_selection++;
+            if ((pressed & SEGA_CTRL_DOWN) && menu_selection < 1 + custom_map_count) menu_selection++;
             if (pressed & LOBBY_COMMIT) break;   /* confirm, dismiss menu */
             metrics_mode_check(pad);
             frame++;
@@ -345,6 +362,19 @@ int m_main(void) {
                              (menu_selection == 1)
                                ? "> NOCLIP PROCEDURAL "
                                : "  NOCLIP PROCEDURAL ", 49);
+            /* Third line cycles through the compiled-in custom maps (if any):
+             * UP/DOWN past PROCEDURAL steps into them; the line shows the one
+             * that would load. The pause-menu MAPS tab is the fuller browser. */
+            if (custom_map_count > 0) {
+                int ci = (menu_selection >= 2) ? (menu_selection - 2) : 0;
+                char line[21]; int p = 0;
+                line[p++] = (menu_selection >= 2) ? '>' : ' ';
+                line[p++] = ' ';
+                for (const char *nm = custom_maps[ci].name; *nm && p < 19; ) line[p++] = *nm++;
+                while (p < 20) line[p++] = ' ';
+                line[p] = '\0';
+                font_draw_string(fb_text, opt_x, 136, line, 49);
+            }
             font_draw_string(fb_text, (SCREEN_W - 19 * 8) / 2, SCREEN_H - 20,
                              "ANY BUTTON: CONFIRM", 49);
             /* Controller-type readout — UNCONDITIONAL (the metrics overlay is
@@ -459,7 +489,9 @@ int m_main(void) {
 
     if (menu_selection == 1) {
         procgen_run((uint32_t)frame * 1000003u + (uint32_t)player.x);
-        player.x = FX(16.5); player.y = FX(28.5); player.angle = 192;
+        player.x = FX(32.5); player.y = FX(60.5); player.angle = 192;
+    } else if (menu_selection >= 2) {
+        raycast_load_custom(menu_selection - 2);   /* loader sets its own spawn */
     } else {
         raycast_load_fixed();
     }
@@ -484,6 +516,12 @@ int m_main(void) {
         uint16_t pad = MARS_SYS_COMM8;
 
         menu_update(pad);
+        /* MAPS tab asked to warp -> fade to the chosen custom map. */
+        if (g_warp_request >= 0) {
+            int t = g_warp_request; g_warp_request = -1;
+            portal_to_custom(t);
+            continue;
+        }
         metrics_mode_check(pad);
         if (!menu_is_active()) {
             player_update(pad);

@@ -4,11 +4,15 @@
 #include "raycast.h"
 #include "shared.h"
 #include "version.h"
+#include "custom_maps.h"
 
 /* Owned by m_main.c — the metrics-overlay gate. Exposed so the LIGHTING tab can
  * toggle it: the MODE-button shortcut is 6-button-only, so this is the way to
  * reach the overlay on a 3-button pad. */
 extern uint8_t g_metrics_on;
+/* Owned by m_main.c — the MAPS tab writes the chosen custom-map index here and
+ * the main loop drains it into the warp. -1 = no request. */
+extern volatile int g_warp_request;
 
 /* Two-tab pause menu. START opens/closes; tabs (AUDIO / LIGHTING) sit
  * on row 0 and LEFT/RIGHT switches between them when that row is
@@ -22,7 +26,8 @@ extern uint8_t g_metrics_on;
 #define TAB_LIGHTING 1
 #define TAB_VISUALS  2
 #define TAB_CREDITS  3
-#define NUM_TABS     4
+#define TAB_MAPS     4
+#define NUM_TABS     5
 
 #define AUDIO_CONTENT_ROWS    2   /* AMBIENCE, FOOTSTEPS */
 #define LIGHTING_CONTENT_ROWS 3   /* FLICKER, STROBES, SHIMMER */
@@ -56,6 +61,7 @@ static int content_rows_for(int tab) {
     case TAB_AUDIO:    return AUDIO_CONTENT_ROWS;
     case TAB_LIGHTING: return LIGHTING_CONTENT_ROWS;
     case TAB_VISUALS:  return VISUALS_CONTENT_ROWS;
+    case TAB_MAPS:     return custom_map_count;   /* one row per compiled-in map */
     default:           return CREDITS_CONTENT_ROWS;
     }
 }
@@ -78,6 +84,15 @@ void menu_update(uint16_t pad) {
     }
     if (pressed & SEGA_CTRL_DOWN) {
         menu_row = (menu_row + 1) % total_rows;
+    }
+
+    /* MAPS tab: A on a map row warps there and closes the menu. */
+    if (menu_tab == TAB_MAPS && menu_row >= 1 && (pressed & SEGA_CTRL_A)) {
+        if (menu_row - 1 < custom_map_count) {
+            g_warp_request = menu_row - 1;
+            menu_active = 0;
+        }
+        return;
     }
 
     int dir = 0;
@@ -178,8 +193,11 @@ void menu_render(uint8_t *fb) {
     case TAB_VISUALS:
         tab_text = tab_sel ? "> LIGHTING |VISUALS|" : "  LIGHTING |VISUALS|";
         break;
-    default: /* TAB_CREDITS */
+    case TAB_CREDITS:
         tab_text = tab_sel ? "> VISUALS |CREDITS|" : "  VISUALS |CREDITS|";
+        break;
+    default: /* TAB_MAPS */
+        tab_text = tab_sel ? "> CREDITS |MAPS|" : "  CREDITS |MAPS|";
         break;
     }
     font_draw_string(fb, X, Y + 16, tab_text, MENU_FG_COLOR);
@@ -207,13 +225,36 @@ void menu_render(uint8_t *fb) {
                  SHARED_UC->vres_half ? "HALF" : "FULL");
         draw_row(fb, 48, menu_row == 3, "METRICS",
                  g_metrics_on ? " ON" : "OFF");
-    } else {
+    } else if (menu_tab == TAB_CREDITS) {
         /* CREDITS — read-only build stamp (no selection cursor). */
         font_draw_string(fb, X + 8, Y + 32, "BUILD " VERSION_BUILD_STR, MENU_FG_COLOR);
         font_draw_string(fb, X + 8, Y + 40, "DATE  " VERSION_DATE_STR,  MENU_FG_COLOR);
         font_draw_string(fb, X + 8, Y + 48, "SHA   " VERSION_SHA_STR,   MENU_FG_COLOR);
+    } else { /* TAB_MAPS — scrolling list of the compiled-in custom maps */
+        if (custom_map_count == 0) {
+            font_draw_string(fb, X + 8, Y + 32, "  (NO MAPS)", MENU_FG_COLOR);
+        } else {
+            int sel = menu_row - 1;            /* selected map, or -1 on the tab row */
+            int off = 0;                       /* 3-row window scrolls with selection */
+            if (custom_map_count > 3) {
+                off = (sel > 0 ? sel : 0) - 1;
+                if (off < 0) off = 0;
+                if (off > custom_map_count - 3) off = custom_map_count - 3;
+            }
+            for (int i = 0; i < 3 && off + i < custom_map_count; i++) {
+                int mi = off + i;
+                char line[20]; int p = 0;
+                line[p++] = (menu_row == mi + 1) ? '>' : ' ';
+                line[p++] = ' ';
+                for (const char *nm = custom_maps[mi].name; *nm && p < 18; ) line[p++] = *nm++;
+                line[p] = 0;
+                font_draw_string(fb, X + 8, Y + 32 + 8 * i, line, MENU_FG_COLOR);
+            }
+        }
     }
 
     /* Hint row at y=64. */
-    font_draw_string(fb, X + 8, Y + 64, "START TO CLOSE", MENU_FG_COLOR);
+    font_draw_string(fb, X + 8, Y + 64,
+                     (menu_tab == TAB_MAPS) ? "A=GO  START=CLOSE" : "START TO CLOSE",
+                     MENU_FG_COLOR);
 }

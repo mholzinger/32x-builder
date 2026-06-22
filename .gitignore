@@ -20,6 +20,9 @@ sh_src/md_start.bin
 # Build version stamp — regenerated every build by the Makefile
 sh_src/version.h
 
+# Codegen'd from maps/*.map by tools/gen_maps.py every build
+sh_src/custom_maps.c
+
 # Debug capture artifacts (snapshotted to share with reviewers, not history)
 screenshots/
 
@@ -43,3 +46,6 @@ images/*
 
 # Reference source code
 srcref/
+# Python bytecode (map editor)
+__pycache__/
+*.pyc

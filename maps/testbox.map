@@ -1,0 +1,37 @@
+# testbox.map — pipeline smoke test: exercises every element type.
+name: TESTBOX
+size: 16x16
+spawn: 8.5, 12.5 facing=N        # looks north (-Y) into the room; door behind
+
+[grid]                           # . open   # wall   X black-exit void
+################
+#..............#
+#..####..####..#
+#..#........#..#
+#..#........#..#
+#..####..####..#
+#..............#
+#......##......#
+#......##......#
+#..............#
+#..####..####..#
+#..............#
+#..............#
+#..............#
+#..............#
+################
+
+[crawl]                          # low-ceiling run: cx,cy dir=N|S|E|W len=N
+1,7 dir=E len=3
+
+[partitions]                     # x1,y1 -> x2,y2  style=  height=  crawl=
+6,9 -> 10,9  style=spotted height=low
+
+[decals]                         # face=N|S|E|W picks the wall plane
+outlet 1.0,12.5 face=W z=0.20
+door   8.0,15.0 face=S
+
+[options]
+place_outlets: 0
+place_exit_door: 0
+lobby_ceiling: 0

@@ -1,0 +1,46 @@
+:root {
+  --bg: #15140f;
+  --panel: #211f17;
+  --ink: #d8cfa8;
+  --ink-dim: #8a8266;
+  --accent: #d8c070;
+  --wall: #b8a85a;
+  --line: #3a3626;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 13px/1.4 "DejaVu Sans Mono", Menlo, Consolas, monospace;
+}
+header {
+  padding: 8px 14px; background: #1b1a13; border-bottom: 1px solid var(--line);
+}
+header h1 { margin: 0 0 8px; font-size: 15px; letter-spacing: 2px; color: var(--accent); }
+.file-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.file-bar .sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+label { color: var(--ink); }
+select, input, button {
+  background: #2c2a1f; color: var(--ink); border: 1px solid var(--line);
+  border-radius: 4px; padding: 4px 8px; font: inherit;
+}
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: #15140f; border-color: var(--accent); font-weight: bold; }
+button.active { background: var(--accent); color: #15140f; border-color: var(--accent); }
+#status { color: var(--accent); margin-left: 8px; min-height: 1em; }
+
+main { display: flex; height: calc(100vh - 70px); }
+#sidebar { width: 220px; padding: 10px; overflow-y: auto; border-right: 1px solid var(--line); }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; margin-bottom: 10px; }
+.panel h2 { margin: 0 0 8px; font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--accent); }
+.btn-col { display: flex; flex-direction: column; gap: 4px; }
+.btn-col button, #palette button { width: 100%; text-align: left; }
+#palette button { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.swatch { display: inline-block; width: 14px; height: 14px; border: 1px solid #000; border-radius: 3px; }
+.hint ul { margin: 0; padding-left: 16px; color: var(--ink); }
+.hint li { margin: 2px 0; }
+.hint b { color: var(--accent); }
+
+#stage { flex: 1; position: relative; overflow: auto; padding: 16px; }
+#grid { background: #0d0c09; image-rendering: pixelated; border: 1px solid var(--line); }
+#coords { position: absolute; right: 16px; bottom: 10px; color: var(--accent); background: #000a; padding: 2px 6px; border-radius: 4px; }

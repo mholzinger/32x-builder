@@ -68,19 +68,16 @@ static int prob(int weight) {
  * for tuning.
  * ───────────────────────────────────────────────────────────────────── */
 
-/* Player spawn cell. The spine corridor passes through this row. */
-#define SPAWN_CX 16
-#define SPAWN_CY 28
+/* Player spawn cell. The spine corridor passes through this row. Near the
+ * bottom-centre of the 64x64 grid so the map opens out to the north. */
+#define SPAWN_CX 32
+#define SPAWN_CY 60
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
 
-static int in_bounds_room(int x, int y, int w, int h) {
-    /* Room must leave a 1-cell buffer from map edges so walls fit. */
-    if (x < 1 || y < 1) return 0;
-    if (x + w >= MAP_W - 1) return 0;
-    if (y + h >= MAP_H - 1) return 0;
-    return 1;
-}
+/* Defined below in the element passes; the layout structure-placers use it to
+ * confirm a footprint (plus margin) is clear floor before dropping a wall. */
+static int cells_open(int x0, int y0, int x1, int y1);
 
 /* Carve a rectangular room: interior walkable, perimeter is left to
  * the surrounding wall fill. Caller stamps doors separately. */
@@ -113,20 +110,6 @@ static int add_partition(fx_t x1, fx_t y1, fx_t x2, fx_t y2) {
     return 1;
 }
 
-/* True if every cell of a proposed rectangle plus a 1-cell margin is
- * currently wall (i.e. nothing carved there yet). Used to avoid
- * overlapping side rooms or room-pair clusters. */
-static int region_is_unclaimed(int x, int y, int w, int h) {
-    for (int j = -1; j <= h; j++) {
-        for (int i = -1; i <= w; i++) {
-            int cx = x + i, cy = y + j;
-            if (cx < 0 || cx >= MAP_W || cy < 0 || cy >= MAP_H) continue;
-            if (world_map[cy][cx] == 0) return 0;
-        }
-    }
-    return 1;
-}
-
 /* ── Phase implementations ────────────────────────────────────────── */
 
 static void fill_walls(void) {
@@ -137,136 +120,76 @@ static void fill_walls(void) {
     }
 }
 
-static int spine_y;  /* row of the upper spine corridor cell */
-static int spine_w;  /* corridor width in cells (1 or 2) */
-
-static void carve_spine(void) {
-    /* Spine runs through the spawn row so spawn is naturally on it. */
-    spine_y = SPAWN_CY;
-    spine_w = (xs32() & 1) ? 2 : 1;   /* coin flip on width */
-    for (int x = 1; x < MAP_W - 1; x++) {
-        for (int dy = 0; dy < spine_w; dy++) {
-            world_map[spine_y - dy][x] = 0;
-        }
-    }
+/* Open the whole interior — the big connected floor everything else sits in.
+ * This is the inversion of the old spine generator: start OPEN, then drop
+ * structure into it (rooms, pillars, stubs) rather than carving corridors out
+ * of solid wall. Every structure keeps a clear margin, so the floor always
+ * stays one connected open space — open by construction, never spaghetti. */
+static void carve_open_field(void) {
+    carve_room(2, 2, MAP_W - 4, MAP_H - 4);
 }
 
-static void place_side_rooms(void) {
-    /* Try up to N times to place rooms branching off the spine.
-     * Some attempts will fail because they collide with prior rooms;
-     * the surprise factor comes from how many actually land. */
-    int target_count = xs32_range(3, 4 + g_procgen_params.openness);
-    int attempts = target_count * 4;
-    int placed = 0;
-    while (attempts-- > 0 && placed < target_count) {
-        int side = (xs32() & 1);   /* 0 = north of spine, 1 = south */
-        int w = xs32_range(3, 5);
-        int h = xs32_range(3, 5);
-        int rx = xs32_range(2, MAP_W - 3 - w);
-        int ry;
-        if (side == 0) {
-            /* North of spine: room sits above the upper spine row,
-             * with a 1-cell gap for the door. */
-            ry = spine_y - spine_w + 1 - h - 1;
-        } else {
-            /* South of spine: room sits below the lower spine row. */
-            ry = spine_y + 2;
+/* True if the structure footprint (x..x+w-1, y..y+h-1) plus a 1-cell margin is
+ * clear open floor AND clear of spawn — the gate every placer uses. */
+static int footprint_clear(int x, int y, int w, int h) {
+    if (!cells_open(x - 1, y - 1, x + w, y + h)) return 0;
+    if (x - 1 <= SPAWN_CX && SPAWN_CX <= x + w &&
+        y - 1 <= SPAWN_CY && SPAWN_CY <= y + h) return 0;
+    return 1;
+}
+
+/* Build `count` enclosed grid-wall rooms: a wall perimeter with ONE doorway,
+ * dropped only where the footprint+margin is clear. Reads as a room you step
+ * into; the open margin guarantees it never seals off the floor. */
+static void place_enclosed_rooms(int count) {
+    int placed = 0, attempts = count * 8;
+    while (attempts-- > 0 && placed < count) {
+        int w = xs32_range(4, 8), h = xs32_range(4, 8);
+        int rx = xs32_range(3, MAP_W - 4 - w);
+        int ry = xs32_range(3, MAP_H - 4 - h);
+        if (!footprint_clear(rx, ry, w, h)) continue;
+        for (int i = 0; i < w; i++) { world_map[ry][rx + i] = 1; world_map[ry + h - 1][rx + i] = 1; }
+        for (int j = 0; j < h; j++) { world_map[ry + j][rx] = 1; world_map[ry + j][rx + w - 1] = 1; }
+        /* one doorway, random side, away from the corners */
+        switch (xs32() & 3) {
+            case 0:  open_cell(rx + 1 + xs32_range(0, w - 3), ry);          break;
+            case 1:  open_cell(rx + 1 + xs32_range(0, w - 3), ry + h - 1);  break;
+            case 2:  open_cell(rx,         ry + 1 + xs32_range(0, h - 3));  break;
+            default: open_cell(rx + w - 1, ry + 1 + xs32_range(0, h - 3));  break;
         }
-        if (!in_bounds_room(rx, ry, w, h)) continue;
-        if (!region_is_unclaimed(rx, ry, w, h)) continue;
-
-        carve_room(rx, ry, w, h);
-        /* Single-cell door connecting to the spine. */
-        int door_x = rx + xs32_range(0, w - 1);
-        int door_y = (side == 0) ? (ry + h) : (ry - 1);
-        open_cell(door_x, door_y);
-
-        /* Drop a divider in big rooms, gated by the partition-density weight. */
-        if (w >= 4 && h >= 4 && prob(g_procgen_params.partitions) &&
-            num_partitions < NUM_PARTITIONS_MAX) {
-            /* Place a partition straddling the interior, leaving a
-             * 1-cell pad from each side so collision feels right. */
-            if (xs32() & 1) {
-                /* Horizontal partition. */
-                fx_t y_mid = (fx_t)((ry + h / 2)) << FX_SHIFT;
-                fx_t x1   = (fx_t)(rx + 1)     << FX_SHIFT;
-                fx_t x2   = (fx_t)(rx + w - 1) << FX_SHIFT;
-                add_partition(x1, y_mid, x2, y_mid);
-            } else {
-                /* Vertical partition. */
-                fx_t x_mid = (fx_t)((rx + w / 2)) << FX_SHIFT;
-                fx_t y1   = (fx_t)(ry + 1)     << FX_SHIFT;
-                fx_t y2   = (fx_t)(ry + h - 1) << FX_SHIFT;
-                add_partition(x_mid, y1, x_mid, y2);
-            }
-        }
-
         placed++;
     }
 }
 
-static void place_room_pair_clusters(void) {
-    /* Two rooms side-by-side joined by a single-cell door, dropped
-     * into otherwise-unclaimed map space, connected back to the spine
-     * via a snaking corridor. */
-    int target = xs32_range(1, 1 + g_procgen_params.openness);
-    int attempts = target * 5;
-    int placed = 0;
-    while (attempts-- > 0 && placed < target) {
-        int w = xs32_range(3, 4);
-        int h = xs32_range(3, 4);
-        int gap = 1;   /* shared wall between the pair */
-        int total_w = w * 2 + gap;
-        int rx = xs32_range(2, MAP_W - 3 - total_w);
-        int ry = xs32_range(2, MAP_H - 3 - h);
-
-        /* Stay clear of the spine band. */
-        if (ry + h >= spine_y - spine_w && ry <= spine_y + spine_w) continue;
-        if (!in_bounds_room(rx, ry, total_w, h)) continue;
-        if (!region_is_unclaimed(rx, ry, total_w, h)) continue;
-
-        /* Carve room A. */
-        carve_room(rx, ry, w, h);
-        /* Carve room B. */
-        int rx2 = rx + w + gap;
-        carve_room(rx2, ry, w, h);
-        /* Single-cell door between them. */
-        int door_y = ry + xs32_range(0, h - 1);
-        open_cell(rx + w, door_y);
-
-        /* Connect cluster back to spine via an L-shaped corridor from
-         * a random edge cell of room A. */
-        int hook_x = rx + xs32_range(0, w - 1);
-        int hook_y = (ry > spine_y) ? ry - 1 : ry + h;
-        int step = (hook_y > spine_y) ? -1 : 1;
-        for (int cy = hook_y; cy != spine_y; cy += step) {
-            open_cell(hook_x, cy);
-        }
-        open_cell(hook_x, spine_y);
-
+/* Pillar blocks (mostly 1x1, some 2x2) scattered in the open with a clear
+ * margin — structure + sightline breaks that never enclose anything. */
+static void place_pillars(int count) {
+    int placed = 0, attempts = count * 6;
+    while (attempts-- > 0 && placed < count) {
+        int s = ((xs32() & 3) == 0) ? 2 : 1;
+        int px = xs32_range(4, MAP_W - 5 - s);
+        int py = xs32_range(4, MAP_H - 5 - s);
+        if (!footprint_clear(px, py, s, s)) continue;
+        for (int j = 0; j < s; j++)
+            for (int i = 0; i < s; i++) world_map[py + j][px + i] = 1;
         placed++;
     }
 }
 
-static void scatter_pockets(void) {
-    /* Single-cell alcoves perpendicular to the spine. About 1 per 6
-     * corridor cells; just enough to add discoverable nooks. */
-    for (int x = 2; x < MAP_W - 2; x++) {
-        /* More open => more discoverable nooks. */
-        if ((int)(xs32() % 7) > g_procgen_params.openness) continue;
-        int side = (xs32() & 1);
-        int py = (side == 0) ? (spine_y - spine_w) : (spine_y + 1);
-        /* The pocket only lands if it doesn't already open into an
-         * existing carved space (we only want pockets bordered by
-         * walls so they read as nooks, not corridor branches). */
-        if (py < 1 || py >= MAP_H - 1) continue;
-        if (world_map[py][x] == 0) continue;
-        /* Check the cell beyond the pocket is still wall — pockets
-         * should be dead-ends, not shortcuts. */
-        int beyond_y = (side == 0) ? (py - 1) : (py + 1);
-        if (beyond_y < 0 || beyond_y >= MAP_H) continue;
-        if (world_map[beyond_y][x] == 0) continue;
-        open_cell(x, py);
+/* Short free-standing wall stubs (the uncanny "why is this here" backrooms
+ * walls). Clear margin, so they break sightlines without enclosing. */
+static void place_stub_walls(int count) {
+    int placed = 0, attempts = count * 6;
+    while (attempts-- > 0 && placed < count) {
+        int horiz = xs32() & 1;
+        int L = xs32_range(2, 5);
+        int w = horiz ? L : 1, h = horiz ? 1 : L;
+        int sx = xs32_range(4, MAP_W - 5 - w);
+        int sy = xs32_range(4, MAP_H - 5 - h);
+        if (!footprint_clear(sx, sy, w, h)) continue;
+        for (int k = 0; k < L; k++)
+            world_map[sy + (horiz ? 0 : k)][sx + (horiz ? k : 0)] = 1;
+        placed++;
     }
 }
 
@@ -403,12 +326,15 @@ void procgen_run(uint32_t seed) {
         partition_crawl[i]  = 0;   /* solid foot */
     }
 
-    /* Layout (weights scale room/pocket density). */
+    /* Layout: a big open floor with structure dropped into it — open by
+     * construction, never corridor-y. `openness` thins the structure (higher
+     * openness = sparser = more wide-open floor). */
+    int dens = PROCGEN_MAX_W - g_procgen_params.openness;   /* 0 = airy .. 4 = busy */
     fill_walls();
-    carve_spine();
-    place_side_rooms();
-    place_room_pair_clusters();
-    scatter_pockets();
+    carve_open_field();
+    place_enclosed_rooms(xs32_range(5, 8 + dens));
+    place_pillars(xs32_range(10, 14 + dens * 2));
+    place_stub_walls(xs32_range(6, 9 + dens));
     enforce_boundary();
     clear_spawn_vestibule();
     /* The way out: every generated level gets the exit door behind spawn. It
@@ -420,8 +346,8 @@ void procgen_run(uint32_t seed) {
      *  - per-divider spotted/partial-height decor
      *  - low-ceiling crawl tubes carved into 1-wide corridors
      *  - electrical outlets peppered across visible wall faces */
-    scatter_partitions(g_procgen_params.partitions * 2);
+    scatter_partitions(6 + g_procgen_params.partitions * 5);   /* open rooms are defined by dividers now */
     assign_partition_decor();
-    place_crawlspaces(g_procgen_params.crawlspaces);
-    raycast_place_outlets(g_procgen_params.outlets * 3);
+    place_crawlspaces(g_procgen_params.crawlspaces + 1);
+    raycast_place_outlets(g_procgen_params.outlets * 5);
 }

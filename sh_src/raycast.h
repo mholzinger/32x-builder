@@ -3,8 +3,13 @@
 
 #include <stdint.h>
 
-#define MAP_W      32
-#define MAP_H      32
+#define MAP_W      64
+#define MAP_H      64
+/* The hand-authored entry maps (fixed_map, lobby_map) are 32x32. They load into
+ * the top-left of the larger live grid with the rest filled solid wall (they're
+ * self-sealed entry rooms). Procgen fills the full MAP_W x MAP_H. */
+#define AUTH_W     32
+#define AUTH_H     32
 #define SCREEN_W   320
 #define SCREEN_H   224
 
@@ -30,7 +35,7 @@ extern uint8_t world_map[MAP_H][MAP_W];
 
 /* Free-standing wallpaper partitions. Same data shape as in raycast.c.
  * procgen writes into partitions[] / sets num_partitions at boot. */
-#define NUM_PARTITIONS_MAX  12
+#define NUM_PARTITIONS_MAX  32
 typedef struct { fx_t x1, y1, x2, y2; } partition_t;
 extern partition_t partitions[NUM_PARTITIONS_MAX];
 extern int num_partitions;
@@ -72,6 +77,8 @@ void raycast_set_brightness(int lvl);
  * (or before re-calling init_lights) so the lighting grid matches. */
 void raycast_load_fixed(void);
 void raycast_load_lobby(void);
+/* Load a hand-authored map (index into the generated custom_maps[] table). */
+void raycast_load_custom(int idx);
 void raycast_render(void);
 void player_update(uint16_t pad);
 /* 1 when the player has stepped into the open EXIT door — fire the procgen portal. */

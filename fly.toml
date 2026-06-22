@@ -1,0 +1,33 @@
+# fly.io config for the Backrooms 32X map editor.
+# Subdomain: backrooms-32x-project.fly.dev
+# Built from the repo root via tools/map-editor/Dockerfile.fly (self-contained).
+app = 'backrooms-32x-project'
+primary_region = 'ewr'
+
+[build]
+  dockerfile = 'tools/map-editor/Dockerfile.fly'
+
+[env]
+  MAP_HOST = '0.0.0.0'
+  MAP_PORT = '5050'
+  MAP_DEBUG = '0'
+
+[http_service]
+  internal_port = 5050
+  force_https = true
+  auto_stop_machines = 'suspend'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+  [[http_service.checks]]
+    grace_period = '10s'
+    interval = '30s'
+    method = 'GET'
+    timeout = '5s'
+    path = '/health'
+
+[[vm]]
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1

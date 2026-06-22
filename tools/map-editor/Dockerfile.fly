@@ -1,0 +1,28 @@
+# Self-contained image for fly.io (built from the REPO ROOT as context, so it
+# can bundle the data the app reads at runtime — there's no volume mount on fly).
+# Deploy: ./deploy-to-flyio.sh  (or: fly deploy) from the repo root.
+FROM python:3.11-slim
+WORKDIR /app
+
+COPY tools/map-editor/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# The editor app itself.
+COPY tools/map-editor/app.py tools/map-editor/config.py /app/
+COPY tools/map-editor/templates/ /app/templates/
+COPY tools/map-editor/static/ /app/static/
+
+# Repo bits the app reads at runtime (MAP_REPO_ROOT=/repo). export_assets parses
+# the palette + baked textures straight out of these engine sources.
+COPY registry.json /repo/registry.json
+COPY maps/ /repo/maps/
+COPY tools/mapfmt.py tools/export_assets.py /repo/tools/
+COPY sh_src/raycast.c sh_src/wall_tex.h sh_src/partition_tex.h \
+     sh_src/outlet_tex.h sh_src/door_tex.h sh_src/neander_tex.h /repo/sh_src/
+
+EXPOSE 5050
+ENV MAP_HOST=0.0.0.0 \
+    MAP_PORT=5050 \
+    MAP_REPO_ROOT=/repo \
+    PYTHONUNBUFFERED=1
+CMD ["python", "app.py"]

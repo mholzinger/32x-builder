@@ -1,0 +1,18 @@
+# Trim the fly build context (built from the repo root). The Dockerfile.fly
+# only COPYs tools/, maps/, registry.json and a few sh_src sources.
+.git
+rom/
+md_src/
+images/
+srcref/
+build/
+**/__pycache__/
+*.pyc
+*.o
+*.d
+*.elf
+*.lst
+*.bin
+*.32x
+tools/map-editor/docker-compose.yml
+tools/map-editor/Dockerfile

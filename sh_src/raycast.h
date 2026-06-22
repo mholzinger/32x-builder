@@ -3,8 +3,8 @@
 
 #include <stdint.h>
 
-#define MAP_W      64
-#define MAP_H      64
+#define MAP_W      32
+#define MAP_H      32
 /* The hand-authored entry maps (fixed_map, lobby_map) are 32x32. They load into
  * the top-left of the larger live grid with the rest filled solid wall (they're
  * self-sealed entry rooms). Procgen fills the full MAP_W x MAP_H. */

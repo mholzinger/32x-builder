@@ -227,13 +227,51 @@ static void fade_step(int lvl) {
     lastTick = MARS_SYS_COMM12;
 }
 
+/* Fill an 8px-tall selection bar into the text framebuffer — the same muted
+ * LIGHT_BASE+2 (idx 51) shade as the pause-menu highlight, so the lobby start
+ * picker reads consistently. Caller gates the ~10 Hz blink. */
+static void lobby_hl_bar(uint8_t *fb, int x, int y, int w) {
+    for (int yy = 0; yy < 8; yy++) {
+        uint8_t *row = fb + (y + yy) * SCREEN_W + x;
+        for (int xx = 0; xx < w; xx++) row[xx] = 51;
+    }
+}
+
+/* SHOW CONTROLS sub-screen: the title and the controls legend over the frozen
+ * lobby, until any face/START button sends you back to the start menu. */
+static void show_controls_screen(void) {
+    const uint16_t BTNS = SEGA_CTRL_START | SEGA_CTRL_A | SEGA_CTRL_B |
+                          SEGA_CTRL_C | SEGA_CTRL_X | SEGA_CTRL_Y | SEGA_CTRL_Z;
+    HwMdReadPad(0);
+    uint16_t prev = MARS_SYS_COMM8;          /* seed: ignore the button still held */
+    for (;;) {
+        HwMdReadPad(0);
+        uint16_t pad = MARS_SYS_COMM8;
+        uint16_t pressed = (uint16_t)(pad & ~prev);
+        prev = pad;
+        if (pressed & BTNS) break;
+        SHARED_UC->frame_count++;
+        raycast_render();
+        uint8_t *fb = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
+        font_draw_string(fb, (SCREEN_W - 13 * 8) / 2, 32, "BACKROOMS 32X", 49);
+        const int LEG_X = 92;
+        font_draw_string(fb, LEG_X, 78,  "RUN / INTERACT: A", 49);
+        font_draw_string(fb, LEG_X, 92,  "LOOK: C",           49);
+        font_draw_string(fb, LEG_X, 106, "CROUCH: A+B",       49);
+        font_draw_string(fb, LEG_X, 120, "DEBUG STATS: MODE", 49);
+        font_draw_string(fb, LEG_X, 134, "RESOLUTION: X",     49);
+        font_draw_string(fb, (SCREEN_W - 16 * 8) / 2, 170, "ANY BUTTON: BACK", 49);
+        swapBuffers();
+    }
+}
+
 /* Walk-through-the-EXIT-door portal: fade to black, generate a fresh procedural
  * map, drop the player at the standard spawn, fade back up. The "way out" only
  * loops you deeper into the backrooms. Mirrors the lobby walk-through fade. */
 static void portal_to_procgen(void) {
     for (int lvl = FADE_STEPS; lvl >= 0; lvl -= 2) fade_step(lvl);
     procgen_run(SHARED_UC->frame_count * 1000003u + (uint32_t)player.x);
-    player.x = FX(32.5); player.y = FX(60.5); player.angle = 192;
+    player.x = FX(16.5); player.y = FX(28.5); player.angle = 192;
     raycast_init();                 /* rebuilds full-bright palette... */
     raycast_set_brightness(0);      /* ...held black until the fade-in */
     for (int lvl = 0; lvl <= FADE_STEPS; lvl += 2) fade_step(lvl);
@@ -329,68 +367,104 @@ int m_main(void) {
      * dismisses the menu). Phase B: the menu is gone and the choice is
      * locked — you wander the lobby and walk forward into the backrooms
      * to enter the level you picked. */
-    int menu_selection = 0;       /* 0=FIXED 1=PROCEDURAL */
+    int menu_row = 0;             /* cursor row: 0 = map picker, 1 = procedural, 2 = controls */
+    int map_idx  = 0;             /* selected map in custom_maps[] for the row-0 picker */
     uint32_t frame = 0;           /* time-in-lobby — entropy for procgen */
     const uint16_t LOBBY_COMMIT = SEGA_CTRL_START | SEGA_CTRL_A | SEGA_CTRL_B |
                                   SEGA_CTRL_C | SEGA_CTRL_X | SEGA_CTRL_Y | SEGA_CTRL_Z;
 
     /* Phase A — frozen menu over the still photo-perspective. */
     {
-        const int opt_x = (SCREEN_W - 19 * 8) / 2;
         uint16_t prev_pad = 0xFFFF;
         for (;;) {
             HwMdReadPad(0);
             uint16_t pad = MARS_SYS_COMM8;
             uint16_t pressed = (uint16_t)(pad & ~prev_pad);
             prev_pad = pad;
-            if ((pressed & SEGA_CTRL_UP)   && menu_selection > 0) menu_selection--;
-            if ((pressed & SEGA_CTRL_DOWN) && menu_selection < 1 + custom_map_count) menu_selection++;
-            if (pressed & LOBBY_COMMIT) break;   /* confirm, dismiss menu */
+            /* UP/DOWN move the cursor between the 3 rows. LEFT/RIGHT cycle the
+             * start map — but ONLY on the row-0 picker, the "array of maps to
+             * start in". */
+            if ((pressed & SEGA_CTRL_UP)   && menu_row > 0) menu_row--;
+            if ((pressed & SEGA_CTRL_DOWN) && menu_row < 2) menu_row++;
+            if (menu_row == 0 && custom_map_count > 0) {
+                if (pressed & SEGA_CTRL_LEFT)
+                    map_idx = (map_idx + custom_map_count - 1) % custom_map_count;
+                if (pressed & SEGA_CTRL_RIGHT)
+                    map_idx = (map_idx + 1) % custom_map_count;
+            }
+            if (pressed & LOBBY_COMMIT) {
+                /* Row 2 (SHOW CONTROLS) opens its sub-screen and returns here;
+                 * row 0 (the chosen map) and row 1 (procedural) confirm/start. */
+                if (menu_row == 2) {
+                    show_controls_screen();
+                    prev_pad = 0xFFFF;       /* swallow the still-held button */
+                    continue;
+                }
+                break;
+            }
             metrics_mode_check(pad);
             frame++;
 
             SHARED_UC->frame_count++;
             raycast_render();                    /* stationary lobby view */
             uint8_t *fb_text = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
-            font_draw_string(fb_text, (SCREEN_W - 13 * 8) / 2, 88,
+            /* Title. */
+            font_draw_string(fb_text, (SCREEN_W - 13 * 8) / 2, 32,
                              "BACKROOMS 32X", 49);
-            font_draw_string(fb_text, opt_x, 104,
-                             (menu_selection == 0)
-                               ? "> NOCLIP FIXED MAP  "
-                               : "  NOCLIP FIXED MAP  ", 49);
-            font_draw_string(fb_text, opt_x, 120,
-                             (menu_selection == 1)
-                               ? "> NOCLIP PROCEDURAL "
-                               : "  NOCLIP PROCEDURAL ", 49);
-            /* Third line cycles through the compiled-in custom maps (if any):
-             * UP/DOWN past PROCEDURAL steps into them; the line shows the one
-             * that would load. The pause-menu MAPS tab is the fuller browser. */
-            if (custom_map_count > 0) {
-                int ci = (menu_selection >= 2) ? (menu_selection - 2) : 0;
-                char line[21]; int p = 0;
-                line[p++] = (menu_selection >= 2) ? '>' : ' ';
-                line[p++] = ' ';
-                for (const char *nm = custom_maps[ci].name; *nm && p < 19; ) line[p++] = *nm++;
-                while (p < 20) line[p++] = ' ';
+
+            /* Start-map picker — the cursor option is bracketed and sat under a
+             * blinking muted bar (same highlight as the pause menu). UP/DOWN
+             * moves the cursor; any face/START button confirms. SHOW CONTROLS
+             * opens the controls sub-screen rather than starting a map. */
+            const int MENU_X = 88;
+            font_draw_string(fb_text, MENU_X, 60, "START MAP:", 49);
+
+            /* Row 0 — the map picker: an array of maps cycled with LEFT/RIGHT,
+             * the current pick shown in brackets. */
+            {
+                const char *mname = (custom_map_count > 0)
+                                  ? custom_maps[map_idx].name : "BACKROOMS";
+                char line[24]; int p = 0;
+                line[p++] = (menu_row == 0) ? '>' : ' ';
+                line[p++] = ' '; line[p++] = '['; line[p++] = ' ';
+                for (const char *nm = mname; *nm && p < 21; nm++) line[p++] = *nm;
+                line[p++] = ' '; line[p++] = ']';
                 line[p] = '\0';
-                font_draw_string(fb_text, opt_x, 136, line, 49);
+                if (menu_row == 0 && (SHARED_UC->frame_count % 6) < 3) {
+                    int nl = 0; while (mname[nl]) nl++;
+                    lobby_hl_bar(fb_text, MENU_X + 2 * 8, 78, (nl + 4) * 8);
+                }
+                font_draw_string(fb_text, MENU_X, 78, line, 49);
             }
-            font_draw_string(fb_text, (SCREEN_W - 19 * 8) / 2, SCREEN_H - 20,
+
+            /* Rows 1,2 — actions (cursor + highlight, no brackets). */
+            static const char *const acts[2] = { "PROCEDURAL", "SHOW CONTROLS" };
+            for (int i = 0; i < 2; i++) {
+                int row = i + 1, oy = 94 + i * 16;
+                char line[20]; int p = 0;
+                line[p++] = (menu_row == row) ? '>' : ' ';
+                line[p++] = ' ';
+                for (const char *nm = acts[i]; *nm; nm++) line[p++] = *nm;
+                line[p] = '\0';
+                if (menu_row == row && (SHARED_UC->frame_count % 6) < 3) {
+                    int nl = 0; while (acts[i][nl]) nl++;
+                    lobby_hl_bar(fb_text, MENU_X + 2 * 8, oy, nl * 8);
+                }
+                font_draw_string(fb_text, MENU_X, oy, line, 49);
+            }
+
+            font_draw_string(fb_text, (SCREEN_W - 19 * 8) / 2, 140,
                              "ANY BUTTON: CONFIRM", 49);
-            /* Controller-type readout — UNCONDITIONAL (the metrics overlay is
-             * gated behind MODE, a 6-button-only button, so it can't report
-             * this on a pad that fails the 6-button handshake). The high nibble
-             * of the pad word is the type: 6 = six-button detected, 3 = three-
-             * button, ? = none/unknown. Lets us see what each emulator presents. */
+            if (menu_row == 0)
+                font_draw_string(fb_text, (SCREEN_W - 15 * 8) / 2, 156,
+                                 "L/R: CHANGE MAP", 49);
+
+            /* PAD-type readout (debug, top-left): 6/3/? button handshake. */
             uint16_t ptype = pad & SEGA_CTRL_TYPE;
             char padline[8] = { 'P','A','D',':',' ',
                 (ptype == SEGA_CTRL_SIX) ? '6' : (ptype == SEGA_CTRL_THREE) ? '3' : '?',
                 0, 0 };
             font_draw_string(fb_text, 8, 8, padline, 49);
-            /* Crouch is A+B on every pad (X is avoided — emulators bind it to
-             * Left). Metrics overlay lives in the pause menu's LIGHTING tab. */
-            font_draw_string(fb_text, (SCREEN_W - 11 * 8) / 2, SCREEN_H - 32,
-                             "CROUCH: A+B", 49);
             if (g_metrics_on) { prof_sample_and_draw(fb_text); pos_draw(fb_text); }
             swapBuffers();
         }
@@ -400,7 +474,7 @@ int m_main(void) {
      * the player dials the generation mix (or leaves the balanced default)
      * before walking out. UP/DOWN pick a knob, LEFT/RIGHT adjust it, C resets
      * to defaults, START locks it in. Drawn over the live lobby view. */
-    if (menu_selection == 1) {
+    if (menu_row == 1) {
         static const char *const labels[6] = {
             "OPENNESS    ", "PARTITIONS  ", "CRAWLSPACES ",
             "OUTLETS     ", "SPOTTED     ", "SEE-OVER    " };
@@ -454,16 +528,23 @@ int m_main(void) {
         }
     }
 
-    /* Phase B — menu dismissed, choice locked. Walk through the lobby and
-     * into the black doorway (col 7) on the east wall. No prompt. */
+    /* Phase B — menu dismissed, choice locked. Walk up to the black void
+     * (world_map cell == 2, the dark exit doorway along the east wall) and
+     * step through it. */
     {
         for (;;) {
             HwMdReadPad(0);
             uint16_t pad = MARS_SYS_COMM8;
             metrics_mode_check(pad);
             player_update(pad);
-            /* Stepped into the black exit doorway (col 7, rows 2-4). */
-            if (player.x > FX(7) && player.y > FX(1.5) && player.y < FX(5)) break;
+            /* Exit when the player's cell sits against a black-void cell (==2),
+             * any side. Robust to where on the void edge you arrive — the old
+             * fixed x>7 / y<5 box missed the bottom row of the doorway. */
+            int pcx = FX_INT(player.x), pcy = FX_INT(player.y);
+            if ((pcx + 1 < MAP_W && world_map[pcy][pcx + 1] == 2) ||
+                (pcx - 1 >= 0    && world_map[pcy][pcx - 1] == 2) ||
+                (pcy + 1 < MAP_H && world_map[pcy + 1][pcx] == 2) ||
+                (pcy - 1 >= 0    && world_map[pcy - 1][pcx] == 2)) break;
             SHARED_UC->frame_count++;
             raycast_render();
             uint8_t *fb_text = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
@@ -487,11 +568,11 @@ int m_main(void) {
         lastTick = MARS_SYS_COMM12;
     }
 
-    if (menu_selection == 1) {
+    if (menu_row == 1) {
         procgen_run((uint32_t)frame * 1000003u + (uint32_t)player.x);
-        player.x = FX(32.5); player.y = FX(60.5); player.angle = 192;
-    } else if (menu_selection >= 2) {
-        raycast_load_custom(menu_selection - 2);   /* loader sets its own spawn */
+        player.x = FX(16.5); player.y = FX(28.5); player.angle = 192;
+    } else if (custom_map_count > 0) {
+        raycast_load_custom(map_idx);              /* row 0: chosen map; sets its own spawn */
     } else {
         raycast_load_fixed();
     }

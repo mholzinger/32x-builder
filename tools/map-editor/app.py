@@ -13,7 +13,8 @@ import json, os, re, sys
 
 import config
 sys.path.insert(0, config.TOOLS_DIR)
-import mapfmt  # noqa: E402  (shared .map syntax — single source of truth)
+import mapfmt          # noqa: E402  (shared .map syntax — single source of truth)
+import export_assets   # noqa: E402  (palette + textures from the ROM source)
 
 from flask import Flask, jsonify, request, render_template
 
@@ -50,6 +51,16 @@ def index():
 def registry():
     with open(config.REGISTRY) as fh:
         return jsonify(json.load(fh))
+
+
+@app.route("/assets")
+def assets():
+    """The ROM's actual palette (+ base indices) so the preview renders in the
+    game's real colors. Parsed live from raycast.c, so it tracks palette tweaks."""
+    try:
+        return jsonify(export_assets.build_assets(config.REPO_ROOT))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/maps")

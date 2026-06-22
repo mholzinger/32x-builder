@@ -1,7 +1,4 @@
-# backrooms.map - the hand-tuned 32x32 Backrooms map, extracted from the
-# fixed_map[] C literal (dogfood: proves the codegen round-trips a known-good
-# level). Mirrors raycast_load_fixed()'s explicit setup; the 8 procedural
-# place_partitions_fixed() dividers are omitted (only the 2 authored ones).
+# backrooms.map
 name: BACKROOMS
 size: 32x32
 spawn: 16.5, 28.5 facing=N
@@ -44,14 +41,24 @@ spawn: 16.5, 28.5 facing=N
 1,22 dir=S len=5
 
 [partitions]
-22,22 -> 26,22  style=spotted height=low
-20,11 -> 20,14  style=spotted height=low
+22,22 -> 26,22  style=spotted height=low crawl=no
+20,11 -> 20,14  style=spotted height=low crawl=no
 
 [decals]
-outlet 17.0,26.5 face=W z=0.20
-door   16.5,31.0 face=S
+outlet 17,26.5 face=W z=0.2
+door   16.5,31 face=S
+neanderthal 16.3,23.5 face=S
+outlet 4,1.5 face=W z=0.2
+outlet 11,4.5 face=E z=0.2
+outlet 29,6.5 face=W z=0.2
+outlet 12.5,10 face=S z=0.2
+outlet 14,13.5 face=W z=0.2
+outlet 28,16.5 face=E z=0.2
+outlet 24,19.5 face=W z=0.2
+outlet 15,22.5 face=W z=0.2
+outlet 7,26.5 face=E z=0.2
 
 [options]
-place_outlets: 12
+place_outlets: 0
 place_exit_door: 0
 lobby_ceiling: 0

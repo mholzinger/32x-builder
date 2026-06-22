@@ -49,6 +49,12 @@ static uint16_t menu_prev_pad = 0;
 
 #define MENU_BG_COLOR  46   /* CEIL_BASE end = dark eggshell */
 #define MENU_FG_COLOR  49   /* LIGHT_BASE[0] = bright white-ish */
+/* Selection highlight bar: a muted shade off the same LIGHT_BASE white ramp the
+ * text is drawn from (49=full text, 50/51/52 = 75/50/25%). Picking this existing
+ * index only changes which color fills the bar — it never rewrites a palette
+ * entry, so the live 3D view behind the menu is untouched, and the bright text
+ * (49) reads cleanly on top. The bar blinks on/off at ~10 Hz (see hl_blink). */
+#define MENU_HL_BAR    51   /* LIGHT_BASE+2 (50%) */
 
 #define VOL_STEP 16
 
@@ -150,6 +156,25 @@ static void fill_bg(uint8_t *fb) {
     }
 }
 
+/* ~10 Hz blink: on for 3 frames, off for 3 (6-frame period at 60 fps). Tied to
+ * frame_count, not wall-clock. The selection bar is drawn only while this is
+ * true, so it flashes around the focused option. */
+static int hl_blink(void) {
+    return (SHARED_UC->frame_count % 6) < 3;
+}
+
+/* Concise highlight spanning `ncols` 8px character cells starting at character
+ * column `col` (relative to the box left edge), 8px tall. Drawn before the text
+ * so the glyphs (which only stamp set pixels) sit on top of it. Used to frame
+ * just the selected option's word, padded by its leading/trailing space. */
+static void draw_word_hl(uint8_t *fb, int y_off, int col, int ncols, uint8_t color) {
+    int x0 = MENU_X + col * 8;
+    for (int yy = 0; yy < 8; yy++) {
+        uint8_t *row = fb + (MENU_Y + y_off + yy) * SCREEN_W + x0;
+        for (int xx = 0; xx < ncols * 8; xx++) row[xx] = color;
+    }
+}
+
 /* Render one content row with a "> LABEL  VALUE" layout. sel marks
  * which row is currently selected (shows the > prefix). */
 static void draw_row(uint8_t *fb, int y_off, int sel,
@@ -163,6 +188,12 @@ static void draw_row(uint8_t *fb, int y_off, int sel,
     while (label[i] && i < 9) { left[2 + i] = label[i]; i++; }
     while (i < 9) { left[2 + i] = ' '; i++; }
     left[11] = 0;
+    /* Blink a concise bar around just the selected row's label (the label sits
+     * at column 3 inside `left`, after the "> " prefix; pad one space each side). */
+    if (sel && hl_blink()) {
+        int ll = 0; while (label[ll]) ll++;
+        draw_word_hl(fb, y_off, 2, ll + 2, MENU_HL_BAR);
+    }
     font_draw_string(fb, X + 8,        Y + y_off, left,  MENU_FG_COLOR);
     font_draw_string(fb, X + 8 * 13,   Y + y_off, value, MENU_FG_COLOR);
 }
@@ -178,27 +209,34 @@ void menu_render(uint8_t *fb) {
     font_draw_string(fb, X, Y,      "+--------------------+", MENU_FG_COLOR);
     font_draw_string(fb, X, Y + 72, "+--------------------+", MENU_FG_COLOR);
 
-    /* Tab row at y=16: "|AUDIO| LIGHTING" or "AUDIO |LIGHTING|" —
-     * the bar-wrapped one is the active tab. > prefix marks the tab
-     * row as selected; LEFT/RIGHT switches when on this row. */
-    const char *tab_text;
-    int tab_sel = (menu_row == 0);
-    switch (menu_tab) {
-    case TAB_AUDIO:
-        tab_text = tab_sel ? "> |AUDIO| LIGHTING" : "  |AUDIO| LIGHTING";
-        break;
-    case TAB_LIGHTING:
-        tab_text = tab_sel ? "> AUDIO |LIGHTING|" : "  AUDIO |LIGHTING|";
-        break;
-    case TAB_VISUALS:
-        tab_text = tab_sel ? "> LIGHTING |VISUALS|" : "  LIGHTING |VISUALS|";
-        break;
-    case TAB_CREDITS:
-        tab_text = tab_sel ? "> VISUALS |CREDITS|" : "  VISUALS |CREDITS|";
-        break;
-    default: /* TAB_MAPS */
-        tab_text = tab_sel ? "> CREDITS |MAPS|" : "  CREDITS |MAPS|";
-        break;
+    /* Tab row at y=16: the > cursor points at the active tab, with the next
+     * tab in the cycle shown after a pipe separator — e.g. "> AUDIO |
+     * LIGHTING |". Reads as "AUDIO is selected; LIGHTING is next". The >
+     * shows only when the tab row is focused (menu_row == 0), so it doubles
+     * as the focus marker; LEFT/RIGHT cycles tabs there. The active tab is
+     * always leftmost, so it stays clear even with the cursor hidden. */
+    static const char *const tab_names[NUM_TABS] = {
+        "AUDIO", "LIGHTING", "VISUALS", "CREDITS", "MAPS" };
+    int tab_sel  = (menu_row == 0);
+    int next_tab = (menu_tab + 1) % NUM_TABS;
+    char tab_text[24];
+    int t = 0;
+    tab_text[t++] = tab_sel ? '>' : ' ';
+    tab_text[t++] = ' ';
+    for (const char *p = tab_names[menu_tab]; *p; p++) tab_text[t++] = *p;
+    tab_text[t++] = ' ';
+    tab_text[t++] = '|';
+    tab_text[t++] = ' ';
+    for (const char *p = tab_names[next_tab]; *p; p++) tab_text[t++] = *p;
+    tab_text[t++] = ' ';
+    tab_text[t++] = '|';
+    tab_text[t]   = 0;
+    /* Blink a concise bar around just the active tab name (leading/trailing
+     * space included) while the tab row is focused — name starts at column 2,
+     * after the "> " prefix. */
+    if (tab_sel && hl_blink()) {
+        int wl = 0; while (tab_names[menu_tab][wl]) wl++;
+        draw_word_hl(fb, 16, 1, wl + 2, MENU_HL_BAR);
     }
     font_draw_string(fb, X, Y + 16, tab_text, MENU_FG_COLOR);
 
@@ -248,6 +286,10 @@ void menu_render(uint8_t *fb) {
                 line[p++] = ' ';
                 for (const char *nm = custom_maps[mi].name; *nm && p < 18; ) line[p++] = *nm++;
                 line[p] = 0;
+                /* Blink a concise bar around the selected map name (name starts
+                 * at column 3; p-2 chars long, padded one space each side). */
+                if (menu_row == mi + 1 && hl_blink())
+                    draw_word_hl(fb, 32 + 8 * i, 2, p, MENU_HL_BAR);
                 font_draw_string(fb, X + 8, Y + 32 + 8 * i, line, MENU_FG_COLOR);
             }
         }

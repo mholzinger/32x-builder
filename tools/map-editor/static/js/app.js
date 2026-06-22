@@ -13,6 +13,7 @@ const ME = {
   cell: 22,
   glyphForVal: {}, colorForVal: {},
 };
+window.ME = ME;   // shared with the raycaster preview (raycast.js)
 
 const $ = s => document.querySelector(s);
 const canvas = $('#grid'), ctx = canvas.getContext('2d');
@@ -40,6 +41,49 @@ function runCells(c) {
   const out = [];
   for (let i = 0; i < c.len; i++) out.push([c.cx + dx * i, c.cy + dy * i]);
   return out;
+}
+function setLight(cx, cy, add) {
+  if (!ME.model.lights) ME.model.lights = [];
+  if (cx < 0 || cy < 0 || cx >= ME.model.w || cy >= ME.model.h) return;
+  const i = ME.model.lights.findIndex(l => l.cx === cx && l.cy === cy);
+  if (add && i < 0) ME.model.lights.push({ cx, cy });
+  else if (!add && i >= 0) ME.model.lights.splice(i, 1);
+}
+function seedLights() {                // the engine's auto-grid as a starting point
+  const m = ME.model; m.lights = [];
+  for (let my = 1; my < m.h - 1; my += 2)
+    for (let mx = 1; mx < m.w - 1; mx += 2)
+      if (gridVal(mx, my) === 0) m.lights.push({ cx: mx, cy: my });
+}
+function bakeOutlets() {               // place_outlets:N -> explicit decals (the engine rule)
+  const m = ME.model;
+  const target = (m.options && m.options.place_outlets) | 0;
+  let num = m.decals.length;
+  if (target <= num) return 0;
+  let count = 0;
+  for (let y = 1; y < m.h - 1; y++) for (let x = 1; x < m.w - 1; x++) {
+    if (gridVal(x, y) === 0) continue;
+    if (gridVal(x-1,y)===0 || gridVal(x+1,y)===0 || gridVal(x,y-1)===0 || gridVal(x,y+1)===0) count++;
+  }
+  if (count === 0) return 0;
+  const stride = Math.max(1, Math.floor(count / (target - num)));
+  let seen = 0, added = 0;
+  for (let y = 1; y < m.h - 1 && num < target; y++)
+    for (let x = 1; x < m.w - 1 && num < target; x++) {
+      if (gridVal(x, y) === 0) continue;
+      let face, ox, oy;
+      if (gridVal(x-1,y)===0)      { face='W'; ox=x;     oy=y+0.5; }
+      else if (gridVal(x+1,y)===0) { face='E'; ox=x+1;   oy=y+0.5; }
+      else if (gridVal(x,y-1)===0) { face='N'; ox=x+0.5; oy=y; }
+      else if (gridVal(x,y+1)===0) { face='S'; ox=x+0.5; oy=y+1; }
+      else continue;
+      const place = (seen % stride === 0); seen++;
+      if (!place) continue;
+      m.decals.push({ kind: 'outlet', x: ox, y: oy, z: 0.20, face });
+      num++; added++;
+    }
+  m.options.place_outlets = 0;
+  return added;
 }
 function fitCell() {
   const n = Math.max(ME.model.w, ME.model.h);
@@ -78,6 +122,10 @@ function draw() {
   }
 
   for (const d of ME.model.decals) drawDecal(d);
+  if (ME.model.lights) {                          // ceiling light fixtures
+    ctx.fillStyle = '#fff7d0';
+    for (const l of ME.model.lights) ctx.fillRect(l.cx * cs + cs * 0.28, l.cy * cs + cs * 0.28, cs * 0.44, cs * 0.44);
+  }
   drawSpawn(ME.model.spawn);
 
   if (ME.partPending) dot(ME.partPending.x, ME.partPending.y, '#fff');
@@ -96,7 +144,8 @@ function drawDecal(d) {
   ctx.beginPath(); ctx.arc(d.x * cs, d.y * cs, cs * 0.22, 0, 7); ctx.fill();
   ctx.fillStyle = '#000'; ctx.font = Math.round(cs * 0.42) + 'px monospace';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(d.kind === 'door' ? 'D' : '⊙', d.x * cs, d.y * cs);
+  const g = d.kind === 'door' ? 'D' : d.kind === 'neanderthal' ? 'N' : '⊙';
+  ctx.fillText(g, d.x * cs, d.y * cs);
 }
 function drawSpawn(s) {
   const cs = ME.cell, x = s.x * cs, y = s.y * cs;
@@ -107,7 +156,7 @@ function drawSpawn(s) {
 }
 
 /* ---------- input ---------- */
-let painting = false, paintVal = 0;
+let painting = false, paintVal = 0, lightAdd = true;
 function evCell(e) {
   const r = canvas.getBoundingClientRect();
   const wx = (e.clientX - r.left) / ME.cell, wy = (e.clientY - r.top) / ME.cell;
@@ -125,22 +174,35 @@ function wireCanvas() {
       case 'spawn':
         if (!right) { ME.model.spawn.x = cx + 0.5; ME.model.spawn.y = cy + 0.5; } break;
       case 'decal':
-        right ? deleteNearest(ME.model.decals, d => Math.hypot(d.x - wx, d.y - wy)) : placeDecal(wx, wy); break;
+        right ? deleteNearest(ME.model.decals, d => Math.hypot(d.x - wx, d.y - wy), 1.0) : placeDecal(wx, wy); break;
       case 'partition':
-        right ? deleteNearest(ME.model.partitions, p => distSeg(wx, wy, p)) : clickPartition(wx, wy); break;
+        if (right) {                                   // right-click ends the chain, else deletes
+          if (ME.partPending) ME.partPending = null;
+          else deleteNearest(ME.model.partitions, p => distSeg(wx, wy, p));
+        } else clickPartition(wx, wy);
+        break;
       case 'crawl':
         right ? deleteCrawlAt(cx, cy) : clickCrawl(cx, cy); break;
+      case 'lights':
+        painting = true; lightAdd = !right; setLight(cx, cy, lightAdd); break;
     }
     draw();
   };
   canvas.onmousemove = e => {
     const { cx, cy } = evCell(e);
     $('#coords').textContent = cx + ',' + cy;
-    if (painting && ME.layer === 'grid') { setGridVal(cx, cy, paintVal); draw(); }
+    if (!painting) return;
+    if (ME.layer === 'grid') { setGridVal(cx, cy, paintVal); draw(); }
+    else if (ME.layer === 'lights') { setLight(cx, cy, lightAdd); draw(); }
   };
   window.addEventListener('mouseup', () => { painting = false; });
 }
 function placeDecal(wx, wy) {
+  const kind = ME.reg.decals.kinds.find(k => k.id === ME.decalKind);
+  if (kind && kind.standalone) {            // free-standing billboard (neanderthal): no wall snap
+    ME.model.decals.push({ kind: ME.decalKind, x: Math.floor(wx) + 0.5, y: Math.floor(wy) + 0.5, face: 'N' });
+    return;
+  }
   const cx = Math.floor(wx), cy = Math.floor(wy), fx = wx - cx, fy = wy - cy;
   const d = { N: fy, S: 1 - fy, W: fx, E: 1 - fx };
   let face = 'N', best = 9;
@@ -154,22 +216,28 @@ function clickPartition(wx, wy) {
   const px = Math.round(wx), py = Math.round(wy);
   if (!ME.partPending) { ME.partPending = { x: px, y: py }; return; }
   const a = ME.partPending;
-  if (a.x !== px || a.y !== py)
+  if (a.x !== px || a.y !== py) {
     ME.model.partitions.push({
       x1: a.x, y1: a.y, x2: px, y2: py,
       style: ME.partStyle, height: ME.partHeight, crawl: ME.partCrawl
     });
-  ME.partPending = null;
+    ME.partPending = { x: px, y: py };   // CHAIN: keep going for connected walls
+  }
 }
 function clickCrawl(cx, cy) {
   if (!ME.crawlPending) { ME.crawlPending = { cx, cy }; return; }
   const s = ME.crawlPending;
+  let run = null;
   if (s.cy === cy) {
     const a = Math.min(s.cx, cx), b = Math.max(s.cx, cx);
-    ME.model.crawls.push({ cx: a, cy, dir: 'E', len: b - a + 1 });
+    run = { cx: a, cy, dir: 'E', len: b - a + 1 };
   } else if (s.cx === cx) {
     const a = Math.min(s.cy, cy), b = Math.max(s.cy, cy);
-    ME.model.crawls.push({ cx, cy: a, dir: 'S', len: b - a + 1 });
+    run = { cx, cy: a, dir: 'S', len: b - a + 1 };
+  }
+  if (run) {
+    ME.model.crawls.push(run);
+    for (const [x, y] of runCells(run)) setGridVal(x, y, 0);   // a crawl tunnel is open floor
   }
   ME.crawlPending = null;
 }
@@ -191,7 +259,7 @@ function distSeg(px, py, p) {                 /* point-to-segment distance */
 
 /* ---------- sidebar ---------- */
 function buildLayers() {
-  const layers = [['grid', 'Grid'], ['crawl', 'Crawlspace'],
+  const layers = [['grid', 'Grid'], ['crawl', 'Crawlspace'], ['lights', 'Lights'],
     ['partition', 'Partitions'], ['decal', 'Decals'], ['spawn', 'Spawn']];
   const c = $('#layers'); c.innerHTML = '';
   for (const [id, label] of layers) {
@@ -231,6 +299,14 @@ function buildPalette() {
     t.textContent = 'Decal kind';
     for (const k of ME.reg.decals.kinds)
       p.appendChild(paletteBtn(k.label, k.color, ME.decalKind === k.id, () => ME.decalKind = k.id));
+    const po = ME.model.options && ME.model.options.place_outlets;
+    if (po > 0) {                       // make the engine's procedural outlets real + editable
+      const bake = document.createElement('button');
+      bake.textContent = 'Bake procedural outlets';
+      bake.style.marginTop = '8px';
+      bake.onclick = () => { const n = bakeOutlets(); status('baked ' + n + ' outlets'); draw(); buildPalette(); };
+      p.appendChild(bake);
+    }
   } else if (ME.layer === 'partition') {
     t.textContent = 'Partition';
     p.appendChild(choiceRow('Style', Object.keys(ME.reg.partition.style), () => ME.partStyle, v => ME.partStyle = v));
@@ -240,6 +316,20 @@ function buildPalette() {
     t.textContent = 'Spawn facing';
     for (const f of ['N', 'E', 'S', 'W'])
       p.appendChild(paletteBtn(f, null, ME.model && ME.model.spawn.facing === f, () => ME.model.spawn.facing = f));
+  } else if (ME.layer === 'lights') {
+    t.textContent = 'Ceiling lights';
+    const n = document.createElement('p');
+    n.style.color = 'var(--ink)';
+    n.textContent = 'Left-drag to place ceiling-light fixtures, right-drag to remove. The preview renders the panels + their light pools. (Empty = the engine auto-grid default.)';
+    p.appendChild(n);
+    const seed = document.createElement('button');
+    seed.textContent = 'Seed from auto-grid';
+    seed.onclick = () => { seedLights(); draw(); buildPalette(); };
+    p.appendChild(seed);
+    const clr = document.createElement('button');
+    clr.textContent = 'Clear all';
+    clr.onclick = () => { ME.model.lights = []; draw(); };
+    p.appendChild(clr);
   } else {
     t.textContent = 'Crawlspace';
     const n = document.createElement('p');
@@ -281,11 +371,14 @@ function wireFileBar() {
   $('#btn-save').onclick = doSave;
   $('#btn-reload').onclick = () => { if (ME.name) doLoad(ME.name); };
   $('#map-list').onchange = e => { if (e.target.value) doLoad(e.target.value); };
+  $('#btn-walk').onclick = () => window.RC.start();
+  $('#btn-exit-preview').onclick = () => window.RC.stop();
 }
 
 /* ---------- init ---------- */
 async function init() {
   ME.reg = await jget('/registry');
+  ME.assets = await jget('/assets');   // real ROM palette + base indices (for the Walk preview)
   for (const c of ME.reg.cells.palette) {
     ME.glyphForVal[c.value] = c.glyph; ME.colorForVal[c.value] = c.color;
   }

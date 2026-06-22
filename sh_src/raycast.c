@@ -600,14 +600,19 @@ static void init_lights(void) {
     SHARED_UC->cell_light_gen++;
 }
 
-/* Secondary: purge cell_light once per map-load (gen change) before the wall
- * pass, so CELL_LIGHT reads stay cache-warm across frames yet coherent across
- * loads. Primary never calls this — it wrote cell_light, so its cache is current. */
+/* Secondary: purge cell_light AND world_map once per map-load (gen change)
+ * before the wall pass, so reads stay cache-warm across frames yet coherent
+ * across loads. The primary writes both (procgen_run / the loaders), so its
+ * cache is current and it never calls this. Without the world_map purge the
+ * secondary renders the PREVIOUS map's grid on its screen half until the lines
+ * happen to evict — most visibly the lobby's black-void (==2) cells bleeding
+ * into the next procgen level. */
 void raycast_purge_cell_light(void) {
     static uint8_t seen_gen = 0xFF;
     uint8_t g = SHARED_UC->cell_light_gen;
     if (g != seen_gen) {
         purge_cache_range(cell_light, sizeof cell_light);
+        purge_cache_range(world_map,  sizeof world_map);
         seen_gen = g;
     }
 }
@@ -1113,7 +1118,7 @@ void raycast_load_custom(int idx) {
  * (never sealed off). procgen calls this so every generated level has a hidden
  * way out — which only ever opens into the next generated level. */
 void raycast_place_exit_door(void) {
-    const int SPAWN_CX = 32, SPAWN_CY = 60;   /* must match procgen.c */
+    const int SPAWN_CX = 16, SPAWN_CY = 28;   /* must match procgen.c */
     static uint8_t  reach[MAP_H][MAP_W];
     static uint16_t queue[MAP_H * MAP_W];
     for (int y = 0; y < MAP_H; y++)
@@ -1167,6 +1172,16 @@ void raycast_place_exit_door(void) {
  * has stepped into its doorway — the cue for the game loop to fade through into
  * a fresh procedurally generated map. The "exit" only loops you deeper in. */
 int raycast_door_portal_check(void) {
+    /* Black-void exit (world_map cell == 2 — e.g. the lobby's dark doorway):
+     * no hinged door to open, so stepping against the void cell portals out
+     * immediately. This is what makes the lobby exit work when it's re-entered
+     * as a live map mid-game (MAPS-tab warp), not just in the intro Phase B. */
+    int pcx = FX_INT(player.x), pcy = FX_INT(player.y);
+    if ((pcx + 1 < MAP_W && world_map[pcy][pcx + 1] == 2) ||
+        (pcx - 1 >= 0    && world_map[pcy][pcx - 1] == 2) ||
+        (pcy + 1 < MAP_H && world_map[pcy + 1][pcx] == 2) ||
+        (pcy - 1 >= 0    && world_map[pcy - 1][pcx] == 2)) return 1;
+    /* Hinged exit door (procgen / fixed maps): must be opened, then stepped into. */
     if (g_door_open < DOOR_OPEN_MAX * 3 / 4) return 0;
     for (int d = 0; d < num_decals; d++) {
         if (decals[d].kind != 1) continue;

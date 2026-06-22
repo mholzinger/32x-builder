@@ -25,6 +25,7 @@
     <span class="sep"></span>
     <label>Name <input id="map-name" maxlength="16" size="14" placeholder="MYMAP"></label>
     <button id="btn-save" class="primary">Save .map</button>
+    <button id="btn-walk" title="Walk the current map in a first-person preview">▶ Walk</button>
     <span id="status"></span>
   </div>
 </header>
@@ -46,7 +47,7 @@
         <li><b>Right-click</b> erase / delete</li>
         <li>Grid: click cells</li>
         <li>Decals: click a wall <i>edge</i></li>
-        <li>Partitions: click 2 corners</li>
+        <li>Partitions: click corners (chains); right-click ends</li>
         <li>Crawl: click 2 cells (same row/col)</li>
         <li>Spawn: click a cell, set facing</li>
       </ul>
@@ -59,6 +60,15 @@
   </section>
 </main>
 
+<div id="preview">
+  <canvas id="pv-canvas"></canvas>
+  <div class="pv-help">
+    <span><b>W/S</b> move · <b>A/D</b> strafe · <b>←/→</b> or <b>Q/E</b> turn · <b>Esc</b> exit</span>
+    <button id="btn-exit-preview">✕ Exit preview</button>
+  </div>
+</div>
+
+<script src="/static/js/raycast.js"></script>
 <script src="/static/js/app.js"></script>
 </body>
 </html>

@@ -69,9 +69,9 @@ static int prob(int weight) {
  * ───────────────────────────────────────────────────────────────────── */
 
 /* Player spawn cell. The spine corridor passes through this row. Near the
- * bottom-centre of the 64x64 grid so the map opens out to the north. */
-#define SPAWN_CX 32
-#define SPAWN_CY 60
+ * bottom-centre of the 32x32 grid so the map opens out to the north. */
+#define SPAWN_CX 16
+#define SPAWN_CY 28
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
 
@@ -346,7 +346,13 @@ void procgen_run(uint32_t seed) {
      *  - per-divider spotted/partial-height decor
      *  - low-ceiling crawl tubes carved into 1-wide corridors
      *  - electrical outlets peppered across visible wall faces */
-    scatter_partitions(6 + g_procgen_params.partitions * 5);   /* open rooms are defined by dividers now */
+    /* Free-standing dividers define the open rooms. Each one is rendered per
+     * visible-face per screen-column every frame, so on the 32x32 grid (where
+     * the small footprint keeps most of them in view down the open sightlines)
+     * a high count is the dominant per-frame cost and tanks the frame rate on
+     * busy seeds. Scaled down from the 64x64 tuning (was 6 + p*5, up to ~26)
+     * to 4 + p*3 (up to 16) so even max-divider maps stay inside the budget. */
+    scatter_partitions(4 + g_procgen_params.partitions * 3);
     assign_partition_decor();
     place_crawlspaces(g_procgen_params.crawlspaces + 1);
     raycast_place_outlets(g_procgen_params.outlets * 5);

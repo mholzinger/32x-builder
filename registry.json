@@ -34,8 +34,15 @@
     "face_axis": { "N": 1, "S": 1, "E": 0, "W": 0 },
     "kinds": [
       { "id": "outlet", "kind": 0, "z": 0.20, "glyph": "⊟", "color": "#d8c070", "label": "Electrical outlet" },
-      { "id": "door",   "kind": 1, "z": 0.49, "glyph": "▯", "color": "#8a5a3a", "label": "Exit door (swinging, EXIT sign)" }
+      { "id": "door",   "kind": 1, "z": 0.49, "glyph": "▯", "color": "#8a5a3a", "label": "Exit door (swinging, EXIT sign)" },
+      { "id": "neanderthal", "kind": 2, "z": 0.45, "glyph": "🗿", "color": "#a87850", "label": "Neanderthal standup (free-standing billboard)", "standalone": true }
     ]
+  },
+
+  "light": {
+    "_doc": "ceiling light fixture placed per-cell in the editor's Lights layer (the bright fluorescent panel + its 3x3 cell_light pool). The engine auto-derives lights today, so authored lights are editor/preview-only until per-map light support lands in the ROM.",
+    "glyph": "☀",
+    "color": "#fff7d0"
   },
 
   "limits": {

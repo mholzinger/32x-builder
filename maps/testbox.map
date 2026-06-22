@@ -30,6 +30,7 @@ spawn: 8.5, 12.5 facing=N        # looks north (-Y) into the room; door behind
 [decals]                         # face=N|S|E|W picks the wall plane
 outlet 1.0,12.5 face=W z=0.20
 door   8.0,15.0 face=S
+neanderthal 8.5,6.5
 
 [options]
 place_outlets: 0

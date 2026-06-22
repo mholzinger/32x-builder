@@ -47,14 +47,14 @@ def new_model(name="UNTITLED", w=16, h=16):
     return {
         "name": name, "w": w, "h": h,
         "spawn": {"x": w / 2.0, "y": h - 2.5, "facing": "N"},
-        "grid": grid, "crawls": [], "partitions": [], "decals": [],
+        "grid": grid, "crawls": [], "partitions": [], "decals": [], "lights": [],
         "options": {"place_outlets": 0, "place_exit_door": 0, "lobby_ceiling": 0},
     }
 
 
 def parse(text):
     m = {"name": None, "w": None, "h": None, "spawn": None,
-         "grid": [], "crawls": [], "partitions": [], "decals": [],
+         "grid": [], "crawls": [], "partitions": [], "decals": [], "lights": [],
          "options": {"place_outlets": 0, "place_exit_door": 0, "lobby_ceiling": 0}}
     section = None
 
@@ -138,6 +138,12 @@ def parse(text):
                 d["z"] = float(kw["z"])
             m["decals"].append(d)
 
+        elif section in ("light", "lights"):
+            pos, kw = _kv(line.replace(",", " ").split())
+            if len(pos) < 2:
+                err(n, "light needs cx cy")
+            m["lights"].append({"cx": int(pos[0]), "cy": int(pos[1])})
+
         elif section == "options":
             key, _, val = line.partition(":")
             key = key.strip().lower()
@@ -194,6 +200,11 @@ def serialize(model):
             z = (" z=%s" % _num(d["z"])) if "z" in d and d["z"] is not None else ""
             L.append("%-6s %s,%s face=%s%s" % (d["kind"], _num(d["x"]), _num(d["y"]),
                                                d["face"], z))
+        L.append("")
+    if m.get("lights"):
+        L.append("[lights]")
+        for g in m["lights"]:
+            L.append("%d,%d" % (g["cx"], g["cy"]))
         L.append("")
     L.append("[options]")
     for k in ("place_outlets", "place_exit_door", "lobby_ceiling"):

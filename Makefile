@@ -161,7 +161,16 @@ $(TARGET).elf: $(SHOBJS) | $(ROMDIR)
 $(ROMDIR):
 	@mkdir -p $(ROMDIR)
 
-sh_src/%.o: sh_src/%.s 
+# sh_src/mars_start.s embeds the assembled 68000 boot blob via
+# `.incbin "md_start.bin"`, which the assembler resolves on -Ish_src. Stage it
+# there from the MD build output and make the SH startup depend on it, so a clean
+# build (CI, fresh checkout) orders the MD side first instead of relying on a
+# stale leftover copy.
+sh_src/md_start.bin: $(MDTARGET).bin
+	@cp $< $@
+sh_src/mars_start.o: sh_src/md_start.bin
+
+sh_src/%.o: sh_src/%.s
 	@echo "SHAS $<"
 	@$(SHAS) $(SHASFLAGS) $< -o $@
 
@@ -225,4 +234,5 @@ clean:
 	rm -f $(MDTARGET).bin $(MDTARGET).elf $(MDTARGET).lst
 	rm -f $(TARGET).32x $(TARGET).elf $(TARGET).lst
 	rm -f m68k_crt0.bin.o m68k_crt0.bin
+	rm -f sh_src/md_start.bin
 	rm -f sh_src/version.h sh_src/version.h.tmp

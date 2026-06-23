@@ -45,7 +45,7 @@ def new_model(name="UNTITLED", w=16, h=16):
         else:
             grid.append("#" + "." * (w - 2) + "#")
     return {
-        "name": name, "w": w, "h": h,
+        "name": name, "w": w, "h": h, "role": "community", "canon": "", "author": "",
         "spawn": {"x": w / 2.0, "y": h - 2.5, "facing": "N"},
         "grid": grid, "crawls": [], "partitions": [], "decals": [], "lights": [],
         "options": {"place_outlets": 0, "place_exit_door": 0, "lobby_ceiling": 0},
@@ -53,7 +53,8 @@ def new_model(name="UNTITLED", w=16, h=16):
 
 
 def parse(text):
-    m = {"name": None, "w": None, "h": None, "spawn": None,
+    m = {"name": None, "w": None, "h": None, "role": "community", "canon": "", "author": "",
+         "spawn": None,
          "grid": [], "crawls": [], "partitions": [], "decals": [], "lights": [],
          "options": {"place_outlets": 0, "place_exit_door": 0, "lobby_ceiling": 0}}
     section = None
@@ -97,6 +98,12 @@ def parse(text):
                     err(n, "spawn needs x y")
                 m["spawn"] = {"x": float(pos[0]), "y": float(pos[1]),
                               "facing": kw.get("facing", "S").upper()}
+            elif key == "role":
+                m["role"] = val.lower()
+            elif key == "canon":
+                m["canon"] = val
+            elif key == "author":
+                m["author"] = val
             else:
                 err(n, "unknown header key %r" % key)
 
@@ -178,8 +185,11 @@ def serialize(model):
          "name: %s" % m["name"],
          "size: %dx%d" % (m["w"], m["h"]),
          "spawn: %s, %s facing=%s" % (_num(m["spawn"]["x"]), _num(m["spawn"]["y"]),
-                                      m["spawn"]["facing"]),
-         "", "[grid]"]
+                                      m["spawn"]["facing"])]
+    if m.get("role"):   L.append("role: %s" % m["role"])
+    if m.get("canon"):  L.append("canon: %s" % m["canon"])
+    if m.get("author"): L.append("author: %s" % m["author"])
+    L += ["", "[grid]"]
     L.extend(m["grid"])
     L.append("")
     if m["crawls"]:

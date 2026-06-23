@@ -45,6 +45,14 @@
     "color": "#fff7d0"
   },
 
+  "roles": {
+    "_doc": "Map roles. 'protected' = canonical (lives in maps/core/, the editor clones on edit, CODEOWNERS-gated in PRs). 'picker' = appears in the in-game start-menu picker + pause MAPS tab. 'priority' orders custom_maps[] (lower first) so pickable maps sort before the lobby and the engine just bounds the picker on custom_pick_count. 'folder' is where the role lives.",
+    "starter":   { "priority": 0, "protected": true,  "picker": true,  "folder": "core" },
+    "play":      { "priority": 1, "protected": true,  "picker": true,  "folder": "core" },
+    "community": { "priority": 2, "protected": false, "picker": true,  "folder": "community" },
+    "lobby":     { "priority": 3, "protected": true,  "picker": false, "folder": "core" }
+  },
+
   "limits": {
     "_doc": "must match the engine caps; the codegen rejects maps that exceed these",
     "max_dim": 64,

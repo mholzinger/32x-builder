@@ -15,7 +15,8 @@ import argparse, glob, json, os, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-import mapfmt   # noqa: E402  (shared .map syntax)
+import mapfmt      # noqa: E402  (shared .map syntax)
+import lint_maps   # noqa: E402  (build gate: maps + assets)
 
 
 def die(msg):
@@ -95,11 +96,17 @@ def resolve(path, reg):
         if len(lst) > lim[cap]:
             die("%s: %d items exceed %s %d" % (base, len(lst), cap, lim[cap]))
 
+    roles = reg.get("roles", {})
+    role = m.get("role", "community")
+    if role not in roles:
+        die("%s: unknown role %r (valid: %s)" % (base, role, ", ".join(sorted(roles))))
     return {"name": m["name"], "w": w, "h": h, "cells": cells, "parts": parts,
             "decals": decals, "crawls": crawls, "spawn": spawn,
             "lobby_ceiling": m["options"]["lobby_ceiling"],
             "place_outlets": m["options"]["place_outlets"],
-            "place_exit_door": m["options"]["place_exit_door"]}
+            "place_exit_door": m["options"]["place_exit_door"],
+            "role": role, "priority": roles[role]["priority"], "picker": roles[role]["picker"],
+            "folder": roles[role]["folder"]}
 
 
 def emit(maps, out_path):
@@ -146,10 +153,20 @@ def emit(maps, out_path):
                       m["lobby_ceiling"], m["place_outlets"], m["place_exit_door"]))
         L.append("};")
         L.append("const int custom_map_count = (int)(sizeof custom_maps / sizeof custom_maps[0]);")
+        # pickable maps are ordered first (by role priority), so the in-game
+        # picker just bounds on this; the lobby sits past it (not selectable).
+        L.append("const int custom_pick_count = %d;" % sum(1 for m in maps if m.get("picker")))
+        # core (starter/play) pickable maps sort before community ones, so this
+        # split lets the start menu list a separate Community section: core maps
+        # are [0, custom_core_count), community [custom_core_count, custom_pick_count).
+        L.append("const int custom_core_count = %d;" %
+                 sum(1 for m in maps if m.get("picker") and m["folder"] == "core"))
     else:
-        L.append("/* no maps/*.map found */")
+        L.append("/* no maps found */")
         L.append("const custom_map_t custom_maps[1] = {{0}};")
         L.append("const int custom_map_count = 0;")
+        L.append("const int custom_pick_count = 0;")
+        L.append("const int custom_core_count = 0;")
     L.append("")
     text = "\n".join(L)
 
@@ -173,8 +190,19 @@ def main():
 
     with open(args.registry) as fh:
         reg = json.load(fh)
-    files = sorted(glob.glob(os.path.join(args.maps, "*.map")))
+
+    # Gate the build on the shared lint (maps + assets). The same tool runs in
+    # CI on every PR; failing here keeps a broken map/asset out of the ROM.
+    errs = lint_maps.lint_all(args.maps, reg, os.path.join(ROOT, "sh_src"))
+    if errs:
+        for x in errs:
+            sys.stderr.write("gen_maps: lint: %s\n" % x)
+        die("%d lint problem(s) — fix the map(s)/asset(s) above" % len(errs))
+
+    files = glob.glob(os.path.join(args.maps, "**", "*.map"), recursive=True)
     maps = [resolve(p, reg) for p in files]
+    # order: by role priority (pickable first, lobby last), then name -> stable
+    maps.sort(key=lambda m: (m["priority"], m["name"]))
     emit(maps, args.out)
 
 

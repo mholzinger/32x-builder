@@ -2,6 +2,7 @@
 name: TESTBOX
 size: 16x16
 spawn: 8.5, 12.5 facing=N        # looks north (-Y) into the room; door behind
+role: play
 
 [grid]                           # . open   # wall   X black-exit void
 ################

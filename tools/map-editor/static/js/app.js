@@ -340,39 +340,101 @@ function buildPalette() {
 }
 
 /* ---------- file bar ---------- */
+function syncName() {
+  const name = ($('#map-name').value.trim() || ME.model.name || 'untitled');
+  ME.model.name = name.toUpperCase().slice(0, 16);
+  return name.toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'untitled';
+}
 async function refreshList() {
   const r = await jget('/maps'); const sel = $('#map-list');
   sel.innerHTML = '<option value="">—</option>';
-  for (const n of r.maps) {
-    const o = document.createElement('option'); o.value = n; o.textContent = n; sel.appendChild(o);
+  for (const m of r.maps) {                       // {name, role, folder, protected}
+    const o = document.createElement('option');
+    o.value = m.name;
+    o.textContent = (m.protected ? '🔒 ' : '') + m.name + '  (' + m.role + ')';
+    sel.appendChild(o);
   }
 }
 async function doNew(size) {
   const r = await jget('/new?w=' + size + '&h=' + size);
   ME.model = r.model; ME.name = null; $('#map-name').value = ME.model.name;
-  fitCell(); status('new ' + size + '×' + size); buildPalette(); draw();
+  fitCell(); status('new ' + size + '×' + size); buildPalette(); draw(); saveWip();
 }
 async function doLoad(name) {
   const r = await jget('/maps/' + name);
   if (r.error) { status('load error: ' + r.error); return; }
   ME.model = r.model; ME.name = name; $('#map-name').value = ME.model.name;
-  $('#map-list').value = name; fitCell(); status('loaded ' + name); buildPalette(); draw();
+  $('#map-list').value = name;
+  const tag = ME.model.protected || (ME.model.role && ME.model.role !== 'community')
+    ? '  — protected: edits Export as your own community copy' : '';
+  fitCell(); status('loaded ' + name + tag); buildPalette(); draw(); saveWip();
 }
-async function doSave() {
-  let name = ($('#map-name').value.trim() || ME.model.name || 'untitled');
-  ME.model.name = name.toUpperCase().slice(0, 16);
-  const r = await jpost('/maps/' + name.toLowerCase().replace(/[^a-z0-9_-]/g, ''), ME.model);
+
+/* Export = download the .map to the user's disk (the save path on the hosted,
+   read-only editor). The session never leaves the browser; the file does. */
+async function doExport() {
+  syncName();
+  const r = await fetch('/export', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(ME.model),
+  });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); status('export error: ' + (e.error || r.status)); return; }
+  const blob = await r.blob();
+  const fname = (ME.model.name || 'untitled').toLowerCase().replace(/[^a-z0-9_-]/g, '') + '.map';
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = fname;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  status('exported ' + fname + ' → add it under maps/community/ and open a PR');
+}
+
+/* Import = open a .map a user picked off their disk (parsed by the shared
+   Python module so the editor never disagrees with the build). */
+function doImport(file) {
+  const reader = new FileReader();
+  reader.onload = async () => {
+    const r = await fetch('/parse', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: reader.result });
+    const j = await r.json();
+    if (j.error) { status('import error: ' + j.error); return; }
+    ME.model = j.model; ME.name = null; $('#map-name').value = ME.model.name;
+    fitCell(); status('imported ' + (file.name || 'map')); buildPalette(); draw(); saveWip();
+  };
+  reader.readAsText(file);
+}
+
+async function doSave() {                          // local-dev only (hidden when readonly)
+  syncName();
+  const r = await jpost('/maps/' + syncName(), ME.model);
   if (r.error) { status('save error: ' + r.error); return; }
-  ME.name = r.name; status('saved ' + r.name + '.map  (rebuild the ROM to compile it in)');
+  const how = r.cloned ? 'cloned to maps/community/' : 'saved to maps/community/';
+  ME.name = r.name; status(how + ' as ' + r.name + '.map  (rebuild the ROM to compile it in)');
   await refreshList(); $('#map-list').value = r.name;
 }
+
 function wireFileBar() {
   $('#btn-new').onclick = () => doNew(parseInt($('#new-size').value, 10));
+  $('#btn-export').onclick = doExport;
+  $('#btn-import').onclick = () => $('#file-import').click();
+  $('#file-import').onchange = e => { if (e.target.files[0]) doImport(e.target.files[0]); e.target.value = ''; };
   $('#btn-save').onclick = doSave;
   $('#btn-reload').onclick = () => { if (ME.name) doLoad(ME.name); };
   $('#map-list').onchange = e => { if (e.target.value) doLoad(e.target.value); };
   $('#btn-walk').onclick = () => window.RC.start();
   $('#btn-exit-preview').onclick = () => window.RC.stop();
+}
+
+/* ---------- in-browser session persistence (per the overlay editor's pattern) ---------- */
+const WIP_KEY = 'backrooms-map-editor-wip';
+let _wipTimer = null;
+function saveWip() {                                // debounced; keeps the session local to this browser
+  if (_wipTimer) return;
+  _wipTimer = setTimeout(() => {
+    _wipTimer = null;
+    try { localStorage.setItem(WIP_KEY, JSON.stringify({ model: ME.model, name: ME.name })); } catch (e) {}
+  }, 800);
+}
+function loadWip() {
+  try { const s = localStorage.getItem(WIP_KEY); return s ? JSON.parse(s) : null; } catch (e) { return null; }
 }
 
 /* ---------- init ---------- */
@@ -383,7 +445,18 @@ async function init() {
     ME.glyphForVal[c.value] = c.glyph; ME.colorForVal[c.value] = c.color;
   }
   buildLayers(); buildPalette(); wireFileBar(); wireCanvas();
+  try {                                            // hosted editor is read-only: no Save-to-repo
+    const cfg = await jget('/config');
+    if (cfg.readonly) $('#btn-save').style.display = 'none';
+  } catch (e) {}
   await refreshList();
-  await doNew(16);
+  const wip = loadWip();
+  if (wip && wip.model) {
+    ME.model = wip.model; ME.name = wip.name; $('#map-name').value = ME.model.name;
+    fitCell(); status('restored your in-progress map'); buildPalette(); draw();
+  } else {
+    await doNew(16);
+  }
+  setInterval(saveWip, 4000);                      // periodic safety net while editing
 }
 init();

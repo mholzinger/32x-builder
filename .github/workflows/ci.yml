@@ -1,0 +1,73 @@
+name: ci
+
+# Two gates on every PR + push to main:
+#   lint  — maps + assets + registry (pure Python, fast; same tool the build runs)
+#   build — real marsdev toolchain compiles the ROM, proving a contributor's
+#           map/asset actually links into rom/backrooms.32x.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Lint maps + assets
+        run: python3 tools/lint_maps.py
+
+  build:
+    runs-on: ubuntu-latest
+    needs: lint
+    env:
+      # Pinned marsdev prebuilt toolchain. Bump to retest against a newer SDK;
+      # the cache key follows it. (Swap for a prebuilt container image later.)
+      MARSDEV_VER: v1.0.0-rc1
+      MARSDEV: ${{ github.workspace }}/.marsdev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache marsdev toolchain
+        id: cache-marsdev
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MARSDEV }}
+          key: marsdev-${{ env.MARSDEV_VER }}-linux-x86_64
+
+      - name: Install marsdev (prebuilt toolchain)
+        if: steps.cache-marsdev.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          url="https://github.com/andwn/marsdev/releases/download/${MARSDEV_VER}/marsdev-${MARSDEV_VER}-linux-x86_64.tar.xz"
+          tmp="$(mktemp -d)"
+          echo "Downloading $url"
+          curl -fsSL "$url" | tar -xJ -C "$tmp"
+          # Locate the toolchain root (the dir holding sh-elf/bin/sh-elf-gcc),
+          # so we don't care how the tarball nests its top-level directory.
+          gcc="$(find "$tmp" -path '*/sh-elf/bin/sh-elf-gcc' | head -1)"
+          test -n "$gcc" || { echo "::error::sh-elf-gcc not found in marsdev tarball"; exit 1; }
+          root="$(dirname "$(dirname "$(dirname "$gcc")")")"
+          mkdir -p "$MARSDEV"
+          cp -a "$root"/. "$MARSDEV"/
+          echo "marsdev installed to $MARSDEV"
+
+      - name: Toolchain sanity
+        run: "$MARSDEV/sh-elf/bin/sh-elf-gcc --version | head -1"
+
+      - name: Build ROM
+        run: make release MARSDEV="$MARSDEV"
+
+      - name: Assert ROM produced
+        run: |
+          test -f rom/backrooms.32x
+          ls -l rom/backrooms.32x
+
+      - name: Upload ROM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backrooms-32x
+          path: rom/backrooms.32x

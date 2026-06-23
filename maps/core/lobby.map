@@ -4,6 +4,8 @@
 name: LOBBY
 size: 32x32
 spawn: 5.0, 7.6 facing=N
+role: lobby
+canon: HobbyTown
 
 [grid]
 ################################

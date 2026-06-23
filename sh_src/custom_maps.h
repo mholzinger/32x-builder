@@ -39,6 +39,8 @@ typedef struct {
 } custom_map_t;
 
 extern const custom_map_t custom_maps[];
-extern const int          custom_map_count;
+extern const int          custom_map_count;   /* total, incl. lobby (load bounds) */
+extern const int          custom_pick_count;  /* selectable maps (pickable roles), ordered first */
+extern const int          custom_core_count;  /* core (starter/play) pickable; community span = [core, pick) */
 
 #endif /* CUSTOM_MAPS_H */

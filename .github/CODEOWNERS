@@ -1,0 +1,9 @@
+# Canonical, protected content — maintainer review required on any PR that
+# touches it. This is the PR-side counterpart to the editor's clone-on-edit:
+# contributors add maps under maps/community/ (open), never edit core/ or the
+# baked assets directly.
+maps/core/**        @mholzinger
+sh_src/*_tex.h      @mholzinger
+registry.json       @mholzinger
+tools/gen_maps.py   @mholzinger
+tools/lint_maps.py  @mholzinger

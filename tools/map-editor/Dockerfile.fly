@@ -24,5 +24,6 @@ EXPOSE 5050
 ENV MAP_HOST=0.0.0.0 \
     MAP_PORT=5050 \
     MAP_REPO_ROOT=/repo \
+    MAP_READONLY=1 \
     PYTHONUNBUFFERED=1
 CMD ["python", "app.py"]

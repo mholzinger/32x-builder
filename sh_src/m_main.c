@@ -237,6 +237,36 @@ static void lobby_hl_bar(uint8_t *fb, int x, int y, int w) {
     }
 }
 
+/* Start-menu picker row: "> [ NAME ]" — brackets always (so the current pick
+ * reads), cursor + blinking bar when selected. Drawn at box-pixel (x,y). */
+static void lobby_picker_row(uint8_t *fb, int x, int y, int sel, const char *name) {
+    char line[24]; int p = 0;
+    line[p++] = sel ? '>' : ' ';
+    line[p++] = ' '; line[p++] = '['; line[p++] = ' ';
+    for (const char *nm = name; *nm && p < 21; nm++) line[p++] = *nm;
+    line[p++] = ' '; line[p++] = ']';
+    line[p] = '\0';
+    if (sel && (SHARED_UC->frame_count % 6) < 3) {
+        int nl = 0; while (name[nl]) nl++;
+        lobby_hl_bar(fb, x + 2 * 8, y, (nl + 4) * 8);
+    }
+    font_draw_string(fb, x, y, line, 49);
+}
+
+/* Start-menu action row: "> LABEL" — cursor + blinking bar when selected. */
+static void lobby_action_row(uint8_t *fb, int x, int y, int sel, const char *label) {
+    char line[20]; int p = 0;
+    line[p++] = sel ? '>' : ' ';
+    line[p++] = ' ';
+    for (const char *nm = label; *nm; nm++) line[p++] = *nm;
+    line[p] = '\0';
+    if (sel && (SHARED_UC->frame_count % 6) < 3) {
+        int nl = 0; while (label[nl]) nl++;
+        lobby_hl_bar(fb, x + 2 * 8, y, nl * 8);
+    }
+    font_draw_string(fb, x, y, line, 49);
+}
+
 /* SHOW CONTROLS sub-screen: the title and the controls legend over the frozen
  * lobby, until any face/START button sends you back to the start menu. */
 static void show_controls_screen(void) {
@@ -367,8 +397,17 @@ int m_main(void) {
      * dismisses the menu). Phase B: the menu is gone and the choice is
      * locked — you wander the lobby and walk forward into the backrooms
      * to enter the level you picked. */
-    int menu_row = 0;             /* cursor row: 0 = map picker, 1 = procedural, 2 = controls */
-    int map_idx  = 0;             /* selected map in custom_maps[] for the row-0 picker */
+    int menu_row = 0;             /* cursor row */
+    int core_idx = 0;             /* core map pick:      custom_maps[0 .. custom_core_count)  */
+    int comm_off = 0;             /* community map pick: offset into [core, pick) span        */
+    /* Row layout: 0 = core map picker, 1 = procedural, [2 = community picker if
+     * any community maps], last = show controls. */
+    const int n_core   = custom_core_count;
+    const int n_comm   = custom_pick_count - custom_core_count;
+    const int has_comm = (n_comm > 0);
+    const int ROW_PROC = 1;
+    const int ROW_COMM = has_comm ? 2 : -1;
+    const int ROW_CTRL = has_comm ? 3 : 2;
     uint32_t frame = 0;           /* time-in-lobby — entropy for procgen */
     const uint16_t LOBBY_COMMIT = SEGA_CTRL_START | SEGA_CTRL_A | SEGA_CTRL_B |
                                   SEGA_CTRL_C | SEGA_CTRL_X | SEGA_CTRL_Y | SEGA_CTRL_Z;
@@ -381,21 +420,21 @@ int m_main(void) {
             uint16_t pad = MARS_SYS_COMM8;
             uint16_t pressed = (uint16_t)(pad & ~prev_pad);
             prev_pad = pad;
-            /* UP/DOWN move the cursor between the 3 rows. LEFT/RIGHT cycle the
-             * start map — but ONLY on the row-0 picker, the "array of maps to
-             * start in". */
-            if ((pressed & SEGA_CTRL_UP)   && menu_row > 0) menu_row--;
-            if ((pressed & SEGA_CTRL_DOWN) && menu_row < 2) menu_row++;
-            if (menu_row == 0 && custom_map_count > 0) {
-                if (pressed & SEGA_CTRL_LEFT)
-                    map_idx = (map_idx + custom_map_count - 1) % custom_map_count;
-                if (pressed & SEGA_CTRL_RIGHT)
-                    map_idx = (map_idx + 1) % custom_map_count;
+            /* UP/DOWN move the cursor between the rows. LEFT/RIGHT cycle the
+             * map on whichever PICKER row the cursor is on (core or community). */
+            if ((pressed & SEGA_CTRL_UP)   && menu_row > 0)        menu_row--;
+            if ((pressed & SEGA_CTRL_DOWN) && menu_row < ROW_CTRL) menu_row++;
+            if (menu_row == 0 && n_core > 0) {
+                if (pressed & SEGA_CTRL_LEFT)  core_idx = (core_idx + n_core - 1) % n_core;
+                if (pressed & SEGA_CTRL_RIGHT) core_idx = (core_idx + 1) % n_core;
+            } else if (menu_row == ROW_COMM && n_comm > 0) {
+                if (pressed & SEGA_CTRL_LEFT)  comm_off = (comm_off + n_comm - 1) % n_comm;
+                if (pressed & SEGA_CTRL_RIGHT) comm_off = (comm_off + 1) % n_comm;
             }
             if (pressed & LOBBY_COMMIT) {
-                /* Row 2 (SHOW CONTROLS) opens its sub-screen and returns here;
-                 * row 0 (the chosen map) and row 1 (procedural) confirm/start. */
-                if (menu_row == 2) {
+                /* SHOW CONTROLS opens its sub-screen and returns here; the map
+                 * pickers (core/community) and PROCEDURAL confirm and start. */
+                if (menu_row == ROW_CTRL) {
                     show_controls_screen();
                     prev_pad = 0xFFFF;       /* swallow the still-held button */
                     continue;
@@ -412,52 +451,30 @@ int m_main(void) {
             font_draw_string(fb_text, (SCREEN_W - 13 * 8) / 2, 32,
                              "BACKROOMS 32X", 49);
 
-            /* Start-map picker — the cursor option is bracketed and sat under a
-             * blinking muted bar (same highlight as the pause menu). UP/DOWN
-             * moves the cursor; any face/START button confirms. SHOW CONTROLS
-             * opens the controls sub-screen rather than starting a map. */
+            /* Start menu: a core map PICKER, PROCEDURAL, an optional COMMUNITY
+             * map picker, and SHOW CONTROLS. The cursor row gets the blinking
+             * highlight bar; picker rows (LEFT/RIGHT) show the pick in brackets. */
             const int MENU_X = 88;
-            font_draw_string(fb_text, MENU_X, 60, "START MAP:", 49);
-
-            /* Row 0 — the map picker: an array of maps cycled with LEFT/RIGHT,
-             * the current pick shown in brackets. */
-            {
-                const char *mname = (custom_map_count > 0)
-                                  ? custom_maps[map_idx].name : "BACKROOMS";
-                char line[24]; int p = 0;
-                line[p++] = (menu_row == 0) ? '>' : ' ';
-                line[p++] = ' '; line[p++] = '['; line[p++] = ' ';
-                for (const char *nm = mname; *nm && p < 21; nm++) line[p++] = *nm;
-                line[p++] = ' '; line[p++] = ']';
-                line[p] = '\0';
-                if (menu_row == 0 && (SHARED_UC->frame_count % 6) < 3) {
-                    int nl = 0; while (mname[nl]) nl++;
-                    lobby_hl_bar(fb_text, MENU_X + 2 * 8, 78, (nl + 4) * 8);
-                }
-                font_draw_string(fb_text, MENU_X, 78, line, 49);
+            int y = 52;
+            font_draw_string(fb_text, MENU_X, y, "START MAP:", 49);  y += 16;
+            lobby_picker_row(fb_text, MENU_X, y, menu_row == 0,
+                             n_core > 0 ? custom_maps[core_idx].name : "BACKROOMS");
+            y += 16;
+            lobby_action_row(fb_text, MENU_X, y, menu_row == ROW_PROC, "PROCEDURAL");
+            y += 16;
+            if (has_comm) {
+                y += 8;
+                font_draw_string(fb_text, MENU_X, y, "COMMUNITY:", 49);  y += 16;
+                lobby_picker_row(fb_text, MENU_X, y, menu_row == ROW_COMM,
+                                 custom_maps[custom_core_count + comm_off].name);
+                y += 16;
             }
-
-            /* Rows 1,2 — actions (cursor + highlight, no brackets). */
-            static const char *const acts[2] = { "PROCEDURAL", "SHOW CONTROLS" };
-            for (int i = 0; i < 2; i++) {
-                int row = i + 1, oy = 94 + i * 16;
-                char line[20]; int p = 0;
-                line[p++] = (menu_row == row) ? '>' : ' ';
-                line[p++] = ' ';
-                for (const char *nm = acts[i]; *nm; nm++) line[p++] = *nm;
-                line[p] = '\0';
-                if (menu_row == row && (SHARED_UC->frame_count % 6) < 3) {
-                    int nl = 0; while (acts[i][nl]) nl++;
-                    lobby_hl_bar(fb_text, MENU_X + 2 * 8, oy, nl * 8);
-                }
-                font_draw_string(fb_text, MENU_X, oy, line, 49);
-            }
-
-            font_draw_string(fb_text, (SCREEN_W - 19 * 8) / 2, 140,
-                             "ANY BUTTON: CONFIRM", 49);
-            if (menu_row == 0)
-                font_draw_string(fb_text, (SCREEN_W - 15 * 8) / 2, 156,
-                                 "L/R: CHANGE MAP", 49);
+            y += 8;
+            lobby_action_row(fb_text, MENU_X, y, menu_row == ROW_CTRL, "SHOW CONTROLS");
+            y += 24;
+            font_draw_string(fb_text, (SCREEN_W - 19 * 8) / 2, y, "ANY BUTTON: CONFIRM", 49);
+            if (menu_row == 0 || menu_row == ROW_COMM)
+                font_draw_string(fb_text, (SCREEN_W - 15 * 8) / 2, y + 14, "L/R: CHANGE MAP", 49);
 
             /* PAD-type readout (debug, top-left): 6/3/? button handshake. */
             uint16_t ptype = pad & SEGA_CTRL_TYPE;
@@ -568,11 +585,13 @@ int m_main(void) {
         lastTick = MARS_SYS_COMM12;
     }
 
-    if (menu_row == 1) {
+    if (menu_row == ROW_PROC) {
         procgen_run((uint32_t)frame * 1000003u + (uint32_t)player.x);
         player.x = FX(16.5); player.y = FX(28.5); player.angle = 192;
-    } else if (custom_map_count > 0) {
-        raycast_load_custom(map_idx);              /* row 0: chosen map; sets its own spawn */
+    } else if (menu_row == ROW_COMM) {
+        raycast_load_custom(custom_core_count + comm_off);  /* community pick; sets its own spawn */
+    } else if (n_core > 0) {
+        raycast_load_custom(core_idx);                      /* core pick; sets its own spawn */
     } else {
         raycast_load_fixed();
     }

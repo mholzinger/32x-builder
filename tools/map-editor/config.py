@@ -15,3 +15,10 @@ REPO_ROOT = os.environ.get(
 MAPS_DIR = os.path.join(REPO_ROOT, "maps")
 REGISTRY = os.path.join(REPO_ROOT, "registry.json")
 TOOLS_DIR = os.path.join(REPO_ROOT, "tools")
+
+# Hosted instances (fly.io) run READ-ONLY: the container filesystem is ephemeral
+# (no volume), so sessions are isolated in the browser and the only way out is
+# Export — a download to the user's local disk that they commit / PR from their
+# own clone. Local dev (your own checkout) leaves this off and can write straight
+# to maps/community/. Dockerfile.fly sets MAP_READONLY=1.
+READONLY = os.environ.get("MAP_READONLY", "0") == "1"

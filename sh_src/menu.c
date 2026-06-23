@@ -67,7 +67,7 @@ static int content_rows_for(int tab) {
     case TAB_AUDIO:    return AUDIO_CONTENT_ROWS;
     case TAB_LIGHTING: return LIGHTING_CONTENT_ROWS;
     case TAB_VISUALS:  return VISUALS_CONTENT_ROWS;
-    case TAB_MAPS:     return custom_map_count;   /* one row per compiled-in map */
+    case TAB_MAPS:     return custom_pick_count;   /* one row per compiled-in map */
     default:           return CREDITS_CONTENT_ROWS;
     }
 }
@@ -94,7 +94,7 @@ void menu_update(uint16_t pad) {
 
     /* MAPS tab: A on a map row warps there and closes the menu. */
     if (menu_tab == TAB_MAPS && menu_row >= 1 && (pressed & SEGA_CTRL_A)) {
-        if (menu_row - 1 < custom_map_count) {
+        if (menu_row - 1 < custom_pick_count) {
             g_warp_request = menu_row - 1;
             menu_active = 0;
         }
@@ -269,17 +269,17 @@ void menu_render(uint8_t *fb) {
         font_draw_string(fb, X + 8, Y + 40, "DATE  " VERSION_DATE_STR,  MENU_FG_COLOR);
         font_draw_string(fb, X + 8, Y + 48, "SHA   " VERSION_SHA_STR,   MENU_FG_COLOR);
     } else { /* TAB_MAPS — scrolling list of the compiled-in custom maps */
-        if (custom_map_count == 0) {
+        if (custom_pick_count == 0) {
             font_draw_string(fb, X + 8, Y + 32, "  (NO MAPS)", MENU_FG_COLOR);
         } else {
             int sel = menu_row - 1;            /* selected map, or -1 on the tab row */
             int off = 0;                       /* 3-row window scrolls with selection */
-            if (custom_map_count > 3) {
+            if (custom_pick_count > 3) {
                 off = (sel > 0 ? sel : 0) - 1;
                 if (off < 0) off = 0;
-                if (off > custom_map_count - 3) off = custom_map_count - 3;
+                if (off > custom_pick_count - 3) off = custom_pick_count - 3;
             }
-            for (int i = 0; i < 3 && off + i < custom_map_count; i++) {
+            for (int i = 0; i < 3 && off + i < custom_pick_count; i++) {
                 int mi = off + i;
                 char line[20]; int p = 0;
                 line[p++] = (menu_row == mi + 1) ? '>' : ' ';

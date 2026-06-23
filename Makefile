@@ -80,7 +80,7 @@ SHOBJS += $(SHCS:.c=.o)
 SHOBJS += sh_src/custom_maps.o
 SHOBJS += $(SHCPPS:.cpp=.o)
 
-.PHONY: all release debug deploy deploy-tv publish
+.PHONY: all release debug deploy deploy-tv publish lint
 
 # Override on command line: make deploy MISTER=root@othermister.local
 # Both targets probe usb0 then usb1 over ssh before scp'ing, so USB
@@ -199,8 +199,15 @@ sh_src/menu.o: sh_src/version.h
 # changes; the sh_src/*.c wildcard then compiles it like any source. Tracked
 # (unlike version.h) so the parse-time wildcard sees it on a clean checkout; the
 # generator only rewrites the file when its contents actually change.
-sh_src/custom_maps.c: $(wildcard maps/*.map) registry.json tools/gen_maps.py
+# Maps live in role folders (maps/core/, maps/community/); gen_maps globs them
+# recursively and lints maps+assets before emitting (a bad map fails the build).
+sh_src/custom_maps.c: $(wildcard maps/*.map maps/core/*.map maps/community/*.map) \
+                      registry.json tools/gen_maps.py tools/mapfmt.py tools/lint_maps.py
 	@python3 tools/gen_maps.py
+
+# Standalone gate (maps + assets + registry), no toolchain — used by CI.
+lint:
+	@python3 tools/lint_maps.py
 
 # Auto-generated header dependency files. -MMD emits one per .c next to
 # the .o; -include silently ignores them on a clean tree. Without this,

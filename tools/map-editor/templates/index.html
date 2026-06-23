@@ -24,7 +24,10 @@
     <button id="btn-new">New map</button>
     <span class="sep"></span>
     <label>Name <input id="map-name" maxlength="16" size="14" placeholder="MYMAP"></label>
-    <button id="btn-save" class="primary">Save .map</button>
+    <button id="btn-export" class="primary" title="Download this map as a .map file to your computer">⬇ Export .map</button>
+    <button id="btn-import" title="Open a .map file from your computer">⬆ Import</button>
+    <input id="file-import" type="file" accept=".map,text/plain" hidden>
+    <button id="btn-save" title="Save into this checkout's maps/community/ (local dev only)">Save to repo</button>
     <button id="btn-walk" title="Walk the current map in a first-person preview">▶ Walk</button>
     <span id="status"></span>
   </div>

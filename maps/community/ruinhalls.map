@@ -1,0 +1,196 @@
+# ruinhalls.map
+name: RUINHALLS
+size: 32x32
+spawn: 1.5, 30.5 facing=E
+role: community
+
+[grid]
+################################
+##..#.#.#.#.#.....######.......#
+#.#..#.#.#.#.#####....##.......#
+#...............................
+#....#.#.#.#######....##...###..
+#....#######......######.....#.#
+#..........#........####..##...#
+########...#.......#.....#.#...#
+#......#...########....##..#.#..
+#......#.............###...#.#..
+#......#.....#.#.#.###..####.#.#
+#..............................#
+#......#.....#.#.#.###..#####..#
+#......#.............###.....#.#
+#......#................######..
+#......#.......#####....#.......
+##.#####...#####...######....###
+#..#.....###....................
+#..##..###...................###
+#....#.#....#....#....#......#.#
+#.#..#.##..#.#..#.#..#.#...###.#
+#...#..##...#....#....#....#...#
+#.#.#..#...........X......##...#
+#....#.#..................##...#
+#.######....#....#....#....##..#
+#.#........#.#..#.#..#.#....#..#
+#.#..##.....#....#....#.....##.#
+#.#X##......................##.#
+#.##......................###..#
+#.......................###....#
+#..##..................##......#
+################################
+
+[crawl]
+1,25 dir=S len=4
+18,3 dir=E len=4
+3,10 dir=S len=3
+4,10 dir=S len=3
+25,11 dir=E len=2
+
+[partitions]
+2,8 -> 6,8  style=chevron height=full crawl=no
+8,11 -> 12,11  style=spotted height=full crawl=no
+8,12 -> 12,12  style=spotted height=full crawl=no
+12,12 -> 16,12  style=spotted height=half crawl=no
+12,11 -> 16,11  style=spotted height=half crawl=no
+16,11 -> 20,11  style=spotted height=low crawl=no
+16,12 -> 20,12  style=spotted height=low crawl=no
+24,4 -> 27,4  style=spotted height=low crawl=no
+24,4 -> 24,7  style=spotted height=low crawl=no
+3,3 -> 13,3  style=chevron height=half crawl=no
+23,3 -> 26,3  style=chevron height=half crawl=no
+29,3 -> 32,3  style=chevron height=half crawl=no
+18,3 -> 22,3  style=chevron height=low crawl=no
+18,4 -> 22,4  style=chevron height=low crawl=no
+11,24 -> 14,24  style=chevron height=low crawl=no
+21,24 -> 24,24  style=chevron height=low crawl=no
+14,24 -> 14,27  style=chevron height=low crawl=no
+11,27 -> 14,27  style=chevron height=low crawl=no
+21,27 -> 24,27  style=chevron height=low crawl=no
+11,24 -> 11,27  style=chevron height=low crawl=no
+16,19 -> 19,19  style=chevron height=low crawl=no
+19,19 -> 19,22  style=chevron height=low crawl=no
+16,22 -> 19,22  style=chevron height=low crawl=no
+16,19 -> 16,22  style=chevron height=low crawl=no
+16,29 -> 16,32  style=chevron height=low crawl=no
+24,24 -> 24,27  style=chevron height=low crawl=no
+21,24 -> 21,27  style=chevron height=low crawl=no
+21,29 -> 21,32  style=chevron height=low crawl=no
+13,29 -> 16,29  style=chevron height=low crawl=no
+18,29 -> 21,29  style=chevron height=low crawl=no
+13,32 -> 16,32  style=chevron height=low crawl=no
+18,32 -> 21,32  style=chevron height=low crawl=no
+13,29 -> 13,32  style=chevron height=low crawl=no
+18,29 -> 18,32  style=chevron height=low crawl=no
+27,28 -> 30,28  style=chevron height=low crawl=no
+27,25 -> 30,25  style=chevron height=low crawl=no
+30,25 -> 30,28  style=chevron height=low crawl=no
+27,25 -> 27,28  style=chevron height=low crawl=no
+23,0 -> 26,0  style=chevron height=half crawl=no
+29,0 -> 32,0  style=chevron height=half crawl=no
+32,0 -> 32,3  style=chevron height=half crawl=no
+29,0 -> 29,3  style=chevron height=half crawl=no
+26,0 -> 26,3  style=chevron height=half crawl=no
+23,0 -> 23,3  style=chevron height=half crawl=no
+30,6 -> 30,8  style=spotted height=low crawl=no
+30,11 -> 30,13  style=spotted height=low crawl=no
+31,3 -> 31,5  style=spotted height=low crawl=no
+31,8 -> 31,10  style=spotted height=low crawl=no
+31,14 -> 31,16  style=spotted height=low crawl=no
+26,18 -> 27,18  style=spotted height=low crawl=no
+27,18 -> 27,19  style=spotted height=low crawl=no
+26,19 -> 27,19  style=spotted height=low crawl=no
+26,18 -> 26,19  style=spotted height=low crawl=no
+3,28 -> 6,28  style=spotted height=low crawl=no
+6,28 -> 6,31  style=spotted height=low crawl=no
+3,31 -> 6,31  style=spotted height=low crawl=no
+3,28 -> 3,31  style=spotted height=low crawl=no
+
+[decals]
+neanderthal 1.5,8.5 face=N
+outlet 4,7.5 face=E
+outlet 7.5,9 face=N
+outlet 6.5,16 face=N
+outlet 2,27.5 face=W
+outlet 3.5,24 face=N
+outlet 7,13.5 face=W
+neanderthal 28.5,11.5 face=N
+neanderthal 1.5,2.5 face=N
+door   3.5,28 face=S
+neanderthal 5.5,30.5 face=N
+neanderthal 8.5,19.5 face=N
+outlet 27.5,1 face=N
+outlet 16.5,3 face=S
+outlet 23.5,20 face=N
+outlet 16.5,25 face=N
+
+[lights]
+2,29
+1,30
+1,23
+1,20
+1,17
+4,19
+4,23
+14,11
+16,11
+18,11
+20,11
+22,11
+24,11
+2,9
+5,9
+2,12
+5,12
+2,15
+5,15
+27,11
+28,9
+28,6
+25,4
+24,5
+20,7
+19,8
+22,8
+16,9
+14,9
+9,7
+9,9
+6,6
+1,6
+6,3
+10,3
+1,4
+4,5
+15,3
+25,2
+27,2
+29,2
+30,6
+30,9
+30,12
+14,22
+15,22
+15,23
+14,23
+19,22
+20,22
+20,23
+19,23
+17,16
+9,19
+8,24
+6,27
+10,30
+14,30
+19,30
+25,27
+26,24
+26,20
+26,16
+14,27
+20,27
+7,29
+
+[options]
+place_outlets: 0
+place_exit_door: 0
+lobby_ceiling: 0

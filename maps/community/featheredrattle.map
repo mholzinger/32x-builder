@@ -1,0 +1,215 @@
+# feathered rattle.map
+name: FEATHERED RATTLE
+size: 32x32
+spawn: 1.5, 30.5 facing=N
+role: community
+next: SEGA POWER BASE
+
+[grid]
+##.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#
+#...............................
+.#.........#..............#.#..#
+#.......#....#.#.#.#.#..#.....#.
+...#...................#.....#.#
+#..........#..#.#.#...#.....#...
+.....................#.....#...#
+#...................#.....#.....
+......#.....#.#.#.#............#
+#.#........................#....
+.........#..#.#.#.#...#........#
+#...............................
+.............#.#.#.#.......#...#
+#...............................
+....#.....#..#.#.#.#...........#
+#.#...#......X.......#..........
+.............................#.#
+#......................#..#.....
+...............................#
+#...#......#.................#..
+.....................#.........#
+#................#..............
+...#.....#.............#......##
+#............#..................
+.....................#......#.##
+#..................#............
+....#.........................##
+#.........#......#..............
+..............#.......#....#..##
+#...#.......#...................
+....................#.#.#.#.#..#
+#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.##
+
+[crawl]
+2,11 dir=E len=9
+
+[partitions]
+1,1 -> 1,31  style=spotted height=half crawl=no
+1,1 -> 13,1  style=spotted height=half crawl=no
+2,14 -> 2,16  style=spotted height=half crawl=no
+2,18 -> 2,20  style=spotted height=half crawl=no
+2,22 -> 2,31  style=spotted height=half crawl=no
+2,16 -> 2,18  style=spotted height=low crawl=no
+2,20 -> 2,22  style=spotted height=low crawl=no
+2,14 -> 12,14  style=spotted height=half crawl=no
+1,13 -> 12,13  style=spotted height=half crawl=no
+12,8 -> 12,13  style=spotted height=half crawl=no
+12,14 -> 12,20  style=spotted height=half crawl=no
+12,20 -> 20,20  style=spotted height=half crawl=no
+12,15 -> 20,15  style=chevron height=half crawl=no
+12,16 -> 20,16  style=chevron height=half crawl=no
+12,17 -> 20,17  style=chevron height=half crawl=no
+12,18 -> 20,18  style=chevron height=half crawl=no
+19,15 -> 19,20  style=chevron height=half crawl=no
+18,15 -> 18,20  style=chevron height=half crawl=no
+17,15 -> 17,20  style=chevron height=half crawl=no
+16,15 -> 16,20  style=chevron height=half crawl=no
+15,15 -> 15,20  style=chevron height=half crawl=no
+14,15 -> 14,20  style=chevron height=half crawl=no
+13,1 -> 13,8  style=chevron height=half crawl=no
+13,15 -> 13,20  style=chevron height=half crawl=no
+13,2 -> 29,2  style=chevron height=half crawl=no
+15,1 -> 31,1  style=chevron height=half crawl=no
+31,1 -> 31,3  style=chevron height=half crawl=no
+20,8 -> 31,8  style=chevron height=half crawl=no
+20,13 -> 20,8  style=spotted height=half crawl=no
+20,14 -> 20,15  style=spotted height=half crawl=no
+
+[decals]
+neanderthal 15.5,1.5 face=N
+neanderthal 16.5,1.5 face=N
+neanderthal 17.5,1.5 face=N
+neanderthal 18.5,1.5 face=N
+neanderthal 19.5,1.5 face=N
+neanderthal 20.5,1.5 face=N
+neanderthal 21.5,1.5 face=N
+neanderthal 22.5,1.5 face=N
+outlet 22.5,1 face=N
+outlet 21.5,1 face=N
+outlet 20.5,1 face=S
+outlet 19.5,1 face=S
+outlet 18.5,1 face=S
+outlet 17.5,1 face=S
+outlet 16.5,1 face=S
+outlet 15.5,1 face=S
+door   14.5,0 face=N
+
+[dark]
+12,13 -> 19,13
+12,9 -> 19,11
+0,0 -> 0,31
+1,31 -> 31,31
+31,0 -> 31,30
+1,0 -> 30,0
+2,29 -> 15,30
+2,18 -> 11,19
+2,14 -> 6,17
+7,14 -> 11,15
+9,16 -> 11,17
+13,3 -> 30,7
+23,1 -> 30,1
+13,1 -> 14,1
+2,20 -> 5,27
+2,28 -> 4,28
+6,20 -> 10,20
+12,20 -> 14,28
+15,20 -> 19,23
+15,25 -> 19,28
+16,24 -> 19,24
+20,13 -> 28,14
+20,21 -> 30,21
+20,20 -> 24,20
+26,20 -> 30,20
+6,24 -> 7,28
+8,26 -> 11,28
+8,21 -> 11,23
+8,24 -> 9,25
+1,11 -> 11,12
+3,1 -> 4,8
+5,5 -> 6,10
+5,1 -> 6,2
+7,1 -> 8,10
+9,8 -> 11,10
+11,1 -> 12,7
+9,2 -> 10,5
+1,23 -> 1,28
+1,13 -> 1,20
+3,13 -> 11,13
+20,8 -> 22,12
+23,10 -> 30,12
+25,8 -> 28,9
+6,21 -> 7,22
+20,15 -> 26,19
+27,17 -> 30,19
+29,15 -> 30,16
+20,22 -> 24,25
+20,26 -> 23,26
+20,27 -> 24,29
+26,27 -> 29,29
+25,28 -> 25,29
+26,22 -> 29,25
+25,22 -> 25,24
+27,26 -> 29,26
+16,15 -> 19,16
+17,17 -> 19,17
+13,15 -> 15,17
+12,18 -> 14,19
+16,18 -> 18,19
+1,8 -> 2,10
+1,2 -> 2,5
+13,12 -> 13,12
+13,14 -> 13,14
+
+[lights]
+1,29
+1,30
+12,14
+14,14
+16,14
+18,14
+12,12
+14,12
+16,12
+18,12
+13,8
+15,8
+17,8
+19,8
+13,2
+14,2
+15,2
+16,2
+17,2
+18,2
+19,2
+20,2
+21,2
+22,2
+23,2
+24,2
+25,2
+26,2
+27,2
+28,2
+29,2
+30,2
+31,27
+31,25
+31,23
+29,31
+27,31
+25,31
+23,31
+21,31
+21,30
+23,30
+25,30
+27,30
+30,27
+30,25
+30,23
+31,13
+
+[options]
+place_outlets: 0
+place_exit_door: 0
+lobby_ceiling: 0

@@ -1,0 +1,123 @@
+# beetiles.map
+name: BEETILES
+size: 32x32
+spawn: 15.5, 31.5 facing=N
+role: community
+next: CUBICLE STORAGE
+
+[grid]
+...########.....................
+...#......#.....................
+...#......######################
+####............................
+#.........##############.....##.
+#.........#...................#.
+#.....#...................#...#.
+#.............................#.
+#...............................
+#.............................#.
+#.......................#.......
+#..#..........................#.
+#.......................#.......
+#..........................#....
+#....#..........................
+#........................#....#.
+#...............................
+#.............................#.
+#...........................#...
+#...............................
+#........................#......
+#.............................#.
+####..#.........................
+...#..........................#.
+...#......................#.....
+...#####........................
+.......#....................#...
+.......#...............#......#.
+.......#......................#.
+.......#....................#...
+.......#.............##########.
+.......########.######........##
+
+[crawl]
+10,3 dir=E len=4
+31,5 dir=E len=1
+31,4 dir=E len=1
+15,31 dir=E len=1
+
+[partitions]
+9,21 -> 9,13  style=chevron height=half crawl=no
+9,13 -> 22,13  style=chevron height=half crawl=no
+22,13 -> 22,21  style=chevron height=half crawl=no
+9,21 -> 8,21  style=chevron height=low crawl=no
+8,21 -> 8,12  style=chevron height=low crawl=no
+8,12 -> 23,12  style=chevron height=low crawl=no
+23,21 -> 22,21  style=chevron height=low crawl=no
+9,12 -> 9,11  style=chevron height=half crawl=no
+9,11 -> 10,11  style=chevron height=half crawl=no
+9,10 -> 10,10  style=chevron height=half crawl=no
+10,10 -> 10,9  style=chevron height=half crawl=no
+9,9 -> 9,10  style=chevron height=half crawl=no
+10,9 -> 10,7  style=chevron height=half crawl=no
+10,7 -> 22,7  style=chevron height=half crawl=no
+22,7 -> 22,12  style=chevron height=half crawl=no
+9,9 -> 9,6  style=chevron height=low crawl=no
+9,6 -> 23,6  style=chevron height=low crawl=no
+23,6 -> 23,21  style=chevron height=low crawl=no
+10,11 -> 22,11  style=chevron height=half crawl=no
+24,4 -> 29,4  style=chevron height=half crawl=no
+31,8 -> 31,9  style=chevron height=half crawl=no
+31,10 -> 31,11  style=chevron height=half crawl=no
+31,12 -> 31,15  style=chevron height=half crawl=no
+31,16 -> 31,17  style=chevron height=half crawl=no
+31,18 -> 31,21  style=chevron height=half crawl=no
+31,22 -> 31,23  style=chevron height=half crawl=no
+31,24 -> 31,27  style=chevron height=half crawl=no
+31,29 -> 31,30  style=chevron height=half crawl=no
+
+[decals]
+neanderthal 12.5,17.5 face=N
+neanderthal 14.5,17.5 face=N
+neanderthal 16.5,17.5 face=N
+neanderthal 18.5,17.5 face=N
+chair  12.5,8.5 face=N
+chair  14.5,8.5 face=N
+chair  16.5,8.5 face=N
+chair  18.5,8.5 face=N
+door   31.5,31 face=N
+
+[dark]
+17,17 -> 17,17
+15,17 -> 15,17
+13,17 -> 13,17
+0,18 -> 31,31
+0,9 -> 31,16
+0,0 -> 31,7
+19,8 -> 31,8
+0,17 -> 11,17
+19,17 -> 31,17
+17,8 -> 17,8
+15,8 -> 15,8
+13,8 -> 13,8
+0,8 -> 11,8
+
+[lights]
+12,17
+13,17
+14,17
+15,17
+16,17
+17,17
+18,17
+12,8
+14,8
+16,8
+18,8
+13,8
+15,8
+17,8
+
+[options]
+place_outlets: 0
+place_exit_door: 0
+lobby_ceiling: 0

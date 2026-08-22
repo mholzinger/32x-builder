@@ -183,6 +183,14 @@
     "label": "PVM monitor on stand (live 3D, free-standing)",
     "standalone": true,
     "box_model": true
+   },
+   {
+    "id": "reddoor",
+    "kind": 11,
+    "z": 0.5,
+    "glyph": "⧉",
+    "color": "#b8b0a4",
+    "label": "reddoor (community wall decal)"
    }
   ]
  },
@@ -514,6 +522,55 @@
     ],
     "tier": "core",
     "author": "Poring"
+   },
+   {
+    "id": "reddoor",
+    "kind": 11,
+    "mount": "wall",
+    "tex": "spr_reddoor_tex.h",
+    "sym": "spr_reddoor_tex",
+    "base": 192,
+    "pal": [
+     [
+      13,
+      1,
+      2
+     ],
+     [
+      16,
+      1,
+      1
+     ],
+     [
+      15,
+      4,
+      4
+     ],
+     [
+      16,
+      5,
+      5
+     ],
+     [
+      23,
+      21,
+      12
+     ],
+     [
+      29,
+      28,
+      19
+     ]
+    ],
+    "world_h": 1.0,
+    "world_hw": 0.2969,
+    "z": 0.5,
+    "transparent": 1,
+    "decode": "offset",
+    "flags": [
+     "artpal"
+    ],
+    "tier": "community"
    }
   ]
  },

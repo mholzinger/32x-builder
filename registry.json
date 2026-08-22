@@ -183,6 +183,15 @@
     "label": "PVM monitor on stand (live 3D, free-standing)",
     "standalone": true,
     "box_model": true
+   },
+   {
+    "id": "red_couch",
+    "kind": 11,
+    "z": 0.36,
+    "glyph": "⧉",
+    "color": "#b8b0a4",
+    "label": "red couch (community standee)",
+    "standalone": true
    }
   ]
  },
@@ -514,6 +523,61 @@
     ],
     "tier": "core",
     "author": "Poring"
+   },
+   {
+    "id": "red_couch",
+    "kind": 11,
+    "mount": "billboard",
+    "tex": "spr_red_couch_tex.h",
+    "sym": "spr_red_couch_tex",
+    "base": 192,
+    "pal": [
+     [
+      12,
+      1,
+      2
+     ],
+     [
+      12,
+      2,
+      2
+     ],
+     [
+      13,
+      2,
+      2
+     ],
+     [
+      13,
+      2,
+      3
+     ],
+     [
+      14,
+      3,
+      4
+     ],
+     [
+      15,
+      4,
+      5
+     ],
+     [
+      16,
+      5,
+      5
+     ]
+    ],
+    "world_h": 0.72,
+    "world_hw": 0.5908,
+    "z": 0.0,
+    "transparent": 1,
+    "decode": "offset",
+    "flags": [
+     "standalone",
+     "artpal"
+    ],
+    "tier": "community"
    }
   ]
  },

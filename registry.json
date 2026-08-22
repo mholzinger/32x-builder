@@ -183,6 +183,14 @@
     "label": "PVM monitor on stand (live 3D, free-standing)",
     "standalone": true,
     "box_model": true
+   },
+   {
+    "id": "torneffect",
+    "kind": 11,
+    "z": 0.5,
+    "glyph": "⧉",
+    "color": "#b8b0a4",
+    "label": "torneffect (community wall decal)"
    }
   ]
  },
@@ -514,6 +522,30 @@
     ],
     "tier": "core",
     "author": "Poring"
+   },
+   {
+    "id": "torneffect",
+    "kind": 11,
+    "mount": "wall",
+    "tex": "spr_torneffect_tex.h",
+    "sym": "spr_torneffect_tex",
+    "base": 192,
+    "pal": [
+     [
+      31,
+      30,
+      26
+     ]
+    ],
+    "world_h": 0.79,
+    "world_hw": 0.3271,
+    "z": 0.5,
+    "transparent": 1,
+    "decode": "offset",
+    "flags": [
+     "artpal"
+    ],
+    "tier": "community"
    }
   ]
  },

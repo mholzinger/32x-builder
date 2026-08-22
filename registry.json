@@ -183,6 +183,14 @@
     "label": "PVM monitor on stand (live 3D, free-standing)",
     "standalone": true,
     "box_model": true
+   },
+   {
+    "id": "whitedoor",
+    "kind": 11,
+    "z": 0.5,
+    "glyph": "⧉",
+    "color": "#b8b0a4",
+    "label": "whitedoor (community wall decal)"
    }
   ]
  },
@@ -514,6 +522,60 @@
     ],
     "tier": "core",
     "author": "Poring"
+   },
+   {
+    "id": "whitedoor",
+    "kind": 11,
+    "mount": "wall",
+    "tex": "spr_whitedoor_tex.h",
+    "sym": "spr_whitedoor_tex",
+    "base": 192,
+    "pal": [
+     [
+      13,
+      1,
+      2
+     ],
+     [
+      16,
+      1,
+      1
+     ],
+     [
+      23,
+      22,
+      12
+     ],
+     [
+      27,
+      27,
+      27
+     ],
+     [
+      28,
+      28,
+      28
+     ],
+     [
+      31,
+      31,
+      30
+     ],
+     [
+      31,
+      31,
+      31
+     ]
+    ],
+    "world_h": 1.0,
+    "world_hw": 0.2969,
+    "z": 0.5,
+    "transparent": 1,
+    "decode": "offset",
+    "flags": [
+     "artpal"
+    ],
+    "tier": "community"
    }
   ]
  },

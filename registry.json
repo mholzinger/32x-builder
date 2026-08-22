@@ -183,6 +183,14 @@
     "label": "PVM monitor on stand (live 3D, free-standing)",
     "standalone": true,
     "box_model": true
+   },
+   {
+    "id": "stilllifeart",
+    "kind": 11,
+    "z": 0.5,
+    "glyph": "⧉",
+    "color": "#b8b0a4",
+    "label": "stilllifeart (community wall decal)"
    }
   ]
  },
@@ -514,6 +522,30 @@
     ],
     "tier": "core",
     "author": "Poring"
+   },
+   {
+    "id": "stilllifeart",
+    "kind": 11,
+    "mount": "wall",
+    "tex": "spr_stilllifeart_tex.h",
+    "sym": "spr_stilllifeart_tex",
+    "base": 192,
+    "pal": [
+     [
+      0,
+      0,
+      0
+     ]
+    ],
+    "world_h": 1.0,
+    "world_hw": 0.3906,
+    "z": 0.5,
+    "transparent": 1,
+    "decode": "offset",
+    "flags": [
+     "artpal"
+    ],
+    "tier": "community"
    }
   ]
  },

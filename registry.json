@@ -183,6 +183,15 @@
     "label": "PVM monitor on stand (live 3D, free-standing)",
     "standalone": true,
     "box_model": true
+   },
+   {
+    "id": "sign",
+    "kind": 11,
+    "z": 0.38,
+    "glyph": "⧉",
+    "color": "#b8b0a4",
+    "label": "sign (community standee)",
+    "standalone": true
    }
   ]
  },
@@ -514,6 +523,61 @@
     ],
     "tier": "core",
     "author": "Poring"
+   },
+   {
+    "id": "sign",
+    "kind": 11,
+    "mount": "billboard",
+    "tex": "spr_sign_tex.h",
+    "sym": "spr_sign_tex",
+    "base": 192,
+    "pal": [
+     [
+      21,
+      0,
+      0
+     ],
+     [
+      22,
+      2,
+      2
+     ],
+     [
+      24,
+      9,
+      9
+     ],
+     [
+      26,
+      17,
+      17
+     ],
+     [
+      28,
+      23,
+      23
+     ],
+     [
+      30,
+      27,
+      27
+     ],
+     [
+      31,
+      31,
+      31
+     ]
+    ],
+    "world_h": 0.76,
+    "world_hw": 0.1385,
+    "z": 0.0,
+    "transparent": 1,
+    "decode": "offset",
+    "flags": [
+     "standalone",
+     "artpal"
+    ],
+    "tier": "community"
    }
   ]
  },

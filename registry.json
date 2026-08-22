@@ -183,6 +183,14 @@
     "label": "PVM monitor on stand (live 3D, free-standing)",
     "standalone": true,
     "box_model": true
+   },
+   {
+    "id": "speaker",
+    "kind": 11,
+    "z": 0.68,
+    "glyph": "⧉",
+    "color": "#b8b0a4",
+    "label": "speaker (community wall decal)"
    }
   ]
  },
@@ -514,6 +522,55 @@
     ],
     "tier": "core",
     "author": "Poring"
+   },
+   {
+    "id": "speaker",
+    "kind": 11,
+    "mount": "wall",
+    "tex": "spr_speaker_tex.h",
+    "sym": "spr_speaker_tex",
+    "base": 192,
+    "pal": [
+     [
+      0,
+      0,
+      0
+     ],
+     [
+      1,
+      1,
+      1
+     ],
+     [
+      20,
+      20,
+      20
+     ],
+     [
+      21,
+      21,
+      21
+     ],
+     [
+      28,
+      28,
+      28
+     ],
+     [
+      31,
+      31,
+      31
+     ]
+    ],
+    "world_h": 0.25,
+    "world_hw": 0.125,
+    "z": 0.68,
+    "transparent": 1,
+    "decode": "offset",
+    "flags": [
+     "artpal"
+    ],
+    "tier": "community"
    }
   ]
  },

@@ -183,6 +183,14 @@
     "label": "PVM monitor on stand (live 3D, free-standing)",
     "standalone": true,
     "box_model": true
+   },
+   {
+    "id": "dontlookback2",
+    "kind": 11,
+    "z": 0.5,
+    "glyph": "⧉",
+    "color": "#b8b0a4",
+    "label": "dontlookback2 (community wall decal)"
    }
   ]
  },
@@ -514,6 +522,30 @@
     ],
     "tier": "core",
     "author": "Poring"
+   },
+   {
+    "id": "dontlookback2",
+    "kind": 11,
+    "mount": "wall",
+    "tex": "spr_dontlookback2_tex.h",
+    "sym": "spr_dontlookback2_tex",
+    "base": 192,
+    "pal": [
+     [
+      0,
+      0,
+      0
+     ]
+    ],
+    "world_h": 0.81,
+    "world_hw": 0.432,
+    "z": 0.5,
+    "transparent": 1,
+    "decode": "offset",
+    "flags": [
+     "artpal"
+    ],
+    "tier": "community"
    }
   ]
  },

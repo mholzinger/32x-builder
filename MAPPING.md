@@ -130,13 +130,54 @@ require touching anything else in its chain — the link is just a name.
 
 Two paths:
 
-**Submit (anyone).** Hit **🚀 Submit to game**. It opens a pre-filled GitHub
-page under *your own* account — no tokens, nothing shared. Commit it, and a PR
-opens. CI lints it, a bot posts a rendered preview of your map, and when it's
-merged a ROM release is cut automatically.
+**Submit (anyone).** Sign in with GitHub in the editor (top of the file bar),
+then hit **🚀 Submit to game**: the editor makes your own copy of the repo, commits
+your map to it and opens the pull request for you. CI lints it, a bot posts a
+rendered preview of your map, and merging cuts a ROM release automatically. Not
+signed in, Submit still works — GitHub walks you through the same steps by hand,
+starting with a **fork** (your own copy of the project; clicking it is expected).
 
 **Push (if you have write access).** Drop the `.map` in `maps/community/` and
 push to `main`. Faster; skips the preview bot.
+
+### Your own copy of the game
+
+Sign in and the editor offers to make you a **fork** — your own copy of the
+whole project. It is worth taking:
+
+- **Save to my copy** commits your map straight into it. No review, no waiting.
+- Your fork builds **its own ROM** on every save (enable Actions on the fork
+  once, under its Actions tab), so you can play your work immediately.
+- The asset budget is **yours alone** there. The console's community palette
+  arena fits about 14 custom sprites and the main repo shares that across
+  everybody; in your fork you spend all of it on your own work, and split your
+  art into as many separate sprites as you like.
+
+**Submit to game** is the other door, and it stays open: it opens a pull request
+against the main repo for work you want in everyone's game. Fork for building,
+submit for sharing.
+
+### Which ROM your map lands in
+
+Every release ships more than one ROM, and where your map appears depends on
+its **tier**, not on who you are:
+
+| ROM | contains |
+|---|---|
+| `backrooms.32x` | the game: canon plus the maps the project's authors made or the maintainer promoted |
+| `backrooms-community.32x` | all of that **plus every community map and asset** |
+| `backrooms-<yourname>.32x` | the game plus **your** maps — your own build, cut for you on every release |
+
+A submitted map starts in `maps/community/` (tier `community`) and appears in
+the last two, behind the start menu's own **`-- COMMUNITY --`** heading. If the
+maintainer wants it in the main game, they move the file to `maps/curated/` and
+change one word — `role: community` → `role: curated`. Nothing else about the
+map changes.
+
+Community **sprites** work the same way: they're tiered `community` when baked,
+so they compile into the community and personal ROMs only. A map that ships in
+the flagship can't reference one (the lint says so), which is why you can't
+place your own sprite in a core or curated map.
 
 ### Updating a map you already submitted
 

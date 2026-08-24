@@ -83,18 +83,121 @@ def whoami(token):
     return j["login"]
 
 
+# ---------------- the contributor's own fork ----------------
+#
+# A fork is not just plumbing on the way to a PR — it is the contributor's OWN
+# copy of the game, and that is where map and sprite work should live. In their
+# fork they own the whole budget: the community CRAM arena, the sprite kind
+# numbering, the ROM. They can split assets however they like without competing
+# with anyone else's uploads, their fork's CI cuts them a ROM on every push, and
+# a PR upstream stays available for anything they want in the main game.
+
+def fork_name(login, upstream):
+    up_owner, repo_name = upstream.split("/")
+    return upstream if login == up_owner else "%s/%s" % (login, repo_name)
+
+
+def fork_status(token, login, upstream):
+    """{"fork", "exists", "is_upstream", "html_url", "default_branch"} — what
+    the editor shows so a contributor can see they have their own copy."""
+    fork = fork_name(login, upstream)
+    status, j = _req("GET", API + "/repos/%s" % fork, token)
+    return {"fork": fork,
+            "exists": status == 200,
+            "is_upstream": fork == upstream,
+            "html_url": j.get("html_url") if status == 200 else None,
+            "default_branch": j.get("default_branch") or "main"}
+
+
+def ensure_fork(token, login, upstream, base_branch, wait=20):
+    """Create the contributor's fork if it doesn't exist and wait for GitHub to
+    finish copying it (forking is async). Idempotent: an existing fork is
+    fast-forwarded to upstream instead."""
+    fork = fork_name(login, upstream)
+    if fork == upstream:
+        return fork
+    status, _j = _req("GET", API + "/repos/%s" % fork, token)
+    if status != 200:
+        _req("POST", API + "/repos/%s/forks" % upstream, token)   # 202 either way
+        for _ in range(wait):
+            status, _j = _req("GET", API + "/repos/%s" % fork, token)
+            if status == 200:
+                break
+            time.sleep(1)
+        else:
+            raise GitHubError("fork of %s not ready — try again in a minute" % upstream)
+    _req("POST", API + "/repos/%s/merge-upstream" % fork, token,
+         body={"branch": base_branch})       # best-effort catch-up
+    return fork
+
+
+def get_file(token, repo, path, ref="main"):
+    """Fetch one text file from a repo, or None if it isn't there. Used to read
+    a contributor's OWN registry and textures so the editor can show their
+    assets — their fork is the source of truth for what their ROM will build."""
+    import base64
+    status, j = _req("GET", API + "/repos/%s/contents/%s?ref=%s"
+                     % (repo, urllib.parse.quote(path), ref), token)
+    if status != 200 or "content" not in j:
+        return None
+    try:
+        return base64.b64decode(j["content"]).decode()
+    except Exception:
+        return None
+
+
+def commit_to_fork(token, login, upstream, base_branch, files, message):
+    """Commit files straight onto the contributor's OWN fork (its default
+    branch) — no PR, no review, their repo. Their fork's CI then builds a ROM
+    with their work in it. Returns {"fork", "commit_url", "repo_url"}."""
+    for _p, text in files:
+        if not (text and text.strip()):
+            raise GitHubError("refusing to commit an empty file — reload the "
+                              "editor and try again.")
+    fork = ensure_fork(token, login, upstream, base_branch)
+    import base64
+    last = None
+    for path, text in files:
+        put = {"message": message, "branch": base_branch,
+               "content": base64.b64encode(text.encode()).decode()}
+        status, j = _req("GET", API + "/repos/%s/contents/%s?ref=%s"
+                         % (fork, path, base_branch), token)
+        if status == 200 and "sha" in j:
+            put["sha"] = j["sha"]           # update in place on a re-save
+        status, j = _req("PUT", API + "/repos/%s/contents/%s" % (fork, path),
+                         token, body=put)
+        if status not in (200, 201):
+            raise GitHubError("commit failed (%s): %s"
+                              % (path, j.get("message", status)), status)
+        last = j
+    return {"fork": fork,
+            "commit_url": (last or {}).get("commit", {}).get("html_url"),
+            "repo_url": "https://github.com/%s" % fork,
+            "actions_url": "https://github.com/%s/actions" % fork}
+
+
 # ---------------- fork -> branch -> file -> PR ----------------
 
 def open_map_pr(token, login, upstream, base_branch, path, text, title, body):
-    """The whole submission dance, idempotent where possible.
+    """Single-file wrapper (the map flow) over open_files_pr."""
+    slug = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    return open_files_pr(token, login, upstream, base_branch,
+                         [(path, text)], title, body, "map-" + slug)
+
+
+def open_files_pr(token, login, upstream, base_branch, files, title, body, branch):
+    """The whole submission dance for ONE OR MORE text files (a map, or a
+    community sprite's tex.h + registry.json), idempotent where possible.
     Returns {"url", "number", "existing": bool}."""
+    for _p, text in files:
+        if not (text and text.strip()):
+            raise GitHubError("refusing to commit an empty file — the editor "
+                              "sent no content. Reload the editor and resubmit.")
     owner_repo = upstream.split("/")
     if len(owner_repo) != 2:
         raise GitHubError("bad upstream repo %r" % upstream)
     up_owner, repo_name = owner_repo
     fork = "%s/%s" % (login, repo_name)
-    slug = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-    branch = "map-" + slug
 
     if login == up_owner:
         fork = upstream          # the maintainer submitting to their own repo
@@ -124,19 +227,19 @@ def open_map_pr(token, login, upstream, base_branch, path, text, title, body):
     if status not in (201, 422):       # 422 = branch already exists (resubmit)
         raise GitHubError("branch create failed: %s" % j.get("message", status), status)
 
-    # 3. Create/update the .map file on that branch (contents API needs the
+    # 3. Create/update each file on that branch (contents API needs the
     #    existing blob sha for updates — resubmits amend the same PR).
     import base64
-    put = {"message": "Add community map %s\n\nSubmitted from the hosted map editor." % slug,
-           "content": base64.b64encode(text.encode()).decode(),
-           "branch": branch}
-    status, j = _req("GET", API + "/repos/%s/contents/%s?ref=%s" % (fork, path, branch), token)
-    if status == 200 and "sha" in j:
-        put["sha"] = j["sha"]
-        put["message"] = "Update community map %s" % slug
-    status, j = _req("PUT", API + "/repos/%s/contents/%s" % (fork, path), token, body=put)
-    if status not in (200, 201):
-        raise GitHubError("file commit failed: %s" % j.get("message", status), status)
+    for path, text in files:
+        put = {"message": "%s: %s\n\nSubmitted from the hosted editor." % (branch, path),
+               "content": base64.b64encode(text.encode()).decode(),
+               "branch": branch}
+        status, j = _req("GET", API + "/repos/%s/contents/%s?ref=%s" % (fork, path, branch), token)
+        if status == 200 and "sha" in j:
+            put["sha"] = j["sha"]
+        status, j = _req("PUT", API + "/repos/%s/contents/%s" % (fork, path), token, body=put)
+        if status not in (200, 201):
+            raise GitHubError("file commit failed (%s): %s" % (path, j.get("message", status)), status)
 
     # 4. The PR itself (or find the one already open for this branch).
     head = branch if fork == upstream else "%s:%s" % (login, branch)

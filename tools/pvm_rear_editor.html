@@ -1,0 +1,120 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>PVM Rear Panel Editor</title>
+<style>
+ body{background:#1b1b20;color:#ddd;font:14px/1.4 -apple-system,sans-serif;
+      display:flex;gap:20px;padding:16px;flex-wrap:wrap}
+ #wrap{image-rendering:pixelated;border:1px solid #444;cursor:crosshair}
+ .sw{width:44px;height:44px;border:2px solid #333;display:inline-block;
+     cursor:pointer;vertical-align:middle;border-radius:4px}
+ .sw.sel{border-color:#fff}
+ .lab{font-size:11px;color:#999;text-align:center;width:44px;display:inline-block}
+ button{background:#333;color:#ddd;border:1px solid #555;border-radius:4px;
+        padding:8px 14px;margin:4px 2px;cursor:pointer;font-size:14px}
+ button.on{background:#565;border-color:#7a7}
+ #preview{image-rendering:pixelated;border:1px solid #444}
+ h3{margin:8px 0 4px 0;font-size:13px;color:#aaa;text-transform:uppercase}
+ .hint{font-size:12px;color:#888;max-width:260px}
+</style>
+<div>
+ <h3>PVM rear panel &mdash; 48&times;46, 12&times; zoom</h3>
+ <canvas id="wrap" width="576" height="552"></canvas>
+</div>
+<div style="max-width:290px">
+ <h3>Case plastic (1&ndash;4)</h3>
+ <span><span class="sw" data-v="1"></span><span class="sw" data-v="2"></span><span class="sw" data-v="3"></span><span class="sw" data-v="4"></span></span>
+ <div class="lab" style="width:auto;margin-top:2px">REAR RULE: case values only &mdash;
+ the engine treats 5+ as screen glass and would play static on the back.</div>
+ <h3>Tools</h3>
+ <button id="brush" class="on">Brush</button><button id="fill">Fill</button><button id="pick">Eyedrop</button>
+ <br><button id="grid" class="on">Grid</button><button id="undo">Undo</button>
+ <h3>File</h3>
+ <button id="save">Export PNG (384&times;368)</button>
+ <input type="file" id="load" accept="image/png" style="font-size:12px;margin-top:6px">
+ <h3>Preview 1:1 + 4:1</h3>
+ <canvas id="preview" width="48" height="46"></canvas>
+ <canvas id="preview4" width="192" height="184" style="image-rendering:pixelated;border:1px solid #444"></canvas>
+ <p class="hint">Export drops pvm_rear_edit.png; put it in the repo root and run:<br>
+ <code>python3 tools/pvm_bezel_edit.py import-rear &amp;&amp; make</code><br><br>
+ Keep the glass region (green + magenta) roughly where it is: the telegraph
+ and CRT bloom read its bounding box at map load.</p>
+</div>
+<script>
+const W=48, H=46, Z=12, EXPORT_Z=8;
+const LEG={1:[16,16,24],2:[48,48,56],3:[120,120,128],4:[168,168,176],
+           5:[0,255,0],6:[64,0,64],7:[128,0,128],8:[192,0,192],9:[255,0,255]};
+let data=[4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 4, 4, 4, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 4, 4, 4, 4, 4, 2, 2, 2, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 2, 2, 2, 4, 4, 4, 4, 4, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 4, 4, 4, 4, 4, 4, 2, 2, 2, 2, 4, 3, 3, 4, 4, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 4, 4, 4, 4, 4, 4, 2, 4, 1, 2, 2, 3, 4, 4, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 4, 4, 4, 4, 4, 4, 2, 1, 4, 2, 4, 3, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 4, 4, 4, 4, 4, 4, 2, 4, 4, 2, 4, 2, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 4, 4, 4, 4, 4, 4, 2, 2, 2, 2, 4, 2, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 4, 4, 4, 4, 4, 4, 2, 4, 1, 2, 4, 2, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 4, 4, 4, 4, 4, 4, 2, 1, 4, 2, 4, 2, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 4, 4, 4, 4, 4, 4, 2, 4, 4, 2, 4, 2, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 4, 4, 4, 4, 4, 4, 2, 2, 2, 2, 4, 2, 3, 4, 4, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 4, 4, 4, 4, 4, 4, 2, 4, 1, 2, 4, 2, 3, 4, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 4, 4, 4, 4, 4, 4, 2, 2, 4, 2, 4, 2, 3, 4, 4, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 4, 4, 4, 4, 4, 4, 2, 4, 4, 2, 4, 2, 3, 4, 3, 3, 3, 2, 4, 3, 4, 2, 4, 2, 3, 3, 2, 4, 2, 4, 4, 4, 4, 4, 2, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 4, 4, 4, 4, 4, 4, 2, 2, 2, 2, 4, 2, 3, 4, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 4, 4, 4, 4, 4, 4, 2, 4, 1, 2, 4, 2, 2, 3, 4, 3, 3, 2, 4, 3, 4, 3, 3, 2, 2, 4, 2, 2, 2, 2, 4, 2, 4, 3, 2, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 4, 4, 4, 4, 4, 4, 2, 1, 4, 2, 4, 2, 2, 3, 2, 3, 3, 2, 3, 3, 3, 3, 3, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 4, 4, 4, 4, 4, 4, 2, 4, 4, 2, 2, 2, 2, 3, 4, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 4, 4, 4, 4, 4, 4, 2, 2, 2, 3, 2, 2, 2, 3, 4, 3, 3, 2, 3, 3, 3, 3, 3, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 4, 4, 4, 4, 4, 4, 2, 3, 3, 3, 2, 2, 2, 3, 2, 3, 3, 2, 2, 2, 2, 4, 4, 4, 2, 4, 2, 2, 3, 4, 4, 4, 4, 2, 2, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 4, 4, 4, 4, 4, 4, 2, 3, 4, 3, 2, 2, 2, 3, 2, 3, 4, 2, 3, 2, 3, 3, 2, 3, 2, 4, 2, 2, 4, 4, 2, 2, 2, 4, 2, 3, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 4, 4, 4, 4, 4, 4, 2, 3, 1, 3, 2, 2, 2, 3, 4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 2, 2, 4, 4, 3, 3, 3, 4, 2, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 4, 4, 4, 4, 4, 4, 2, 2, 2, 3, 2, 1, 2, 2, 2, 3, 3, 2, 3, 3, 3, 2, 2, 3, 2, 3, 2, 2, 3, 4, 4, 4, 4, 2, 2, 3, 3, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 2, 2, 2, 3, 3, 4, 4, 2, 4, 2, 2, 4, 2, 2, 2, 2, 4, 2, 2, 2, 2, 4, 2, 2, 2, 2, 4, 2, 2, 2, 2, 4, 2, 2, 2, 2, 3, 3, 3, 2, 2, 2, 4, 4, 4, 4, 4, 4, 2, 2, 2, 3, 3, 2, 2, 2, 2, 2, 2, 4, 1, 2, 4, 1, 4, 2, 2, 2, 2, 4, 4, 2, 4, 2, 4, 2, 4, 4, 2, 4, 4, 2, 4, 2, 3, 3, 3, 2, 2, 2, 4, 4, 4, 4, 4, 4, 2, 2, 2, 3, 3, 2, 2, 4, 4, 2, 2, 4, 1, 2, 2, 4, 4, 2, 2, 2, 2, 4, 1, 2, 1, 2, 4, 2, 4, 4, 2, 4, 1, 2, 1, 2, 3, 3, 3, 2, 2, 2, 4, 4, 4, 4, 4, 4, 2, 2, 2, 3, 3, 3, 3, 3, 3, 2, 2, 4, 2, 2, 2, 2, 4, 2, 2, 2, 2, 4, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3, 3, 2, 2, 2, 4, 4, 4, 4, 4, 4, 2, 2, 2, 3, 3, 3, 1, 1, 1, 3, 2, 4, 2, 2, 2, 2, 4, 2, 2, 2, 2, 4, 2, 2, 2, 2, 4, 2, 2, 2, 2, 4, 2, 2, 2, 2, 3, 3, 3, 2, 2, 2, 4, 4, 4, 4, 4, 4, 2, 2, 2, 3, 3, 1, 1, 1, 1, 3, 2, 4, 4, 2, 4, 2, 4, 4, 2, 4, 2, 4, 4, 2, 4, 2, 4, 4, 2, 4, 1, 4, 2, 2, 2, 2, 3, 3, 3, 2, 2, 2, 4, 4, 4, 4, 4, 4, 2, 2, 2, 3, 3, 1, 1, 1, 1, 3, 2, 4, 1, 2, 1, 2, 4, 1, 2, 1, 2, 4, 1, 2, 1, 2, 4, 1, 2, 1, 4, 4, 2, 2, 2, 2, 3, 3, 3, 2, 2, 2, 4, 4, 4, 4, 4, 4, 2, 2, 2, 3, 3, 1, 1, 1, 1, 3, 2, 4, 2, 2, 2, 2, 4, 2, 2, 2, 2, 4, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 2, 2, 2, 2, 3, 3, 3, 2, 2, 2, 4, 4, 4, 4, 4, 4, 2, 2, 2, 3, 3, 1, 1, 1, 1, 3, 2, 4, 2, 2, 2, 2, 4, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 3, 3, 3, 2, 2, 2, 4, 4, 4, 4, 4, 4, 2, 2, 2, 3, 3, 3, 3, 3, 3, 2, 2, 4, 4, 2, 4, 2, 4, 4, 2, 4, 2, 4, 4, 2, 4, 2, 2, 4, 2, 4, 2, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 1, 2, 1, 2, 4, 1, 2, 1, 2, 4, 1, 2, 1, 2, 2, 1, 2, 1, 2, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 4, 4, 4, 4, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 4, 4, 4, 2, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 2, 4];
+let cur=1, tool='brush', grid=true, undoStack=[];
+const cv=document.getElementById('wrap'), cx=cv.getContext('2d');
+const pv=document.getElementById('preview').getContext('2d');
+const pv4=document.getElementById('preview4').getContext('2d');
+document.querySelectorAll('.sw').forEach(s=>{
+  const v=+s.dataset.v, c=LEG[v];
+  s.style.background=`rgb(${c[0]},${c[1]},${c[2]})`;
+  s.onclick=()=>{cur=v;document.querySelectorAll('.sw').forEach(x=>x.classList.remove('sel'));s.classList.add('sel')};
+});
+document.querySelector('.sw').classList.add('sel');
+function draw(){
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const c=LEG[data[y*W+x]];
+    cx.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;
+    cx.fillRect(x*Z,y*Z,Z,Z);
+  }
+  if(grid){cx.strokeStyle='rgba(255,255,255,.08)';
+    for(let x=0;x<=W;x++){cx.beginPath();cx.moveTo(x*Z,0);cx.lineTo(x*Z,H*Z);cx.stroke()}
+    for(let y=0;y<=H;y++){cx.beginPath();cx.moveTo(0,y*Z);cx.lineTo(W*Z,y*Z);cx.stroke()}}
+  const im=pv.createImageData(W,H);
+  for(let i=0;i<W*H;i++){const c=LEG[data[i]];im.data[i*4]=c[0];im.data[i*4+1]=c[1];im.data[i*4+2]=c[2];im.data[i*4+3]=255}
+  pv.putImageData(im,0,0);
+  pv4.imageSmoothingEnabled=false;
+  pv4.drawImage(document.getElementById('preview'),0,0,192,184);
+}
+function px(e){const r=cv.getBoundingClientRect();
+  return [Math.floor((e.clientX-r.left)/Z), Math.floor((e.clientY-r.top)/Z)];}
+function snap(){undoStack.push(data.slice());if(undoStack.length>60)undoStack.shift();}
+let down=false;
+cv.onmousedown=e=>{const[x,y]=px(e);if(x<0||y<0||x>=W||y>=H)return;
+  if(tool==='pick'){cur=data[y*W+x];
+    document.querySelectorAll('.sw').forEach(s=>s.classList.toggle('sel',+s.dataset.v===cur));return;}
+  snap();down=true;
+  if(tool==='fill'){const t=data[y*W+x];if(t===cur)return;
+    const st=[[x,y]];while(st.length){const[a,b]=st.pop();
+      if(a<0||b<0||a>=W||b>=H||data[b*W+a]!==t)continue;
+      data[b*W+a]=cur;st.push([a+1,b],[a-1,b],[a,b+1],[a,b-1]);}
+    draw();down=false;return;}
+  data[y*W+x]=cur;draw();};
+cv.onmousemove=e=>{if(!down||tool!=='brush')return;const[x,y]=px(e);
+  if(x>=0&&y>=0&&x<W&&y<H){data[y*W+x]=cur;draw();}};
+window.onmouseup=()=>down=false;
+for(const id of['brush','fill','pick'])
+  document.getElementById(id).onclick=()=>{tool=id;
+    for(const j of['brush','fill','pick'])
+      document.getElementById(j).classList.toggle('on',j===id);};
+document.getElementById('grid').onclick=e=>{grid=!grid;e.target.classList.toggle('on',grid);draw();};
+document.getElementById('undo').onclick=()=>{if(undoStack.length){data=undoStack.pop();draw();}};
+document.getElementById('save').onclick=()=>{
+  const c=document.createElement('canvas');c.width=W*EXPORT_Z;c.height=H*EXPORT_Z;
+  const g=c.getContext('2d');
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){const cc=LEG[data[y*W+x]];
+    g.fillStyle=`rgb(${cc[0]},${cc[1]},${cc[2]})`;
+    g.fillRect(x*EXPORT_Z,y*EXPORT_Z,EXPORT_Z,EXPORT_Z);}
+  const a=document.createElement('a');a.download='pvm_rear_edit.png';
+  a.href=c.toDataURL('image/png');a.click();};
+document.getElementById('load').onchange=e=>{
+  const f=e.target.files[0];if(!f)return;
+  const img=new Image();img.onload=()=>{
+    const c=document.createElement('canvas');c.width=img.width;c.height=img.height;
+    const g=c.getContext('2d');g.drawImage(img,0,0);
+    const sc=img.width/W;
+    snap();
+    for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+      const d=g.getImageData(Math.floor(x*sc+sc/2),Math.floor(y*sc+sc/2),1,1).data;
+      let best=1,bd=1e9;
+      for(const[v,cc]of Object.entries(LEG)){
+        const dd=(cc[0]-d[0])**2+(cc[1]-d[1])**2+(cc[2]-d[2])**2;
+        if(dd<bd){bd=dd;best=+v;}}
+      data[y*W+x]=best;}
+    draw();};
+  img.src=URL.createObjectURL(f);};
+draw();
+</script>

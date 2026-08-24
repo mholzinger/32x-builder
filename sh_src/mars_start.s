@@ -89,6 +89,10 @@ MARS_HEADER:
 ! Standard MD startup code at 0x3F0
 M68K_CODE:
 		.incbin "md_start.bin"
+		.align 2   /* an odd-length MD binary must never shift what follows
+		            * to an odd address — that boots BLACK (found 2026-08-09
+		            * when the SMS payload shrank 65 bytes and flipped the
+		            * binary's parity). Belt against any future odd artifact. */
 
 
 	.data

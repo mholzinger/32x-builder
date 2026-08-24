@@ -1094,3 +1094,80 @@ if (AMB_ACTIVE && (amb_buf_needs_fill & (1 << amb_current_buf_idx)))
 ```
 
 Tags: `HW-TRUTH` | `OPTIMIZATION` | `BUG` | `ARCHITECTURE` | `COLLAB`
+
+## ARCHITECTURE: A Speex codec on the SH-2, and the 71 KB buffer that was hiding in plain sight
+
+**Tag:** ARCHITECTURE
+
+**Context:** The neanderthal broadcasts the Voyager Golden Record
+greetings over PWM. The shipped clip was 30 seconds of 6 kHz/8-bit PCM
+(180 KB); the full recording is 4:25 in 55 languages — 1.59 MB at the
+same bake, on a cart where samples already owned ~79% of ROM. We wanted
+MP3-class compression, and for speech the right answer is a speech
+codec: Speex narrowband, which ships a fixed-point reference
+implementation built for FPU-less embedded CPUs.
+
+**Outcome:** The full 4:25 recording now plays from 259 KB of ROM
+(13,259 CBR frames, 20 bytes each, 8 kbps) — smaller net cart than
+before once the old bake was deleted. The decode strip is 22 upstream
+files compiled as-is (DISABLE_WIDEBAND + DISABLE_ENCODER + DISABLE_VBR
++ FIXED_POINT), a 4-file glue layer, and zero upstream patches. The
+secondary SH-2 decodes 20 ms frames into an 8 kHz ring just ahead of
+the mixer's read cursor, only while the player is inside the fade
+radius — steady-state cost far from the neanderthal is zero.
+
+Three findings worth keeping:
+
+1. **Host-first porting pays.** The identical source strip + glue
+   compiled on macOS caught the one real landmine before any SH-2
+   build: SpeexBits must wrap a RAM scratch buffer, because both
+   `speex_bits_reset` and `speex_bits_read_from` WRITE into the
+   buffer — pointed at the const ROM frame array it would have been a
+   silent write-to-ROM on hardware (SIGBUS on the host, instantly
+   visible).
+2. **Measure upstream's guesses.** `NB_DEC_STACK` defaults to 16,000
+   bytes of scratch. Pattern-painting the arena and decoding the entire
+   baked bitstream showed a true high-water of 1,124 bytes. Our
+   bitstream is a fixed ROM asset, so that measurement is exhaustive,
+   not statistical.
+3. **The overlay pattern generalizes.** The link overflowed SDRAM by
+   22.7 KB — the region is genuinely full. But hero_scratch (the 71,680
+   byte title-intro decode buffer) is dead during gameplay and already
+   exported for aliasing (the exit-hole peek borrows its low 2.8 KB).
+   All decoder state — PCM ring, frame scratch, and the whole
+   allocation arena — now lives at hero_scratch+3K, and amb_pump lazily
+   rebuilds the decoder whenever ambient audio re-activates, so a title
+   replay scribbling over the slice heals by construction. Deficit
+   went from 22,784 bytes over to fitting with the arena at DOUBLE its
+   minimum size.
+
+Also fixed by the rewrite: the old 16.16 hello cursor overflowed at
+sample 65,536 — the 30-second clip had only ever looped its first ~11
+seconds. And the broken-tape death effect (reverse + variable-rate
+scrubbing, impossible on a compressed stream) keeps its exact shipped
+math against a dedicated 4 s PCM excerpt (24 KB).
+
+**Insight:** On a fixed-content system, codec memory sizing is not a
+tuning problem, it's a measurement problem — decode YOUR bitstream once
+on the host and size to the observed peak. And before shrinking
+anything to fit SDRAM, list what's already resident by PHASE, not by
+size: the biggest buffer in the region was free real estate for the
+entire gameplay phase.
+
+**Files:** `sh_src/speex/` (decode strip + config.h + spx_glue.c +
+freestanding shims), `sh_src/sound.c` (ring/mixer/lazy-init),
+`tools/speex_bake.c` (mp3 → CBR frame array), `sh_src/amb_death_tape.*`
+(death-warp excerpt), `sh_src/box_hero.c` (the aliased buffer's rules).
+
+**Excerpt:**
+
+```c
+/* sound.c — all decoder state lives in the title intro's dead buffer */
+extern uint8_t hero_scratch[];               /* box_hero.c title scratch */
+#define SPX_SLICE       (hero_scratch + 3072) /* clear of exit-peek alias */
+static int16_t *const hello_ring    = (int16_t *)(void *)SPX_SLICE;
+
+/* amb_pump — a title round-trip clobbers the slice; rebuild heals it */
+if (!AMB_ACTIVE) { spx_ready = 0; return; }
+if (!spx_ready)  { spx_hello_reinit(); spx_ready = 1; }
+```

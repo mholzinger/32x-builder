@@ -14,7 +14,13 @@ SECTIONS {
 		*(.text.keepboot)
 		*(.text .text.*)
 		*(.rodata .rodata.*)
-		__text_end = ALIGN(2);
+		. = ALIGN(2);   /* PAD THE SECTION, not just the symbol: .data's load
+		                 * image sits at LOADADDR(.text)+SIZEOF(.text), and an
+		                 * odd .text size put it at an odd ROM address — the
+		                 * 68K's word-copy startup address-errored and the
+		                 * whole cart booted black (2026-08-09, the SMS
+		                 * payload's size flipped the parity). */
+		__text_end = .;
 	} > rom
 	__text_size = SIZEOF(.text);
 

@@ -126,7 +126,7 @@ jobs:
           ${{ steps.lint.outputs.verdict }}
           \`\`\`
 
-          _The **ci / build** check compiles this map into the ROM — grab the \`backrooms-32x\` artifact from that run to play it before merging. Once merged, it ships automatically in the next \`build-N\` release._
+          _The **ci / build** check compiles this map — grab the \`backrooms-32x-community\` artifact from that run to play it before merging. Community maps ship in \`backrooms-community.32x\` and in your own \`backrooms-<name>.32x\`, both attached to every \`build-N\` release; the maintainer promotes maps into the main ROM by hand._
           COMMENT_EOF
           )
           # Update the bot's existing comment if present, else create it.

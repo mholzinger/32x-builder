@@ -469,17 +469,53 @@ window.RC = (function () {
     for (const dec of window.ME.model.decals) {
       if (dec.kind === 'outlet' && spr.outlet) drawWallDecal(data, zbuf, dec, spr.outlet, 0.031, dec.z != null ? dec.z : 0.20, 0.098);
       else if (dec.kind === 'door' && spr.door) drawWallDecal(data, zbuf, dec, spr.door, 0.24, 0.49, 0.98);
+      else if (dec.kind === 'exit_hole') drawExitHole(data, zbuf, dec);
+      else if (spr[dec.kind] && spr[dec.kind].wall) {
+        /* Community WALL decal (bake_sprite --mount wall): same flat-on-the-
+         * wall draw as the outlet, at its registry size + placed height. */
+        const cs = spr[dec.kind];
+        const kz = ((window.ME.reg.decals.kinds.find(k => k.id === dec.kind) || {}).z);
+        drawWallDecal(data, zbuf, dec, cs, cs.world_hw,
+                      dec.z != null ? dec.z : (kz != null ? kz : 0.5), cs.world_h);
+      }
     }
     if (spr.outlet) for (const o of procOut)   // engine's auto-placed outlets
       drawWallDecal(data, zbuf, o, spr.outlet, 0.031, 0.20, 0.098);
-    /* FREE-STANDING billboards — the neanderthal standup, far -> near. */
+    /* FREE-STANDING billboards, far -> near: the neanderthal standup plus
+     * every registry-standalone community standee (bake_sprite.py) — the
+     * export carries each one's world dims, so new sprites render at true
+     * scale with no edits here. */
     const bills = [];
-    for (const dec of window.ME.model.decals)
+    for (const dec of window.ME.model.decals) {
+      if (dec.kind === 'chair') continue;                 /* live-3D below */
+      let sp = null, hw = 0, h = 0;
       if (dec.kind === 'neanderthal' && spr.neander) {
-        const ddx = dec.x - px, ddy = dec.y - py; bills.push({ d2: ddx * ddx + ddy * ddy, dec });
+        sp = spr.neander; hw = 0.45, h = 0.90;
+      } else if (spr[dec.kind] && spr[dec.kind].world_h && !spr[dec.kind].wall) {
+        sp = spr[dec.kind];
+        /* The 0.9 is a STANDEE fudge borrowed from the neanderthal: a printed
+         * cutout reads slightly smaller than its nominal size. A box model is
+         * real geometry with real dimensions, so shrinking it just makes the
+         * preview lie about scale -- the desk showed up looking like a side
+         * table. registry decals.kinds[].box_model says which is which, so the
+         * import tool can set it and this stays data-driven. */
+        const kd = (window.ME.reg.decals.kinds || []).find(k => k.id === dec.kind);
+        const scale = (kd && kd.box_model) ? 1.0 : 0.9;
+        h = sp.world_h * scale;
+        /* drawSprite's width argument is the FULL width, not a half-extent --
+         * the neanderthal branch above passes 0.45/0.90, which are already full
+         * dimensions. Passing world_hw straight through drew every generic
+         * sprite at exactly HALF its proper width; the desk showed up looking
+         * like a side table. */
+        hw = sp.world_hw * 2 * scale;
       }
+      if (!sp) continue;
+      const ddx = dec.x - px, ddy = dec.y - py;
+      bills.push({ d2: ddx * ddx + ddy * ddy, dec, sp, hw, h });
+    }
     bills.sort((a, b) => b.d2 - a.d2);
-    for (const it of bills) drawSprite(data, zbuf, it.dec.x, it.dec.y, spr.neander, 0.45, 0.90, 0.45);
+    for (const it of bills)
+      drawSprite(data, zbuf, it.dec.x, it.dec.y, it.sp, it.hw, it.h, it.h / 2);
 
     /* Live-3D chairs — projected geometry, far -> near. */
     const chairs = [];
@@ -526,7 +562,72 @@ window.RC = (function () {
     }
   }
 
-  function drawSprite(data, zbuf, wx, wy, sprite, sw, sh, zc) {
+  /* EXIT HOLE — ports the engine's draw_exit_hole: a carved box in the wall
+   * face (sill 100/256, head 212/256, half-width 0.30), interior shaded by
+   * the ray's traversal depth with the FILM-REFERENCE asymmetry: the lit
+   * side wall holds readable for a cell, the shadow side and the head fall
+   * to the murk register fast, the sill stays lit at the lip. Procedural
+   * (no sprite) — same bands, same palette ramp as the ROM. */
+  function drawExitHole(data, zbuf, dec) {
+    const HW = 0.30, Z0 = 100 / 256, Z1 = 212 / 256;
+    const ns = dec.face === 'N' || dec.face === 'S';
+    let ax, ay, bx, by;
+    if (ns) { ax = dec.x - HW; ay = dec.y; bx = dec.x + HW; by = dec.y; }
+    else { ax = dec.x; ay = dec.y - HW; bx = dec.x; by = dec.y + HW; }
+    /* Interior direction: the solid side of the face plane. face N = seen
+     * from the north (smaller y) => interior +y; mirrored for the rest. */
+    const dirIn = dec.face === 'N' ? 1 : dec.face === 'S' ? -1
+                : dec.face === 'W' ? 1 : -1;
+    const dirX = Math.cos(pa), dirY = Math.sin(pa);
+    const planeX = -dirY * 0.66, planeY = dirX * 0.66;
+    const eh = eyeH, B2 = B, P = A().palette, sl = SL();
+    const wallIdx = s => P[B2.WALL_BASE + Math.max(0, Math.min(sl - 1, s))] || [0, 0, 0];
+    for (let col = 0; col < W; col++) {
+      const cam = 2 * col / W - 1;
+      const rdx = dirX + planeX * cam, rdy = dirY + planeY * cam;
+      const hit = raySeg(px, py, rdx, rdy, ax, ay, bx, by);
+      if (!hit) continue;
+      const t = hit.dist;
+      if (t <= 0.05 || t > zbuf[col] + 0.2) continue;
+      const rdp = ns ? rdy : rdx, rda = ns ? rdx : rdy;
+      if (Math.abs(rdp) < 1e-4) continue;
+      const off = (hit.u - 0.5) * 2 * HW;
+      /* Far plane one cell deeper, clamped to the cavity side. */
+      let t2 = t + dirIn / rdp, sideHit = false;
+      if (Math.abs(rda) > 1e-3) {
+        const edge = rda > 0 ? HW - off : off + HW;
+        const ts = t + Math.max(0, edge) / Math.abs(rda);
+        if (ts < t2) { t2 = ts; sideHit = true; }
+      }
+      if (t2 < t) t2 = t;
+      const bsh = shadeIdx(t, 0, 0);
+      const murk = Math.min(sl - 2, bsh + 8);
+      let s0, reach;                          /* asymmetric interior (film ref) */
+      if (sideHit && rda < 0) { s0 = bsh + 1; reach = 1.0; }
+      else if (sideHit)       { s0 = bsh + 5; reach = 0.33; }
+      else                    { s0 = bsh + 2; reach = 0.5; }
+      const dIn = Math.max(0, t2 - t);
+      const sv = Math.min(murk, s0 + (murk - s0) * Math.min(1, dIn / reach));
+      const yAt = (z, d) => MID - (z - eh) * H / d;
+      const hn = yAt(Z1, t), hf = yAt(Z1, t2), sn = yAt(Z0, t), sf = yAt(Z0, t2);
+      const headLo = Math.min(hn, hf), headHi = Math.max(hn, hf);
+      const sillLo = Math.min(sn, sf), sillHi = Math.max(sn, sf);
+      const fill = (y0, y1, sAt) => {
+        for (let y = Math.max(0, Math.floor(y0)); y < Math.min(H, Math.ceil(y1)); y++) {
+          const c = wallIdx(Math.round(sAt((y - y0) / Math.max(1, y1 - y0))));
+          const o = (y * W + col) * 4;
+          data[o] = c[0]; data[o + 1] = c[1]; data[o + 2] = c[2]; data[o + 3] = 255;
+        }
+      };
+      fill(headLo, headHi, f => bsh + 4 + (sv - bsh - 4) * f);   /* head: shadowed */
+      fill(headHi, sillLo, () => sv);                            /* core / side wall */
+      fill(sillLo, sillHi, f => sv + (bsh + 1 - sv) * f);        /* sill: lit lip */
+    }
+  }
+
+  /* sw/sh are FULL world width and height (not half-extents) -- spw/sph below are
+ * used as the total on-screen span. */
+function drawSprite(data, zbuf, wx, wy, sprite, sw, sh, zc) {
     const dirX = Math.cos(pa), dirY = Math.sin(pa);
     const planeX = -dirY * 0.66, planeY = dirX * 0.66;
     const dx = wx - px, dy = wy - py;

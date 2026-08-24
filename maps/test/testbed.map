@@ -1,0 +1,160 @@
+# testbed.map
+name: TESTBED
+size: 32x32
+spawn: 16.5, 27.5 facing=N
+role: test
+author: maintainer
+next: BACKROOMS
+
+[grid]
+################X###############
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+#..............................#
+################################
+
+[crawl]
+20,4 dir=E len=9
+# HEADER-HEIGHT TEST BEAM: a standalone N-S soffit at h=header, open ceiling all
+# around -- the tall-slab variant of the crawl primitive (TESTING>BULKHEAD kills
+# its render pass-pair for same-binary A/B on the L: counter).
+22,25 dir=S len=5 h=header
+# CRAWL STRESS: a 5-wide, 15-deep tunnel straight ahead of the N-facing spawn so
+# looking forward fills the view with low-ceiling slab + bulkhead mouth (the F:06
+# spike repro). Six rects total also exercises the bulkhead's per-rect divides.
+14,10 dir=S len=15
+15,10 dir=S len=15
+16,10 dir=S len=15
+17,10 dir=S len=15
+18,10 dir=S len=15
+
+[partitions]
+3,3 -> 3,8  style=chevron height=full crawl=no
+6,3 -> 6,8  style=spotted height=low crawl=no
+# CRISP / LOD BACK-OFF TEST (chevron texture LOD + B column-LOD parity): two
+# half-height dividers, one of each style, side by side. Walk up, then back off
+# past ~2.5 cells in an ADAPTIVE=LOD mode — both must stay crisp, not stair-step.
+9,3 -> 9,8  style=chevron height=half crawl=no
+12,3 -> 12,8  style=spotted height=half crawl=no
+# SEE-OVER TEST (#7 PART_TOP parity): a half-height counter parked just SOUTH of
+# the neanderthal trio at row 21. Approach from the south facing N — their heads
+# must show ABOVE the band, bodies hidden below it (before the fix they vanished
+# column-wide). The chair stress block behind other dividers stays fully hidden,
+# confirming the chair-occluder branch is untouched.
+12,22 -> 15,22  style=chevron height=half crawl=no
+
+[decals]
+# EXIT HOLE TEST: dead behind the N-facing spawn (16.5,27.5) on the south
+# wall — turn around, walk 3 cells, stand centered in (16,30) facing S and
+# the pull-up climb should auto-start.
+exit_hole 16.5,31 face=N
+neanderthal 12.5,21.5 face=S
+neanderthal 13.5,21.5 face=S
+neanderthal 14.5,21.5 face=S
+# Directional-billboard test row: one chair per cardinal, spaced for circling.
+# Far chairs = baked view per your bearing (12 sectors, mirrored); within
+# 4 cells the true-3D box chair pops in at the same orientation.
+chair 8.5,24.5 face=N
+chair 12.5,24.5 face=E
+chair 16.5,24.5 face=S
+chair 20.5,24.5 face=W
+# Distant pair: watch the view index change as you strafe, then approach.
+chair 24.5,17.5 face=N
+chair 22.5,14.5 face=E
+# STRESS BLOCK: cafeteria grid, 12 chairs at mixed facings — up to ~12 visible
+# at once from the south. Was 15; the 3 east-edge stragglers went to the PVM
+# carts below (the map sits at the max_decals 32 engine cap, so every new
+# test object is a trade).
+chair 6.5,20.5 face=E
+chair 9.5,20.5 face=S
+chair 12.5,20.0 face=W
+chair 15.5,20.5 face=N
+chair 18.5,20.5 face=E
+chair 6.5,22.0 face=S
+chair 9.5,22.0 face=W
+chair 12.5,23.0 face=N
+chair 15.5,22.0 face=E
+chair 18.5,22.0 face=S
+chair 6.5,23.5 face=W
+chair 9.5,23.5 face=N
+
+# DESK (first GLB import: tools/bake_boxes.py -> 3 disjoint boxes, 18 faces).
+# Cardinal row for circling, same idea as the chair row above — walk around each
+# and the 12 baked directional views should swap without the silhouette jumping.
+# Kept clear of the x14..18 crawl tunnels (rows 10..24).
+desk 5.5,16.5 face=N
+desk 9.5,16.5 face=E
+desk 21.5,16.5 face=S
+desk 25.5,16.5 face=W
+# Dead ahead of the N-facing spawn (16.5,27.5): first thing you see on load,
+# and the pair at different depths shows the near/far read side by side.
+desk 16.5,26.0 face=S
+desk 19.5,25.0 face=W
+
+# PVM CART (second GLB import: monitor + open-frame stand, 6 boxes / 36
+# faces — cheaper than the chair. The legs are hand-added BAKE_EXTRA posts,
+# so eyeball them from a low crouch: they must meet the bottom shelf and the
+# monitor with no float gap). One beside the spawn desk for the first look,
+# two more for near/far and circling.
+# Budget is 2 per map now (registry max_pvms — Mike: they feel expensive);
+# the third tester lost its seat.
+pvm 14.5,26.0 face=S
+pvm 24.5,26.5 face=E
+# Against the chair row, for a scale check: a desk should read taller-topped and
+# much wider than the chair beside it.
+desk 24.5,20.5 face=N
+
+[dark]
+2,13 -> 8,19
+
+[lights]
+12,11
+16,11
+20,11
+26,11
+12,16
+16,16
+20,16
+26,16
+12,21
+16,21
+20,21
+26,21
+12,26
+16,26
+20,26
+26,26
+5,11
+24,11
+
+[options]
+place_outlets: 4
+place_exit_door: 1
+lobby_ceiling: 0

@@ -1,5 +1,82 @@
 # Road to 30fps — corrected cost model (2026-06-19)
 
+## Session 2026-08-09 — POST-VOYAGER BASELINE (Phase 1: measure, change nothing)
+
+Binary: B00240 C291ECB (band fix included — the crawl capture doubles as
+its verification). All captures MiSTer hardware. Discipline: WALLS pinned
+(never AUTO near the HUD), stand dead still, X/Y/A recorded per row so poses
+replay. Profiler tax (~2,255t) is in every number, as always.
+
+### Capture matrix — FILLED 2026-08-09 (MiSTer HARDWARE — truth tier; B00240 C291ECB)
+
+| # | scene | pose (X/Y/A) | WALLS | F | T | W | G | R | L | O | C | P | I | H | S |
+|---|-------|--------------|-------|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | corridor  | 16.5/28.5/192 | FULL | 08 | 23547 | 10213 | 1393 | 2717 |  776 |    0 | 475 | 524 | 357 | 14435 | 14788 |
+| 2 | corridor  | same          | HALF | 09 | 18968 |  6376 | 1258 | 2961 | 1032 |    0 | 704 | 634 | 357 | 11083 | 11602 |
+| 3 | open room | 01.3/13.8/000 | FULL | 08 | 23004 |  6049 | 2825 | 3952 | 1314 |    0 | 654 | 633 | 951 | 13362 | 13974 |
+| 4 | open room | same          | HALF | 10 | 18924 |  3580 | 2888 | 4029 | 1347 |    0 | 543 | 638 | 944 | 11029 | 11468 |
+| 5 | crawl     | 01.3/22.3/064 | FULL | 06 | 29141 |  6138 | 2098 | 8122 | 6045 |    0 | 514 | 258 | 530 | 16635 | 17393 |
+| 6 | crawl     | same          | HALF | 07 | 26326 |  3243 | 2023 | 8126 | 6097 |    0 | 732 | 297 | 589 | 14179 | 14718 |
+| 7 | part. pit | 27.8/14.4/212 | FULL | 05 | 38937 | 24836 | 1333 | 1934 | 2013 | 6304 | 537 |1094 | 625 | 28208 | 28781 |
+| 8 | part. pit | same          | HALF | 07 | 26960 | 13543 | 1079 | 1971 | 2119 | 3536 | 564 |1086 | 603 | 16811 | 17249 |
+
+Band-fix note: the crawl captures show a clean passage — the Voyager window
+band did not reproduce on B00240.
+
+### HELLO A/B — the creeps question (open room, WALLS=AUTO, both arms same mode)
+
+| HELLO | F | T | S | DT | DX |
+|-------|---|---|---|----|----|
+| ON  | 09 | 18983 | 11710 | 109 | 5417 |
+| OFF | 10 | 18749 | 11683 | 109 | 5417 |
+
+**Verdict: the Voyager decode is EXONERATED — on hardware.** S delta = 27
+ticks, T delta = 234 — noise. Question closed, no caveats. (Two flags for the audio side, not perf: DT reads 109
+even with HELLO OFF — the counter is not zeroed when idle — and DX advanced
+only ~2,300 frames (~46 s of audio) across an ~8-minute session, nowhere
+near the ~50/s a live broadcast needs. Either the pacing is intentional or
+the broadcast is quietly starving.)
+
+### 2026-08-09 addendum — carpet zone fills: kill A/B, then a falsified fix
+
+UNLITF A/B (hardware, crawl pose): fills ON R:8,582 / OFF R:2,199 — the two
+unlit-zone fills are 6,383 ticks, 74% of the crawl's carpet pass, one whole
+vblank (F:07 -> 08 with them off). Then the cell-run walk (test the grid only
+on cell-boundary crossings, a34e99d) measured a WASH: R 8,553 vs 8,582.
+**Falsified: the per-pair grid test was never the cost.** The fill is
+iteration + uncached-store bound (~9k pairs x loop work + word store +
+lod_pair mirror). The old "4 divides/row" note is also dead — divides are
+~300 cycles/row.
+
+**The banked lever (post-SMS): zone-aware CLEAR.** The clear pass already
+writes every floor pixel as longword fills; teach its per-row floor gradient
+the zone spans (same bbox clip, once) and the dark floor costs ZERO extra
+stores — the carpet zone blocks shrink to stain re-stamps. Recovers most of
+the 6.4k. Do not iterate further inside the carpet loops; the A/B ceiling is
+known.
+
+### What the numbers say (ticks/vblank ~= 3,100; a step = one whole vblank)
+
+1. **The partition pit is the fire.** T 38.9k at FULL = ~12.5 vblanks = F:05,
+   and it is ALL walls: W 24,836 + O 6,304 overlay. HALF buys back 12k ticks
+   (F:07) and it is STILL the worst scene. Nothing else is within shouting
+   distance of this pass. This is where the staircase/pivot decisions live.
+2. **The crawl's top pass is the CARPET, not the slab.** R 8,122 (unmoved by
+   HALF) beats L 6,045. The old "unlit zones burn 4 divides/row where 2
+   would do" item is now the measured lever; slab second.
+3. **Open room: floor+ceiling combined (6.8k) edge out walls (6k)** — the
+   ceiling-LOD + overdraw-prototype pair aims here, worth ~1-2 vblanks.
+4. **Corridor at HALF is already at the F:09-10 step** — healthy.
+5. These ARE the hardware numbers (Mike ran the whole matrix on MiSTer) —
+   no verification pass owed. Phase 2 spends against this table directly.
+
+### Questions this data answers before Phase 2 spends anything
+1. Did the Voyager decode eat a vblank? (S/DT delta vs the HELLO=OFF row.)
+2. Which pass tops each scene NOW — does the 2026-08-06 table still hold?
+3. How far is each scene from the next vblank step (multiples of ~2,800t)?
+4. Is the partition pit still 7-10fps, and what exactly dominates it?
+
+
 > ## Session results — 2026-06-19 (shipped, MiSTer-verified)
 >
 > Banked this batch (squashed). All numbers are MiSTer (truth), not Ares.

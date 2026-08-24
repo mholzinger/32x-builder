@@ -71,6 +71,17 @@ def parse_map(path, errs):
         text = open(path).read()
     except OSError as ex:
         errs.append("%s: cannot read (%s)" % (base, ex)); return None
+    # An empty or whitespace-only file is the signature of the editor's submit
+    # dropping the map content (the large-map fallback used to open an empty
+    # GitHub editor). Name that plainly instead of leaking a "missing 'name:'"
+    # parser error, so the contributor knows to re-export and resubmit.
+    if not text.strip():
+        errs.append("%s: file is empty — the map content didn't make it into "
+                    "the commit. Re-export the .map from the editor "
+                    "(backrooms-32x-project.fly.dev) and resubmit; if you "
+                    "pasted into the GitHub editor, make sure the paste landed "
+                    "before you committed." % base)
+        return None
     try:
         return mapfmt.parse(text)
     except mapfmt.MapFormatError as ex:
@@ -154,6 +165,42 @@ def lint_model(m, base, folder, reg, seen_names, errs):
           "billboards and only the nearest 3 render true-3D — the cap now "
           "tracks the engine's standup table, not per-chair render cost)"
           % (n_chairs, lim["max_chairs"]))
+    # Desks get their own budget alongside chairs. A desk is CHEAPER to draw than
+    # a chair (3 boxes / 18 faces vs 9 / 54) but it is physically much bigger, so
+    # the cost that matters is screen fill, and its directional billboard set is
+    # the widest asset in ROM — it alone eats 3280 of the 4096-byte shared decode
+    # scratch. The cap is deliberately below what the frame could take so the
+    # budget stays: 8 desks + 21 chairs + 3 neanderthals = 32, leaving 4 of
+    # max_standups 36 spare for the next imported asset.
+    n_desks = sum(1 for d in m["decals"] if d.get("kind") == "desk")
+    if "max_desks" in lim and n_desks > lim["max_desks"]:
+        e("%d desks exceed max_desks %d (desks share the engine's %d-slot "
+          "standup table with chairs and neanderthals; the budget leaves 4 "
+          "slots spare for the next imported asset)"
+          % (n_desks, lim["max_desks"], lim.get("max_standups", 36)))
+    # The PVM cart is the import those 4 spare slots were reserved for
+    # (6 boxes / 36 faces — carved lighter than the chair after the first
+    # 11-box cut showed on the frame counters). The cap stays at the
+    # spare-slot count rather than growing the standup table: 8 desks +
+    # 21 chairs + 3 neanderthals + 4 PVMs = max_standups 36.
+    n_pvms = sum(1 for d in m["decals"] if d.get("kind") == "pvm")
+    if "max_pvms" in lim and n_pvms > lim["max_pvms"]:
+        e("%d PVMs exceed max_pvms %d (PVM carts fill the last %d spare "
+          "slots of the engine's %d-slot standup table)"
+          % (n_pvms, lim["max_pvms"], lim["max_pvms"],
+             lim.get("max_standups", 36)))
+    # EVERY free-standing object shares one engine array (raycast.c MAX_STANDUPS),
+    # and the loader fills it in decal order then silently drops the rest. The
+    # testbed lost all 7 of its desks that way: 3 neanderthals + 21 chairs filled
+    # the old 24 slots exactly, so the tail vanished with no error anywhere. Count
+    # the standalone kinds against the engine cap, not just chairs.
+    standalone_ids = {k["id"] for k in reg["decals"]["kinds"] if k.get("standalone")}
+    n_standup = sum(1 for d in m["decals"] if d.get("kind") in standalone_ids)
+    if "max_standups" in lim and n_standup > lim["max_standups"]:
+        e("%d free-standing objects exceed max_standups %d — the engine's "
+          "standup table is a hard cap and the loader DROPS the overflow "
+          "silently (raise MAX_STANDUPS in raycast.c and this limit together)"
+          % (n_standup, lim["max_standups"]))
     edge_total = sum(int(abs(p["x2"] - p["x1"]) + abs(p["y2"] - p["y1"]))
                      for p in m["partitions"])
     # A void exit is a MISSING WALL cell on the border: an opening you walk out
@@ -194,6 +241,25 @@ def lint_model(m, base, folder, reg, seen_names, errs):
             e("partition (%g,%g)->(%g,%g) is diagonal — partitions are axis-aligned"
               % (p["x1"], p["y1"], p["x2"], p["y2"]))
 
+    # Every decal must name an asset THIS REPO has, and a map that ships in the
+    # flagship ROM (core/curated tiers) may only use first-party assets. The
+    # editor lets an author bake a sprite and place it in the same session, so a
+    # submitted map can reference an asset whose own PR never landed — that map
+    # used to pass this lint and then break the ROM build with a codegen error
+    # nobody but the maintainer ever saw.
+    kind_ids = {k["id"] for k in reg.get("decals", {}).get("kinds", [])}
+    sprite_tier = {s["id"]: s.get("tier", "core")
+                   for s in reg.get("assets", {}).get("sprites", [])}
+    map_tier = roles.get(role, {}).get("tier", "community")
+    for kd in sorted({d.get("kind") for d in m["decals"]}):   # once per KIND, not per decal
+        if kd not in kind_ids:
+            e("decal kind %r is not in the game yet — if you baked it in the "
+              "editor, submit the sprite first and place it once that PR is "
+              "merged" % kd)
+        elif map_tier != "community" and sprite_tier.get(kd) == "community":
+            e("%s is a community asset, so it can't be used by a %s map "
+              "(community assets ship only in the community ROM)" % (kd, map_tier))
+
     standalone_ids = {k["id"] for k in reg.get("decals", {}).get("kinds", [])
                       if k.get("standalone")}
     for d in m["decals"]:
@@ -231,6 +297,47 @@ def lint_model(m, base, folder, reg, seen_names, errs):
             e("next: points at itself")
 
 
+ARENA_BASE, ARENA_END, ARENA_STRIDE = 144, 256, 8
+
+
+def arena_usage(sprites):
+    """(used, capacity) sprite slots in the community CRAM arena."""
+    used = [s for s in sprites if isinstance(s.get("base"), int)]
+    return len(used), (ARENA_END - ARENA_BASE) // ARENA_STRIDE
+
+
+def _lint_palette_arena(sprites, errs):
+    """The community palette arena is the REAL ceiling on a shared ROM, and it
+    is much lower than ROM size suggests: 14 sprite slots, 8 CRAM entries each.
+    One contributor's set of decals took four. A shared "everybody's work" ROM
+    therefore fills after a handful of people — which is exactly why the editor
+    points contributors at their own fork, where all 14 slots are theirs.
+
+    Without this check the wall arrives as a cryptic codegen error on whoever's
+    PR happens to be the straw, or worse, as sprites rendering in each other's
+    colours."""
+    used, cap = arena_usage(sprites)
+    if used > cap:
+        errs.append(
+            "assets: %d sprites with their own palette, but the community CRAM "
+            "arena holds %d (%d..%d, %d entries each). A shared ROM cannot take "
+            "more — promote a sprite to a first-party ramp, drop one, or let "
+            "the author keep it in their own fork where the whole arena is "
+            "theirs." % (used, cap, ARENA_BASE, ARENA_END - 1, ARENA_STRIDE))
+    seen = {}
+    for s in sprites:
+        b = s.get("base")
+        if not isinstance(b, int):
+            continue
+        if b in seen:
+            errs.append("assets: %s and %s share palette base %d — their colours "
+                        "would overwrite each other" % (seen[b], s.get("id", "?"), b))
+        seen[b] = s.get("id", "?")
+        if b < ARENA_BASE or b + ARENA_STRIDE > ARENA_END:
+            errs.append("assets: %s base %d is outside the community arena %d..%d"
+                        % (s.get("id", "?"), b, ARENA_BASE, ARENA_END - 1))
+
+
 def lint_assets(reg, sh_dir, errs):
     try:
         export_assets.build_assets(ROOT)        # resolves palette + registry + sprites
@@ -241,6 +348,7 @@ def lint_assets(reg, sh_dir, errs):
     # sprite_defs[] table — validate every entry + that its _tex.h exist and are
     # well-formed, so a bad asset fails the build/PR (same gate as maps).
     sprites = reg.get("assets", {}).get("sprites", [])
+    _lint_palette_arena(sprites, errs)
     kinds_seen, tex_files = {}, set(["wall_tex.h", "partition_tex.h"])
     for s in sprites:
         sid = s.get("id", "?")
@@ -252,7 +360,7 @@ def lint_assets(reg, sh_dir, errs):
         if s.get("decode") not in (None, "offset", "door"):
             errs.append("assets: sprite %s bad decode %r" % (sid, s["decode"]))
         for f in s.get("flags", []):
-            if f not in ("animated", "lod", "standalone", "colmajor"):
+            if f not in ("animated", "lod", "standalone", "colmajor", "artpal"):
                 errs.append("assets: sprite %s bad flag %r" % (sid, f))
         if "kind" in s:
             if s["kind"] in kinds_seen:

@@ -76,7 +76,26 @@ static const fx_t FACE_V[4] = { 0, 0, FX_ONE, FX_ONE };
 #define WEAR_N    (1 << WEAR_BITS)
 #define WEAR_SH   (FX_SHIFT - WEAR_BITS)
 #define WEAR_MASK (WEAR_N - 1)
-static int8_t wear_lut[WEAR_N][WEAR_N];
+/* MEMORY OVERLAY: box3d runs ONLY as the startup intro (box3d_play, then
+ * box3d_play_fall on menu commit) and is DEAD during gameplay, so every buffer
+ * below joins hero_scratch in the overlay above _end.
+ *
+ * They go in .hero_overlay_lo, NOT .hero_overlay: that region is also where the
+ * stack spills, and these buffers are LIVE while the intro runs. _lo is linked
+ * at the BOTTOM of the overlay so hero_scratch (dead by then -- box_hero_show
+ * has already returned) sits between them and the stack and absorbs the intro's
+ * ~1.5 KB. Putting box_cover in plain .hero_overlay lands it ~200 bytes under
+ * __stack and the intro freezes on the first render_frame.
+ *
+ * Each is rebuilt before use, so losing the .bss zero-init is safe: wear_lut is
+ * filled by
+ * build_wear_lut() at the top of box3d_play (the only entry point, and ahead of
+ * the START-skippable frame loop); wverts/cverts are written across all
+ * BOX_NVERTS by render_geometry each frame; box_dl's order[]/poly[] are fully
+ * rewritten per frame and guarded by nv < 3; box_cover is cleared per band at
+ * the head of box3d_render_band. */
+static int8_t wear_lut[WEAR_N][WEAR_N]
+    __attribute__((section(".hero_overlay_lo")));
 
 typedef struct { fx_t cx, cy, depth, u, v; } cvert_t;
 
@@ -98,12 +117,13 @@ typedef struct {
     uint8_t    order[BOX_NFACES];
 } box_drawlist_t;
 
-static box_drawlist_t box_dl;
+static box_drawlist_t box_dl
+    __attribute__((section(".hero_overlay_lo")));
 #define BOX_DL ((volatile box_drawlist_t *)((uintptr_t)&box_dl | 0x20000000))
 
 /* Primary-only geometry scratch. */
-static fx_t    wverts[BOX_NVERTS][3];
-static cvert_t cverts[BOX_NVERTS];
+static fx_t    wverts[BOX_NVERTS][3] __attribute__((section(".hero_overlay_lo")));
+static cvert_t cverts[BOX_NVERTS]    __attribute__((section(".hero_overlay_lo")));
 
 /* Per-logical-pixel coverage mask for near-to-far overdraw skip. Faces are
  * drawn nearest-first; a pixel already marked here is skipped, so the
@@ -111,7 +131,8 @@ static cvert_t cverts[BOX_NVERTS];
  * painter's fill) while the wasted overdraw VDP writes vanish. Each CPU
  * clears + writes only its own band's rows (disjoint, 16-byte aligned at
  * the band split), so cached access stays coherent without the alias. */
-static uint8_t box_cover[LOG_H][LOG_W] __attribute__((aligned(16)));
+static uint8_t box_cover[LOG_H][LOG_W]
+    __attribute__((aligned(16), section(".hero_overlay_lo")));
 
 #if BOX_PROFILE
 static inline uint16_t frt_read(void) {

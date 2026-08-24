@@ -40,11 +40,24 @@ canon: Backrooms
 ################################
 
 [crawl]
+# West-wall duct: classic crawl height -- a duct should read tight. (Trialed at
+# h=header; too open for a duct. Headers are for doorway soffits.)
 1,22 dir=S len=5
+# Doorway header over the wide double-door opening north of spawn -- the soffit
+# hangs at h=header (taller than a duct slab); crouch through it like any drop.
+15,16 dir=E len=2 h=header
 
 [partitions]
 22,22 -> 26,22  style=spotted height=low crawl=no
 20,11 -> 20,14  style=spotted height=low crawl=no
+# Cubicle test crosses (half-height): chevron + polka-dot side by side in the
+# upper-right room, same row so both textures read at matched distance for LOD A/B.
+# Chevron cross, center (25,13)
+25,12 -> 25,14  style=chevron height=half crawl=no
+24,13 -> 26,13  style=chevron height=half crawl=no
+# Polka-dot cross, center (29,13)
+29,12 -> 29,14  style=spotted height=half crawl=no
+28,13 -> 30,13  style=spotted height=half crawl=no
 
 [decals]
 chair  9.5,15.5 face=E
@@ -65,6 +78,14 @@ chair  4.5,19.5 face=E
 chair  21.5,26.5 face=N
 chair  13.5,6.5 face=S
 chair  28.5,22.5 face=W
+# The nook monitor: the one-wide dead-end at (10,19) — you come up the
+# corridor and the PVM is at the end of it, facing back at you (Mike's
+# spot, HUD X:09.2 Y:19.5 A:000).
+pvm    10.5,19.5 face=W
+# THE CONSOLE (Mike's spot, 2026-08-10): desk-mounted (z=1), screen
+# facing the open corridor to the east. Press A: the Master System
+# boots on it.
+pvm    13.6,20.3 face=E z=1
 outlet 17,26.5 face=W z=0.2
 door   16.5,31 face=S
 neanderthal 16.3,23.5 face=S

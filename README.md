@@ -102,10 +102,30 @@ This compiles both CPUs and produces:
 
 | Command | Purpose |
 |---|---|
-| `make` / `make release` | Optimized build (`-Ofast -flto` SH-2, `-O2 -flto` 68000). |
+| `make` / `make release` | Optimized build (`-Ofast -flto` SH-2, `-O2 -flto` 68000) → `rom/backrooms.32x`. |
+| `make community` | Same engine, plus every community map + community asset → `rom/backrooms-community.32x`. |
+| `make author AUTHOR=<handle>` | The flagship plus one contributor's own maps → `rom/backrooms-<handle>.32x`. |
 | `make debug` | `-Og -g` build with `DEBUG`/`KDEBUG` for GDB tracing (Gens-KMod, BlastEm, UMDK). |
 | `make clean` | Remove objects, deps, ELFs, and the built ROM. |
 | `make deploy` | Build + `scp` the ROM to a MiSTer (see below). |
+
+### Content tiers — what's in which ROM
+
+Maps and sprites carry a **tier**, and the tier decides which ROM compiles them
+in. It's a curation decision, not an identity one: a contributor's map moves
+into the main game by moving the file to `maps/curated/` and changing one word.
+
+| tier | lives in | ships in |
+|---|---|---|
+| `core` | `maps/core/`, `maps/test/` | every ROM |
+| `curated` | `maps/curated/` — the project's own maps + promoted community work | every ROM |
+| `community` | `maps/community/`, sprites baked with `tier: community` | `backrooms-community.32x` and that author's `backrooms-<handle>.32x` |
+
+The lint enforces the wall: a core or curated map cannot reference a community
+asset, so nothing from an unvetted PR can reach the flagship ROM. In-game,
+community maps sit behind their own `-- COMMUNITY --` heading in the start
+menu, and any non-flagship build prints what it is (`COMMUNITY BUILD`,
+`BUILD FOR <NAME>`) under the title. CI attaches all of these to every release.
 
 > **Header changes trigger rebuilds.** The Makefile uses GCC's `-MMD` dependency
 > files, so editing a struct in a shared header correctly recompiles every TU
@@ -158,27 +178,37 @@ ROM to a MiSTer without rebuilding.
 
 ## Controls
 
-Six-button Genesis controller (works with three-button too, minus the extra
-buttons). Built around hold-modifiers rather than toggles:
+Gameplay needs only A / B / C and START, so a **three-button pad has full
+parity** — everything else lives in the pause menu. Built around
+hold-modifiers rather than toggles:
 
 | Input | Action |
 |---|---|
 | **D-pad ↑ / ↓** | Walk forward / back |
 | **D-pad ← / →** | Turn left / right |
 | **A** | Sprint (hold) |
-| **X** | Crawl / crouch (hold) — eye drops to the floor, full crawl perspective |
+| **A** | Interact — open the EXIT door, shove a standee |
+| **A + B** | Crawl / crouch (hold both) — eye drops to the floor, full crawl perspective |
+| **B** | Strafe modifier (hold) — ← / → sidestep instead of turning |
 | **C** | Look mode (hold); ↑ / ↓ tilt the gaze up / down while held |
-| **A** | Interact — open the EXIT door when you're standing at it |
-| **START** | Settings menu (ambience / footstep volume, VISUALS tab) |
+| **START** | Pause menu — lands on the **GAME** tab |
 
-**MODE is a modifier** (held with a second button), so the debug tools stay out
-of the way by default:
+**The GAME tab** is the first thing START shows: **MAP** (off / full / local
+automap overlay), **ZOOM** (hold ← / → to glide the map scale), **3D VIEWER**
+(inspect the game's assets mid-run — returns right back to the game), and
+**EXIT → LOBBY** (leave the level for the start menu, no console reset).
+The other tabs cover audio, lighting, visuals, the live color lab, testing
+toggles, credits, and instant map warps.
+
+**MODE combos** (six-button pads) are optional shortcuts to the same tools,
+plus the debug extras — nothing down here is required knowledge:
 
 | Combo | Action |
 |---|---|
-| **MODE + X** | Cycle wall resolution: FULL → HALF → AUTO → SERL (diagnostic) |
+| **MODE + B** | Cycle the automap overlay (same as GAME → MAP) |
+| **MODE + ↑ / ↓** | Automap zoom (same as GAME → ZOOM) |
+| **MODE + X** | Cycle wall resolution: FULL → HALF → AUTO → SERL (diagnostic) → LOW |
 | **MODE + Y** | Toggle the on-screen profiler (frame/render timers, per-pass ticks) |
-| **MODE + B** | Cycle the automap overlay |
 | **MODE + Z** | Controller-input tester (raw pad register — for diagnosing emulator key binds) |
 | **MODE + C** | Partition-diagnostic mode (HUD `J`): normal / legacy paths / gate-off pricing |
 | **MODE + A** | *(start menu)* Cycle the menu-exit transform — hinge-up / fall-forward / fly-through — with an instant slowed preview |
@@ -186,6 +216,9 @@ of the way by default:
 `WALLS: AUTO` (the default) measures frame time and drops to half-res only when
 a scene gets heavy, so the image stays crisp when it can afford to. `SERL`
 serializes the two CPUs for contention-free profiling and is intentionally slow.
+Half is AUTO's floor — measured on hardware, quarter-res tied half on framerate
+while looking worse, so it is manual-only (`LOW`) rather than something AUTO
+will pick for you.
 
 ---
 

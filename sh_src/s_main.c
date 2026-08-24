@@ -4,6 +4,9 @@
 #include "sound.h"
 #include "box3d.h"
 
+/* FRT runs at Phi/128 ~= 179.8 kHz, so one tick is ~5.56 us; 6 ~= 33 us. */
+#define BUS_IDLE_FRT_TICKS 6
+
 static inline uint16_t secondary_frt_read(void) {
     uint8_t hi = SH2_FRT_FRCH;
     uint8_t lo = SH2_FRT_FRCL;
@@ -44,13 +47,39 @@ void s_main(void) {
         if (cmd == MARS_CMD_NONE) {
             /* Service audio first — keep the PWM ping-pong fed.
              * amb_pump() is cheap (~150 μs when a fill is needed,
-             * instant return otherwise). */
+             * instant return otherwise). amb_audio_idle() decodes at
+             * most ONE 20 ms Speex frame per visit and belongs ONLY
+             * here — in the vblank slack, never at render checkpoints. */
             amb_pump();
+            amb_audio_idle();
             /* Throttle bumped 64→256 because primary got faster after
              * the DIVU/sine LUT optimizations, shifting the bus-
              * contention balance enough that controller-input stalls
-             * re-appeared. */
-            for (volatile int i = 0; i < 256; i++);
+             * re-appeared.
+             *
+             * BUS A/B (TESTING>IDLE, shared.h). The volatile-counter arm
+             * is a DELAY THAT COSTS BUS: `volatile int i` lives on the
+             * stack in SDRAM and SH-2 cache is write-through, so all 256
+             * iterations issue real SDRAM stores, aimed at the same SDRAM
+             * the primary renders from, for the whole idle stretch.
+             *
+             * A NOP COUNT IS THE WRONG REPLACEMENT -- the first A/B showed
+             * that. Those stalling stores made the old loop accidentally
+             * SELF-TUNING: it stretched precisely when the bus was busy,
+             * which is backpressure, not waste. A fixed nop count runs the
+             * same length regardless, so under render load the COMM4 poll
+             * rate climbs -- the exact failure the 64->256 bump was made to
+             * stop. Delay on the FRT instead: on-chip (no bus at all) and a
+             * real wall-clock wait, so the poll rate is pinned by
+             * construction instead of by a guessed iteration count.
+             * Unsigned subtraction makes the 16-bit FRT wrap a non-event. */
+            if (SHARED_UC->bus_idle) {
+                uint16_t t0 = secondary_frt_read();
+                while ((uint16_t)(secondary_frt_read() - t0)
+                       < BUS_IDLE_FRT_TICKS) { }
+            } else {
+                for (volatile int i = 0; i < 256; i++);
+            }
             continue;
         }
         switch (cmd) {

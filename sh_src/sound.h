@@ -28,6 +28,15 @@ void amb_dma_handler(void);
  * the mix-position statics aren't cross-CPU safe. */
 void amb_pump(void);
 
+/* ONE Speex frame of hello decode, IDLE TIME ONLY — call from the
+ * secondary's COMM4 wait loop alongside amb_pump, NEVER from the
+ * between-render-pass checkpoints: a decode burst there pushes the next
+ * pass across the vblank edge and eats a whole frame (the hardware-
+ * confirmed fps hit near the neanderthal). Instant return when the ring
+ * is topped up, the player is out of range, the tape-death owns the
+ * channel, or ambient is inactive. SECONDARY ONLY. */
+void amb_audio_idle(void);
+
 /* Primary flips the ambient pump on when the game world loads. Until
  * then amb_pump() is a no-op — no secondary cycles, true silence — keeping
  * the title quiet and the PWM free for title SFX. */

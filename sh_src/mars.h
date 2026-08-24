@@ -55,6 +55,11 @@ typedef volatile signed long int vint32;
 #define MARS_SYS_COMM8      (*(volatile uint16_t *)0x20004028) /* controller 1 current value */
 #define MARS_SYS_COMM10     (*(volatile uint16_t *)0x2000402A) /* controller 2 current value */
 #define MARS_SYS_COMM12     (*(volatile uint32_t *)0x2000402C) /* vcount current value */
+#define MARS_SYS_COMM14     (*(volatile uint16_t *)0x2000402E) /* SMS maze status: the 68K
+                             * publishes bit15 = valid, bit10 = maze active
+                             * (GSTATE==1 && !STATE), bits 9-5 player cell x,
+                             * bits 4-0 player cell y — the SH-2's smooth
+                             * maze renderer eases toward it */
 
 #define MARS_PWM_CTRL       (*(volatile uint16_t *)0x20004030) /* sound */
 #define MARS_PWM_CYCLE      (*(volatile uint16_t *)0x20004032)
@@ -168,6 +173,19 @@ extern void Hw32xFlipWait(void);
 
 extern void HwMdReadPad(uint8_t port);
 extern void HwMdClearScreen(void);
+extern void HwMdSetColor(unsigned short index, unsigned short color);
+extern void HwMdYmWrite(unsigned char reg, unsigned char val);   /* YM2612 part I */
+extern void HwMdYmCmd(unsigned char op);   /* hum: 0 off, 1 on, 2 sting, 3 release */
+extern void HwMdSetBusThrottle(int on);   /* BUS A/B: 68K COMM0 poll backoff */
+extern void HwMdSetSmsTileBcast(int on);  /* fullscreen SMS on the 32X FB */
+extern void HwMdSmsBoot(void);
+extern void HwMdSmsStop(void);
+extern void HwMdSmsGameMap(const unsigned char *packed);   /* 148B level patch */
+extern void HwMdSmsGameBoot(void);
+extern void HwMdSmsGameStop(void);
+extern void HwMdSmsGlassBoot(void);   /* headless boot: picture to the PVM glass */
+extern void HwMdSmsGlassStop(void);
+extern void HwMdSmsGlassHandoff(void);/* glass -> fullscreen, same Z80 running */
 extern void HwMdSetOffset(unsigned short offset);
 extern void HwMdSetNTable(unsigned short word);
 extern void HwMdSetVram(unsigned short word);

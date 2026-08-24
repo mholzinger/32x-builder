@@ -1,0 +1,154 @@
+# easteregg-room.map
+name: EASTEREGG-ROOM
+size: 32x32
+spawn: 15.5, 2.5 facing=S
+role: community
+author: Double K
+
+[grid]
+################################
+#..............................#
+#......#....#......#....#......#
+#.....###..###....###..###.....#
+#......#....#......#....#......#
+#..............................#
+#..............................#
+#......#....#......#....#......#
+#.....###..###....###..###.....#
+#......#....#......#....#......#
+#..............................#
+#..............................#
+#......#....#......#....#......#
+#.....###..###....###..###.....#
+#......#....#......#....#......#
+#..............................#
+#..............................#
+#......#................#......#
+#.....###..............###.....#
+#......#................#......#
+#..............................#
+#..............................#
+#......#................#......#
+#.....###..............###.....#
+#......#................#......#
+#..............................#
+#..............................#
+#..##..#................#......#
+#...#.###..............###.....#
+#...#..#................#......#
+#...#..........................#
+################################
+
+[crawl]
+1,27 dir=E len=2
+
+[partitions]
+27,17 -> 27,31  style=chevron height=half crawl=no
+27,17 -> 29,17  style=chevron height=half crawl=no
+29,2 -> 29,3  style=chevron height=half crawl=no
+29,4 -> 29,5  style=chevron height=half crawl=no
+29,14 -> 29,17  style=chevron height=half crawl=no
+28,14 -> 29,14  style=chevron height=half crawl=no
+28,1 -> 28,2  style=chevron height=half crawl=no
+28,3 -> 28,4  style=chevron height=half crawl=no
+28,5 -> 28,6  style=chevron height=half crawl=no
+28,12 -> 28,14  style=chevron height=half crawl=no
+6,14 -> 6,16  style=chevron height=half crawl=no
+4,16 -> 6,16  style=chevron height=half crawl=no
+4,1 -> 4,12  style=chevron height=half crawl=no
+4,16 -> 4,24  style=chevron height=half crawl=no
+4,24 -> 5,24  style=chevron height=half crawl=no
+28,2 -> 29,2  style=chevron height=half crawl=no
+28,3 -> 29,3  style=chevron height=half crawl=no
+28,4 -> 29,4  style=chevron height=half crawl=no
+28,5 -> 29,5  style=chevron height=half crawl=no
+28,6 -> 29,6  style=chevron height=half crawl=no
+17,20 -> 20,20  style=chevron height=full crawl=no
+17,18 -> 17,20  style=chevron height=full crawl=no
+17,18 -> 20,18  style=chevron height=full crawl=no
+20,18 -> 20,19  style=chevron height=full crawl=no
+10,23 -> 14,23  style=chevron height=full crawl=no
+14,23 -> 14,25  style=chevron height=full crawl=no
+11,25 -> 14,25  style=chevron height=full crawl=no
+11,25 -> 11,27  style=chevron height=full crawl=no
+11,27 -> 12,27  style=chevron height=full crawl=no
+
+[decals]
+chair  9.5,21.5 face=N
+chair  3.5,15.5 face=N
+chair  28.5,21.5 face=N
+chair  29.5,11.5 face=N
+neanderthal 10.5,10.5 face=N
+desk   14.5,28.5 face=N
+desk   17.5,8.5 face=N
+outlet 8.5,19 face=N
+outlet 18.5,9 face=S
+outlet 31,22.5 face=W
+outlet 8.5,28 face=S
+outlet 13.5,14 face=N
+chair  1.5,29.5 face=N
+door   2.5,31 face=S
+chair  14.5,18.5 face=N
+chair  17.5,23.5 face=N
+
+[dark]
+1,28 -> 3,30
+
+[lights]
+12,11
+12,10
+19,10
+19,11
+24,10
+24,11
+7,10
+7,11
+7,15
+7,16
+7,20
+7,21
+12,15
+12,16
+19,15
+19,16
+24,15
+24,16
+24,20
+24,21
+24,26
+24,25
+24,30
+7,30
+7,25
+7,26
+12,20
+12,21
+19,20
+19,21
+19,25
+19,26
+12,25
+12,26
+12,30
+19,30
+19,29
+12,29
+19,5
+19,6
+24,5
+24,6
+12,5
+12,6
+7,5
+7,6
+15,8
+16,8
+15,13
+16,13
+15,3
+16,3
+
+[options]
+place_outlets: 0
+place_exit_door: 0
+lobby_ceiling: 0

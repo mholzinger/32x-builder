@@ -1,0 +1,70 @@
+# room_with_camera.map
+name: ROOM_WITH_CAMERA
+size: 16x16
+spawn: 8, 13.5 facing=N
+role: community
+author: Double K
+
+[grid]
+################
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+#..............#
+################
+
+[partitions]
+1,5 -> 5,5  style=chevron height=half crawl=no
+5,3 -> 5,5  style=chevron height=half crawl=no
+5,3 -> 8,3  style=chevron height=half crawl=no
+11,9 -> 13,9  style=chevron height=low crawl=no
+13,7 -> 13,9  style=chevron height=low crawl=no
+13,7 -> 14,7  style=chevron height=low crawl=no
+11,9 -> 11,15  style=chevron height=low crawl=no
+
+[decals]
+chair  2.5,3.5 face=N
+chair  14.5,9.5 face=N
+neanderthal 2.5,10.5 face=N
+door   12.5,1 face=N
+desk   2.5,2.5 face=N
+outlet 15,4.5 face=E
+outlet 1,7.5 face=E
+outlet 3.5,15 face=S
+
+[lights]
+3,12
+3,9
+3,6
+3,3
+6,3
+6,6
+6,9
+6,12
+9,3
+12,3
+9,6
+12,6
+9,9
+12,9
+9,12
+12,12
+14,14
+1,14
+14,1
+1,1
+
+[options]
+place_outlets: 0
+place_exit_door: 0
+lobby_ceiling: 0

@@ -44,6 +44,10 @@
       <h2>Layer</h2>
       <div id="layers" class="btn-col"></div>
     </div>
+    <div class="panel" id="fork-panel-wrap">
+      <h2 title="Your fork is your own copy of the game: your maps and sprites, the whole asset budget to yourself, and a ROM built for you on every save.">Your copy</h2>
+      <div id="fork-panel" class="btn-col" style="display:none;font-size:11px"></div>
+    </div>
     <div class="panel">
       <h2>Budget</h2>
       <div id="budget"></div>
@@ -51,6 +55,53 @@
     <div class="panel">
       <h2 id="palette-title">Palette</h2>
       <div id="palette"></div>
+    </div>
+    <div class="panel" id="sprite-panel">
+      <h2 title="Turn any transparent PNG into a game asset. It is quantized to the shared 16-shade warm-gray ramp (the 32X has ONE palette for the whole screen), so think cardboard standee: strong silhouettes read best. Your image is scaled DOWN to fit its budget: a standee up to 64x96 texels, a wall decal up to 224x384 (fine grain like a stippled tear needs the room).">Add a sprite <span style="opacity:.6">?</span></h2>
+      <div class="btn-col">
+        <label style="font-size:11px"><b>1.</b> Pick an image (PNG with transparency)</label>
+        <input type="file" id="spr-file" accept="image/*" style="max-width:170px"
+               title="PNG with transparency works best. The image is cropped to its visible pixels and scaled down.">
+        <div id="spr-orient" style="display:none">
+          <img id="spr-thumb" alt="" style="max-width:72px;max-height:72px;background:#333;display:block;margin:2px 0">
+          <button id="spr-rot" title="Rotate the image 90° clockwise — applied when you bake">&#8635; rotate</button>
+          <button id="spr-mir" title="Flip the image left/right — applied when you bake">&#8646; mirror</button>
+        </div>
+        <label style="font-size:11px"><b>2.</b> Name it</label>
+        <input type="text" id="spr-name" placeholder="e.g. traffic_cone" maxlength="16"
+               title="2-16 chars: a-z 0-9 _ — becomes the asset id in maps and the registry">
+        <div id="spr-name-hint" style="font-size:10px;opacity:.75"></div>
+        <label style="font-size:11px"><b>3.</b> What is it?</label>
+        <label style="font-size:11px" title="Free-standing: stands ON THE FLOOR facing the camera, players collide with it — the neanderthal is one. Pick this for props, figures, furniture.">
+          <input type="radio" name="spr-mount" value="billboard" checked> free-standing (standee)</label>
+        <label style="font-size:11px" title="Wall decal: painted FLAT onto a wall face like the electrical outlet — it foreshortens with the wall and can sit at any height. Pick this for posters, signs, stains, fixtures.">
+          <input type="radio" name="spr-mount" value="wall"> wall decal</label>
+        <label style="font-size:11px" id="spr-hi-label" title="Also bakes a double-resolution texture the engine swaps in within 3 cells — the neanderthal's close-up trick. ~5x the ROM cost; save it for hero pieces.">
+          <input type="checkbox" id="spr-hi"> hi-res close-up (LOD)</label>
+        <label style="font-size:11px" id="spr-h-label" title="How tall it is in the world. 1.0 = floor to ceiling (about a person)."><b>4.</b> Size
+          <input type="range" id="spr-h" min="10" max="100" value="90" style="width:80px">
+          <span id="spr-h-val">0.9</span> cells tall</label>
+        <label id="spr-z-label" style="font-size:11px;display:none" title="Wall decal only: the centre height on the wall. 0.2 = outlet height, 0.5 = eye level, 0.8 = high sign.">&nbsp;&nbsp;&nbsp;&nbsp;height on wall
+          <input type="range" id="spr-z" min="5" max="95" value="50" style="width:64px">
+          <span id="spr-z-val">0.50</span></label>
+        <div id="spr-rules" style="font-size:10px;opacity:.75">
+          Free-standing: it will stand on the floor and block movement,
+          like the neanderthal.</div>
+        <button id="spr-bake"
+                title="Pick an image and a name first">5. Bake &mdash; preview in the real 32X palette</button>
+        <div id="spr-preview"></div>
+        <div id="spr-arena" style="display:none;font-size:10px;opacity:.85;margin:4px 0"></div>
+        <div id="spr-sheet" style="display:none;font-size:11px;background:#3a3626;border-radius:4px;padding:6px;margin:4px 0"></div>
+        <div id="spr-actions" style="display:none">
+          <label style="font-size:11px"><b>6.</b> Try it before submitting</label>
+          <button id="spr-try" title="Arms your sprite as a placeable item for THIS session. Standee: click an open cell. Wall decal: click a wall edge. Then hit ▶ Walk and look at it in first person.">Place in this map</button>
+          <label style="font-size:11px"><b>7.</b> Happy with it?</label>
+          <button id="spr-download" title="Downloads the two files a pull request needs (the texture header + registry.json), for a manual PR — see SPRITES.md">&#11015; Bundle (.h + registry)</button>
+          <button id="spr-fork" title="Commit this sprite to YOUR copy of the game. Your fork, your asset budget — no review, and your next build has it.">&#127968; Save to my copy</button>
+          <button id="spr-submit" class="primary" title="Signed in with GitHub (top right): opens the two-file pull request under your own name. Once merged, the sprite ships in the next release.">&#128640; Submit sprite PR</button>
+        </div>
+        <div id="spr-msg" style="font-size:11px"></div>
+      </div>
     </div>
     <div class="panel hint">
       <h2>Keys</h2>

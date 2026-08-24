@@ -55,7 +55,11 @@
   }
  },
  "crawl": {
-  "_doc": "low-ceiling run -> ceil_h_add_run(cx,cy,dx,dy,len). dir gives dx,dy.",
+  "_doc": "low-ceiling run -> ceil_h_add_run(cx,cy,dx,dy,len). dir gives dx,dy. h names the slab height (ceil_h value, wall=256): crawl=classic duct, header=tall doorway soffit. Every height forces crouch-through; they differ visually. Each DISTINCT height in a map costs its own render pass-pair, so heights stay a small named set.",
+  "h": {
+   "crawl": 135,
+   "header": 200
+  },
   "dir": {
    "E": [
     1,
@@ -111,12 +115,74 @@
    },
    {
     "id": "chair",
+    "box_model": true,
     "kind": 3,
     "label": "Chair (live 3D, free-standing)",
     "glyph": "🪑",
     "color": "#8a5a3a",
     "standalone": true,
     "z": 0.19
+   },
+   {
+    "id": "exit_hole",
+    "kind": 4,
+    "z": 0.6,
+    "glyph": "▩",
+    "color": "#2a2418",
+    "label": "Exit hole (dark climb-in wall opening; pull up to exit)"
+   },
+   {
+    "id": "desk",
+    "box_model": true,
+    "kind": 5,
+    "z": 0.155,
+    "glyph": "⧉",
+    "color": "#b8b0a4",
+    "label": "Desk (live 3D, free-standing)",
+    "standalone": true
+   },
+   {
+    "id": "torn",
+    "kind": 6,
+    "z": 0.5,
+    "glyph": "⧉",
+    "color": "#b8b0a4",
+    "label": "torn (community wall decal)"
+   },
+   {
+    "id": "torn2",
+    "kind": 7,
+    "z": 0.5,
+    "glyph": "⧉",
+    "color": "#b8b0a4",
+    "label": "torn2 (community wall decal)"
+   },
+   {
+    "id": "torn3",
+    "kind": 8,
+    "z": 0.55,
+    "glyph": "⧉",
+    "color": "#b8b0a4",
+    "label": "torn3 (community wall decal)"
+   },
+   {
+    "id": "stopsign",
+    "kind": 9,
+    "z": 0.45,
+    "glyph": "⧉",
+    "color": "#b8b0a4",
+    "label": "stopsign (community standee)",
+    "standalone": true
+   },
+   {
+    "id": "pvm",
+    "kind": 10,
+    "z": 0.2,
+    "glyph": "▤",
+    "color": "#3a3f44",
+    "label": "PVM monitor on stand (live 3D, free-standing)",
+    "standalone": true,
+    "box_model": true
    }
   ]
  },
@@ -135,7 +201,8 @@
     "z": 0.2,
     "transparent": 0,
     "decode": "offset",
-    "flags": []
+    "flags": [],
+    "tier": "core"
    },
    {
     "id": "door",
@@ -152,7 +219,8 @@
     "flags": [
      "animated",
      "colmajor"
-    ]
+    ],
+    "tier": "core"
    },
    {
     "id": "neanderthal",
@@ -171,7 +239,8 @@
     "flags": [
      "lod",
      "standalone"
-    ]
+    ],
+    "tier": "core"
    },
    {
     "id": "chair",
@@ -187,7 +256,264 @@
     "decode": "offset",
     "flags": [
      "standalone"
-    ]
+    ],
+    "tier": "core"
+   },
+   {
+    "id": "desk",
+    "kind": 5,
+    "mount": "billboard",
+    "tex": "spr_desk_tex.h",
+    "sym": "spr_desk_tex",
+    "base": 144,
+    "pal": [
+     [
+      17,
+      14,
+      10
+     ],
+     [
+      18,
+      15,
+      11
+     ],
+     [
+      21,
+      17,
+      13
+     ],
+     [
+      23,
+      19,
+      14
+     ]
+    ],
+    "world_h": 0.31,
+    "world_hw": 0.333,
+    "z": 0.0,
+    "transparent": 1,
+    "decode": "offset",
+    "flags": [
+     "standalone"
+    ],
+    "author": "pjzjouhs22",
+    "tier": "core"
+   },
+   {
+    "id": "torn",
+    "kind": 6,
+    "mount": "wall",
+    "tex": "spr_torn_tex.h",
+    "sym": "spr_torn_tex",
+    "base": 152,
+    "pal": [
+     [
+      23,
+      23,
+      20
+     ],
+     [
+      24,
+      24,
+      21
+     ],
+     [
+      28,
+      27,
+      23
+     ],
+     [
+      31,
+      30,
+      26
+     ]
+    ],
+    "world_h": 0.85,
+    "world_hw": 0.4347,
+    "z": 0.5,
+    "transparent": 1,
+    "decode": "offset",
+    "flags": [
+     "artpal"
+    ],
+    "tier": "community",
+    "author": "Double K"
+   },
+   {
+    "id": "torn2",
+    "kind": 7,
+    "mount": "wall",
+    "tex": "spr_torn2_tex.h",
+    "sym": "spr_torn2_tex",
+    "base": 160,
+    "pal": [
+     [
+      14,
+      3,
+      3
+     ],
+     [
+      16,
+      3,
+      3
+     ],
+     [
+      17,
+      3,
+      3
+     ],
+     [
+      18,
+      3,
+      4
+     ],
+     [
+      19,
+      4,
+      4
+     ],
+     [
+      20,
+      4,
+      4
+     ]
+    ],
+    "world_h": 0.6,
+    "world_hw": 0.314,
+    "z": 0.5,
+    "transparent": 1,
+    "decode": "offset",
+    "flags": [
+     "artpal"
+    ],
+    "tier": "community",
+    "author": "Double K"
+   },
+   {
+    "id": "torn3",
+    "kind": 8,
+    "mount": "wall",
+    "tex": "spr_torn3_tex.h",
+    "sym": "spr_torn3_tex",
+    "base": 168,
+    "pal": [
+     [
+      0,
+      0,
+      0
+     ]
+    ],
+    "world_h": 0.55,
+    "world_hw": 0.299,
+    "z": 0.55,
+    "transparent": 1,
+    "decode": "offset",
+    "flags": [
+     "artpal"
+    ],
+    "tier": "community",
+    "author": "Double K"
+   },
+   {
+    "id": "stopsign",
+    "kind": 9,
+    "mount": "billboard",
+    "tex": "spr_stopsign_tex.h",
+    "sym": "spr_stopsign_tex",
+    "base": 176,
+    "pal": [
+     [
+      17,
+      0,
+      0
+     ],
+     [
+      19,
+      0,
+      0
+     ],
+     [
+      23,
+      21,
+      21
+     ],
+     [
+      24,
+      24,
+      24
+     ],
+     [
+      25,
+      25,
+      25
+     ],
+     [
+      28,
+      28,
+      28
+     ],
+     [
+      31,
+      31,
+      31
+     ]
+    ],
+    "world_h": 0.9,
+    "world_hw": 0.1641,
+    "z": 0.0,
+    "transparent": 1,
+    "decode": "offset",
+    "flags": [
+     "standalone",
+     "artpal"
+    ],
+    "tier": "community",
+    "author": "Double K"
+   },
+   {
+    "id": "pvm",
+    "kind": 10,
+    "mount": "billboard",
+    "tex": "spr_pvm_tex.h",
+    "sym": "spr_pvm_tex",
+    "base": 184,
+    "pal": [
+     [
+      2,
+      2,
+      3
+     ],
+     [
+      6,
+      6,
+      7
+     ],
+     [
+      15,
+      15,
+      16
+     ],
+     [
+      21,
+      21,
+      22
+     ],
+     [
+      25,
+      25,
+      26
+     ]
+    ],
+    "world_h": 0.4,
+    "world_hw": 0.0821,
+    "z": 0.0,
+    "transparent": 1,
+    "decode": "offset",
+    "flags": [
+     "standalone"
+    ],
+    "tier": "core",
+    "author": "Poring"
    }
   ]
  },
@@ -197,40 +523,62 @@
   "color": "#fff7d0"
  },
  "roles": {
-  "_doc": "Map roles. 'protected' = canonical (lives in maps/core/, the editor clones on edit, CODEOWNERS-gated in PRs). 'picker' = appears in the in-game start-menu picker + pause MAPS tab. 'priority' orders custom_maps[] (lower first) so pickable maps sort before the lobby and the engine just bounds the picker on custom_pick_count. 'folder' is where the role lives.",
+  "_doc": "Map roles + BUILD TIERS. 'tier' decides which ROM a map compiles into: core = first-party canon; curated = maps by project authors and outside maps the maintainer has promoted (ship in the flagship ROM); community = everything else (ships only in the community ROM and in that author's own build). 'protected' = the editor clones on edit + CODEOWNERS-gated in PRs. 'picker' = appears in the in-game start-menu picker + pause MAPS tab. 'priority' orders custom_maps[] (lower first) so the tiers land in contiguous index blocks the engine bounds on custom_start_count / custom_core_count / custom_curated_count / custom_pick_count. 'folder' is where the role lives.",
   "starter": {
    "priority": 0,
    "protected": true,
    "picker": true,
-   "folder": "core"
+   "folder": "core",
+   "tier": "core"
   },
   "play": {
    "priority": 1,
    "protected": true,
    "picker": true,
-   "folder": "core"
+   "folder": "core",
+   "tier": "core"
   },
   "test": {
    "priority": 2,
    "protected": false,
    "picker": true,
-   "folder": "community"
+   "folder": "test",
+   "tier": "core"
+  },
+  "curated": {
+   "priority": 3,
+   "protected": true,
+   "picker": true,
+   "folder": "curated",
+   "tier": "curated"
   },
   "community": {
-   "priority": 3,
+   "priority": 4,
    "protected": false,
    "picker": true,
-   "folder": "community"
+   "folder": "community",
+   "tier": "community"
   },
   "lobby": {
-   "priority": 4,
+   "priority": 5,
    "protected": true,
    "picker": false,
-   "folder": "core"
+   "folder": "core",
+   "tier": "core"
   }
  },
+ "author_aliases": {
+  "_doc": "Canonical author display names. gen_maps folds each map's raw `author:` field through this table (case-insensitive) so varied handles collapse to one credit on the automap + CREDITS tab. Raw .map files are left untouched; add a lowercased key here to alias a new spelling. Unlisted authors display as written; a blank author credits -BACKROOMS-.",
+  "smokemonsterpacks": "smokemonster",
+  "smokemonstermaps": "smokemonster",
+  "smokemonster": "smokemonster",
+  "mike": "maintainer",
+  "mike holzinger": "maintainer",
+  "double k": "doublek",
+  "doublek": "doublek"
+ },
  "limits": {
-  "_doc": "must match the engine caps; the codegen rejects maps that exceed these. max_dim tracks the ENGINE grid (raycast.h MAP_W/H) — 64x64 was tried and reverted (too sparse to walk), so authored maps cap at 32 until the engine grid grows again.",
+  "_doc": "must match the engine caps (max_standups tracks raycast.c MAX_STANDUPS — the loader silently drops standalone decals past it); the codegen rejects maps that exceed these. max_desks 8 + max_chairs 21 + 3 neanderthals + max_pvms 2 = 34 of max_standups 36, two slots spare. PVM budget is DELIBERATELY 2 (Mike 2026-08-08: they feel expensive); procgen guarantees exactly 1 per generated level. max_dim tracks the ENGINE grid (raycast.h MAP_W/H) — 64x64 was tried and reverted (too sparse to walk), so authored maps cap at 32 until the engine grid grows again.",
   "max_dim": 32,
   "max_partitions": 64,
   "max_decals": 32,
@@ -238,7 +586,10 @@
   "max_lights": 512,
   "max_dark_rooms": 64,
   "max_partition_edges": 255,
-  "max_chairs": 21
+  "max_chairs": 21,
+  "max_desks": 8,
+  "max_standups": 36,
+  "max_pvms": 2
  },
  "playability": {
   "_doc": "MEASURED partition-edge -> fps bands (half-res, real hardware). Total edges is a PROXY: dense/aligned sightlines run slower than the total implies, so walk-test to be sure. The frame is vblank-locked, so 15fps needs roughly <=70 edges.",

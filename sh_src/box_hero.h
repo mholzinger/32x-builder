@@ -9,5 +9,8 @@
  * static frame is nearly free, so it can be full-res and photoreal. */
 void box_hero_show(void);
 void box_hero_palette(void);   /* repaint the hero palette only */
+/* Title-only decode scratch in the .hero_overlay (see box_hero.c). The exit
+ * hole's destination peek aliases its low end during the climb. */
+extern uint8_t hero_scratch[];
 
 #endif

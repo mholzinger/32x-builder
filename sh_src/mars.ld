@@ -103,6 +103,30 @@ SECTIONS {
 		end = _end;
 	} > ram
 
+	/* MEMORY OVERLAY: buffers used ONLY at startup/menu and DEAD during gameplay,
+	 * parked ABOVE _end (just under the Master stack at 0x0603F000). This keeps
+	 * _end -- the protected .bss boundary the stack must never cross -- ~71 KB
+	 * lower, so the render stack has ~75 KB of room; its worst-case spill lands in
+	 * these dead buffers, never in live data. NOLOAD: not in ROM, not zero-inited
+	 * by crt0 -- each buffer is scratch, filled before use.
+	 *
+	 * ORDER MATTERS. This region is also where the stack spills, so placement
+	 * within it is ranked by "is this buffer live while the stack above it is
+	 * deep?" .hero_overlay_lo goes FIRST (lowest, farthest from the stack): it
+	 * holds buffers that are LIVE during a startup phase, so nothing may grow
+	 * down into them. .hero_overlay goes LAST (highest, directly under the
+	 * stack): only buffers dead during every phase whose stack could reach them.
+	 * Getting this backwards froze the box intro -- box_cover sat 208 bytes
+	 * under __stack while box3d was actively writing it, and the intro's ~1.5 KB
+	 * stack ate its top rows along with the return addresses. */
+	.hero_overlay (NOLOAD) :
+	{
+		. = ALIGN(0x8);
+		*(.hero_overlay_lo)
+		. = ALIGN(0x8);
+		*(.hero_overlay)
+	} > ram
+
 	.eh_frame 0 (NOLOAD) :
 	{
 		*(.eh_frame)

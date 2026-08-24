@@ -1,0 +1,237 @@
+# sm furniture inc.map
+name: SM FURNITURE INC
+size: 32x32
+spawn: 1.5, 30.5 facing=N
+role: curated
+author: SmokeMonsterPacks
+
+[grid]
+................................
+...#.#.#.#.#.#.#.#..............
+..................#.............
+.#....................####......
+......................####......
+.#....................#.........
+......................#.........
+.#....................#.........
+......................#.........
+.#....................#.........
+......................#.........
+.#....................#.........
+......................#.........
+.#....................#.........
+..#...................#.........
+.........##.....##.....#.#......
+..#.......#..#...#.#.#..........
+...........................#.#..
+..#.......#..#...#.#.#...#......
+.........##.....##......#..#.#..
+#........##.....##.....#........
+.###############..######..##.##.
+#........#...######....#####.##.
+#.#.......#.#.....#....#.......#
+#.#...#....##.....#....#.......#
+#.#........##.....######...#.#.#
+#.#.......#.#.....#....#.......#
+#.#......####.....#....#.......#
+#.#...#..#...............#.....#
+#.#......#..#................#.#
+#.#.........#..................#
+.##############################.
+
+[crawl]
+19,1 dir=E len=7
+19,2 dir=E len=7
+23,13 dir=E len=3
+23,11 dir=E len=3
+28,21 dir=S len=2
+1,30 dir=E len=1
+1,28 dir=S len=3
+
+[partitions]
+26,16 -> 28,16  style=spotted height=full crawl=no
+29,16 -> 31,16  style=spotted height=full crawl=no
+26,14 -> 28,14  style=spotted height=full crawl=no
+29,14 -> 31,14  style=spotted height=full crawl=no
+26,13 -> 28,13  style=spotted height=full crawl=no
+29,13 -> 31,13  style=spotted height=full crawl=no
+4,12 -> 6,12  style=spotted height=full crawl=no
+7,12 -> 9,12  style=spotted height=full crawl=no
+10,12 -> 12,12  style=spotted height=full crawl=no
+13,12 -> 15,12  style=spotted height=full crawl=no
+16,12 -> 18,12  style=spotted height=full crawl=no
+26,12 -> 28,12  style=spotted height=full crawl=no
+29,12 -> 31,12  style=spotted height=full crawl=no
+26,11 -> 28,11  style=spotted height=full crawl=no
+29,11 -> 31,11  style=spotted height=full crawl=no
+26,10 -> 28,10  style=spotted height=full crawl=no
+29,10 -> 31,10  style=spotted height=full crawl=no
+26,9 -> 28,9  style=spotted height=full crawl=no
+29,9 -> 31,9  style=spotted height=full crawl=no
+26,8 -> 28,8  style=spotted height=full crawl=no
+29,8 -> 31,8  style=spotted height=full crawl=no
+26,7 -> 28,7  style=spotted height=full crawl=no
+29,7 -> 31,7  style=spotted height=full crawl=no
+26,6 -> 28,6  style=spotted height=full crawl=no
+29,6 -> 31,6  style=spotted height=full crawl=no
+26,5 -> 28,5  style=spotted height=full crawl=no
+29,5 -> 31,5  style=spotted height=full crawl=no
+26,4 -> 28,4  style=spotted height=full crawl=no
+29,4 -> 31,4  style=spotted height=full crawl=no
+26,2 -> 26,21  style=spotted height=full crawl=no
+15,5 -> 15,7  style=spotted height=low crawl=no
+12,5 -> 12,7  style=spotted height=low crawl=no
+9,5 -> 9,7  style=spotted height=low crawl=no
+6,5 -> 6,7  style=spotted height=low crawl=no
+2,6 -> 4,6  style=spotted height=low crawl=no
+5,6 -> 7,6  style=spotted height=low crawl=no
+8,6 -> 10,6  style=spotted height=low crawl=no
+11,6 -> 13,6  style=spotted height=low crawl=no
+14,6 -> 16,6  style=spotted height=low crawl=no
+3,5 -> 3,7  style=spotted height=low crawl=no
+4,8 -> 4,10  style=spotted height=half crawl=no
+3,9 -> 5,9  style=spotted height=half crawl=no
+6,9 -> 8,9  style=spotted height=half crawl=no
+9,9 -> 11,9  style=spotted height=half crawl=no
+12,9 -> 14,9  style=spotted height=half crawl=no
+15,9 -> 17,9  style=spotted height=half crawl=no
+7,8 -> 7,10  style=spotted height=half crawl=no
+10,8 -> 10,10  style=spotted height=half crawl=no
+13,8 -> 13,10  style=spotted height=half crawl=no
+16,8 -> 16,10  style=spotted height=half crawl=no
+5,11 -> 5,13  style=spotted height=full crawl=no
+8,11 -> 8,13  style=spotted height=full crawl=no
+11,11 -> 11,13  style=spotted height=full crawl=no
+14,11 -> 14,13  style=spotted height=full crawl=no
+17,11 -> 17,13  style=spotted height=full crawl=no
+0,1 -> 31,1  style=spotted height=full crawl=no
+31,1 -> 31,22  style=spotted height=full crawl=no
+19,1 -> 19,14  style=spotted height=full crawl=no
+1,3 -> 1,15  style=spotted height=full crawl=no
+1,15 -> 23,15  style=spotted height=full crawl=no
+26,15 -> 28,15  style=spotted height=full crawl=no
+29,15 -> 31,15  style=spotted height=full crawl=no
+
+[decals]
+neanderthal 19.5,13.5 face=N
+neanderthal 19.5,9.5 face=N
+neanderthal 19.5,10.5 face=N
+neanderthal 19.5,12.5 face=N
+neanderthal 19.5,6.5 face=N
+neanderthal 21.5,6.5 face=N
+neanderthal 21.5,7.5 face=N
+neanderthal 21.5,9.5 face=N
+neanderthal 21.5,10.5 face=N
+neanderthal 21.5,12.5 face=N
+neanderthal 21.5,13.5 face=N
+neanderthal 19.5,7.5 face=N
+neanderthal 2.5,4.5 face=N
+door   24.5,5 face=S
+neanderthal 23.5,5.5 face=N
+outlet 23.5,5 face=N
+
+[lights]
+27,11
+29,11
+27,13
+29,13
+29,15
+1,17
+1,19
+1,22
+2,22
+10,25
+9,30
+12,28
+13,23
+15,25
+17,23
+16,23
+15,23
+14,23
+15,24
+15,28
+19,28
+21,28
+23,28
+15,29
+6,16
+8,16
+18,20
+11,20
+8,20
+8,19
+8,18
+8,17
+6,17
+6,18
+6,19
+6,20
+1,16
+1,18
+1,20
+30,3
+26,3
+4,11
+7,11
+10,11
+13,11
+16,11
+1,15
+6,15
+8,15
+11,15
+18,15
+22,15
+22,20
+23,14
+23,5
+30,23
+15,30
+15,27
+15,26
+19,30
+21,30
+23,30
+25,14
+25,5
+26,5
+30,5
+26,7
+30,7
+30,9
+26,9
+26,4
+30,4
+27,15
+27,14
+29,14
+29,12
+27,12
+27,10
+26,8
+30,8
+29,10
+30,6
+26,6
+26,20
+30,20
+19,3
+21,3
+19,13
+21,13
+10,24
+0,1
+4,20
+4,19
+4,18
+4,17
+4,16
+4,15
+14,16
+14,18
+
+[options]
+place_outlets: 0
+place_exit_door: 0
+lobby_ceiling: 0

@@ -66,8 +66,34 @@ jobs:
           test -f rom/backrooms.32x
           ls -l rom/backrooms.32x
 
+      # A community map does NOT compile into the flagship (that ROM is core +
+      # curated only), so building it alone would no longer prove a
+      # contributor's PR links. Build the community ROM too whenever there is
+      # community content — that is the artifact a map author downloads to play
+      # their own PR.
+      - name: Build the community ROM (if there is community content)
+        id: comm
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          MAPS=(maps/community/*.map)
+          if [ ${#MAPS[@]} -eq 0 ]; then
+            echo "built=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          make community MARSDEV="$MARSDEV"
+          test -f rom/backrooms-community.32x
+          ls -l rom/backrooms-community.32x
+          echo "built=true" >> "$GITHUB_OUTPUT"
+
       - name: Upload ROM artifact
         uses: actions/upload-artifact@v4
         with:
           name: backrooms-32x
           path: rom/backrooms.32x
+
+      - name: Upload community ROM artifact
+        if: steps.comm.outputs.built == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backrooms-32x-community
+          path: rom/backrooms-community.32x

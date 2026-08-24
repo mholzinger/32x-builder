@@ -120,13 +120,68 @@ static void fill_walls(void) {
     }
 }
 
-/* Open the whole interior — the big connected floor everything else sits in.
- * This is the inversion of the old spine generator: start OPEN, then drop
- * structure into it (rooms, pillars, stubs) rather than carving corridors out
- * of solid wall. Every structure keeps a clear margin, so the floor always
- * stays one connected open space — open by construction, never spaghetti. */
+/* Count the open-floor cells a candidate rect would overlap — the connectivity
+ * probe for the organic carve: a new blob is only kept if it TOUCHES the
+ * already-open region (so the floor stays one connected space) AND still adds
+ * fresh floor (so it isn't a no-op inside an existing blob). */
+static int overlaps_open(int x, int y, int w, int h) {
+    int n = 0;
+    for (int j = 0; j < h; j++)
+        for (int i = 0; i < w; i++) {
+            int cx = x + i, cy = y + j;
+            if (cx >= 0 && cx < MAP_W && cy >= 0 && cy < MAP_H
+                && world_map[cy][cx] == 0) n++;
+        }
+    return n;
+}
+
+/* Open the walkable floor everything else sits in — but as an ORGANIC footprint,
+ * not a rectangle. The old version carved one big rect (2,2 .. MAP_W-4,MAP_H-4),
+ * which is exactly why every map read as a square. Instead we grow the floor as
+ * a UNION of overlapping blobs: a chunky seed over spawn, then accreted blobs
+ * that each must touch the already-open region (kept connected by construction)
+ * and add fresh floor. A quarter of the blobs are thin+long — jogged halls and
+ * necks between the rooms — so the space has both open sprawl and tight runs,
+ * and the outer boundary comes out irregular (the un-carved cells stay wall).
+ * Structure still drops in afterward with clear margins, so the 1-cell margin on
+ * every placer keeps it from sealing a narrow neck (a 2-wide hall can't fit a
+ * pillar's 3x3 clearance). */
 static void carve_open_field(void) {
-    carve_room(2, 2, MAP_W - 4, MAP_H - 4);
+    /* Seed blob over spawn, opening north (spawn sits near the bottom edge). */
+    int sw = xs32_range(8, 12), sh = xs32_range(8, 11);
+    int sx = SPAWN_CX - sw / 2;
+    int sy = SPAWN_CY - sh + 1;
+    if (sx < 2) sx = 2;
+    if (sx + sw > MAP_W - 2) sx = MAP_W - 2 - sw;
+    if (sy < 2) sy = 2;
+    carve_room(sx, sy, sw, sh);
+
+    /* Accrete blobs onto the open region — a dramatic mix of scales so the
+     * sprawl has rhythm: long thin runs that reach for the corners and throw
+     * off jogged necks, small alcoves that pocket the edges, and chunky rooms
+     * for the open beats. Each still must touch existing floor (connected) and
+     * add fresh floor. More blobs than the first pass = the footprint stretches
+     * further and gets wilder. */
+    int target = xs32_range(8, 13);
+    int placed = 0, attempts = target * 28;
+    while (attempts-- > 0 && placed < target) {
+        int roll = (int)(xs32() % 100);
+        int bw, bh;
+        if (roll < 35) {                          /* long thin hall — reach + necks */
+            if (xs32() & 1) { bw = xs32_range(9, 16); bh = xs32_range(2, 3); }
+            else            { bw = xs32_range(2, 3);  bh = xs32_range(9, 16); }
+        } else if (roll < 55) {                   /* small alcove — side pockets */
+            bw = xs32_range(3, 5); bh = xs32_range(3, 5);
+        } else {                                  /* chunky room — the open beats */
+            bw = xs32_range(5, 12); bh = xs32_range(5, 12);
+        }
+        int bx = xs32_range(2, MAP_W - 3 - bw);
+        int by = xs32_range(2, MAP_H - 3 - bh);
+        int ov = overlaps_open(bx, by, bw, bh);
+        if (ov < 2 || ov > bw * bh - 2) continue; /* must connect AND add new floor */
+        carve_room(bx, by, bw, bh);
+        placed++;
+    }
 }
 
 /* True if the structure footprint (x..x+w-1, y..y+h-1) plus a 1-cell margin is
@@ -149,10 +204,164 @@ static void place_neanderthals(int count) {
         int y = xs32_range(2, MAP_H - 3);
         if (!footprint_clear(x, y, 1, 1)) continue;
         if (raycast_standup_in_cell(x, y)) continue;   /* no two assets in one cell */
+        if (raycast_exit_path_cell(x, y)) continue;    /* keep the exit corridor clear */
         uint8_t facing = (uint8_t)(xs32_range(0, 3) * 64);   /* cardinal */
         raycast_add_standup(((fx_t)x << FX_SHIFT) + FX(0.5),
                             ((fx_t)y << FX_SHIFT) + FX(0.5), facing, 2);
         placed++;
+    }
+    if (placed) return;
+    /* Darts can miss, and "at least one" is a promise rather than a tendency:
+     * measured on the host harness, ~10% of seeds threw all their attempts
+     * away and shipped a level with nothing standing in it. Same lesson the
+     * desk scan learned — a full scan cannot miss. Reservoir sampling keeps
+     * the choice uniform without a candidate list in RAM. */
+    {
+        int seen = 0, bx = -1, by = -1;
+        for (int y = 2; y < MAP_H - 2; y++)
+            for (int x = 2; x < MAP_W - 2; x++) {
+                if (!footprint_clear(x, y, 1, 1)) continue;
+                if (raycast_standup_in_cell(x, y)) continue;
+                if (raycast_exit_path_cell(x, y)) continue;
+                if (xs32_range(0, seen++) == 0) { bx = x; by = y; }
+            }
+        if (bx >= 0)
+            raycast_add_standup(((fx_t)bx << FX_SHIFT) + FX(0.5),
+                                ((fx_t)by << FX_SHIFT) + FX(0.5),
+                                (uint8_t)(xs32_range(0, 3) * 64), 2);
+    }
+}
+
+/* EXACTLY ONE PVM per generated level (Mike: every procedural level has the
+ * monitor, but they FEEL expensive — budget is a hard 2 per map, lint-side,
+ * and procgen spends just 1 of it). Since 2026-08-10 the procgen monitor is
+ * the DESK-MOUNTED composite, and the FACING RULE is law: the screen must
+ * face an open floor cell, never a wall — a monitor nobody could watch is
+ * set dressing gone wrong. Cells with no open cardinal are skipped. */
+/* PARKED, not dropped. A desk standing in open floor reads as scenery the
+ * generator sprinkled; a desk with its BACK TO A WALL reads as one somebody
+ * pushed there and sat at. That single test does all the work Mike asked for:
+ *
+ *   dead end / nook   3 walls, 1 way out   -> back to the dead end, facing out
+ *   corner of a room  2 walls              -> tucked in, facing the room
+ *   against a wall    1 wall               -> the ordinary office answer
+ *   middle of a room  0 walls              -> REJECTED, nothing to back onto
+ *   1-wide corridor   walls on the sides   -> REJECTED for free: facing either
+ *                                             way leaves the back open, and a
+ *                                             desk mid-corridor is a roadblock
+ *                                             nobody would have left there.
+ *
+ * Returns the facings that satisfy it (watchable floor ahead, wall behind) and
+ * reports how walled-in the cell is, so the caller can hold out for a nook.
+ * Facing: E0 S64 W128 N192 -> front dir (+x),(+y),(-x),(-y); d^2 is the
+ * opposite cardinal in that order, which is what "behind" means. */
+/* Grid steps from spawn the strict pass demands, so the desk is something you
+ * go and find. Deliberately modest: the map is 32x32 and the walk is not a
+ * straight line, so 10 already means several rooms of travel. Push it much
+ * higher and the strict pass starves on small maps and quietly hands every
+ * level to the relaxed one, which is the rule without the hunt. */
+#define DESK_HUNT_MIN 10
+
+static int desk_park_facings(int x, int y, uint8_t *out, int *nwall) {
+    static const int8_t fdx[4] = { 1, 0, -1, 0 };
+    static const int8_t fdy[4] = { 0, 1, 0, -1 };
+    int isopen[4], n = 0;
+    *nwall = 0;
+    for (int d = 0; d < 4; d++) {
+        /* WALKABLE is the test, not placeable: footprint_clear demands a
+         * 1-cell margin too, and requiring that of a neighbor turned the rule
+         * into "needs a plaza" — zero monitors ever placed. */
+        isopen[d] = cells_open(x + fdx[d], y + fdy[d], x + fdx[d], y + fdy[d]);
+        if (!isopen[d]) (*nwall)++;
+    }
+    for (int d = 0; d < 4; d++)
+        if (isopen[d] && !isopen[d ^ 2]) out[n++] = (uint8_t)(d * 64);
+    return n;
+}
+
+/* A desk BACKS ONTO a wall, so it cannot be judged by the all-open 3x3
+ * footprint the free-standing placers use. That test and the wall-at-back
+ * test below are mutually exclusive — an open 3x3 means no wall neighbour to
+ * back onto — so requiring both rejected every cell on the grid and
+ * place_pvms returned having placed nothing. Every generated level shipped
+ * without the console (proven over 5000 seeds on a host harness, 2026-08-12).
+ * The desk needs its own cell open and distance from spawn; the approach side
+ * is guaranteed by desk_park_facings, which only offers a facing whose front
+ * cell is open. */
+static int desk_cell_free(int x, int y) {
+    if (world_map[y][x] != 0) return 0;
+    return !(x >= SPAWN_CX - 1 && x <= SPAWN_CX + 1 &&
+             y >= SPAWN_CY - 1 && y <= SPAWN_CY + 1);
+}
+
+/* Pick one parked spot, scanning the WHOLE grid rather than sampling it.
+ *
+ * Random attempts were fine for the old rule, which accepted almost any open
+ * cell. This one rejects most of the floor, and 64 darts at a target that
+ * small can miss — a miss means the level ships with no monitor at all, and
+ * "every procedural level has the monitor" is a standing promise. A full scan
+ * cannot miss: if a single qualifying cell exists anywhere, it is found.
+ *
+ * Reservoir sampling keeps the choice uniform without a candidate list in RAM
+ * (each match has a 1/seen chance of replacing the keeper, so every match ends
+ * up equally likely). Runs once per level generation. */
+static int desk_park_scan(int need_nook, int need_far,
+                          int *bx, int *by, uint8_t *bfacing) {
+    int seen = 0;
+    for (int y = 2; y < MAP_H - 2; y++)
+        for (int x = 2; x < MAP_W - 2; x++) {
+            uint8_t cand[4]; int nwall;
+            if (!desk_cell_free(x, y)) continue;
+            /* Facing test before the standup/exit lookups: it is plain
+             * neighbour reads and it rejects most of the floor, so the
+             * costlier queries only run on cells that could actually win. */
+            int n = desk_park_facings(x, y, cand, &nwall);
+            if (!n) continue;                 /* nothing to back onto */
+            if (need_nook && nwall < 2) continue;   /* holding out for a nook */
+            if (need_far) {
+                /* Make it a HUNT. A desk parked in the first room you
+                 * walk into is found, not discovered — the point is to give
+                 * a reason to check rooms and look around corners. Manhattan
+                 * distance is the right measure here and not a shortcut: you
+                 * walk corridors, so grid steps are closer to real travel
+                 * than a straight line through walls would be. */
+                int dx = x - SPAWN_CX, dy = y - SPAWN_CY;
+                if (dx < 0) dx = -dx;
+                if (dy < 0) dy = -dy;
+                if (dx + dy < DESK_HUNT_MIN) continue;
+            }
+            if (raycast_standup_in_cell(x, y)) continue;
+            if (raycast_exit_path_cell(x, y)) continue;
+            seen++;
+            if (xs32_range(0, seen - 1) == 0) {
+                *bx = x; *by = y;
+                *bfacing = cand[xs32_range(0, n - 1)];
+            }
+        }
+    return seen;
+}
+
+static void place_pvms(int count) {
+    for (int placed = 0; placed < count; placed++) {
+        int x = 0, y = 0; uint8_t facing = 0;
+        /* Three tiers, best first. Dropping the NOOK before dropping the
+         * DISTANCE is deliberate: a plain wall far away is still something
+         * you had to go and find, while a perfect corner two steps from
+         * spawn is not a discovery at all.
+         *   1  a nook or corner, far from spawn        the one we want
+         *   2  any wall at its back, far from spawn    still a hunt
+         *   3  any wall at its back, anywhere          last resort
+         * If even tier 3 finds nothing, the map has no floor cell touching a
+         * wall — meaning it has no walls. Place nothing rather than maroon
+         * the desk in open floor, which is the exact thing this rule exists
+         * to prevent. */
+        if (!desk_park_scan(1, 1, &x, &y, &facing)
+            && !desk_park_scan(0, 1, &x, &y, &facing)
+            && !desk_park_scan(0, 0, &x, &y, &facing)) return;
+        raycast_add_standup(((fx_t)x << FX_SHIFT) + FX(0.5),
+                            ((fx_t)y << FX_SHIFT) + FX(0.5), facing,
+                            PVM_ASSET_KIND);
+        raycast_standup_make_desk();          /* the composite, not the stand */
     }
 }
 
@@ -166,10 +375,62 @@ static void place_chairs(int count) {
         int y = xs32_range(2, MAP_H - 3);
         if (!footprint_clear(x, y, 1, 1)) continue;
         if (raycast_standup_in_cell(x, y)) continue;   /* no two assets in one cell */
+        if (raycast_exit_path_cell(x, y)) continue;    /* chairs don't shove: never
+                                                        * on the exit corridor */
         uint8_t facing = (uint8_t)(xs32_range(0, 3) * 64);
         raycast_add_standup(((fx_t)x << FX_SHIFT) + FX(0.5),
                             ((fx_t)y << FX_SHIFT) + FX(0.5), facing, 3);
         placed++;
+    }
+}
+
+/* Scatter desks, each with a chance of a COMPANION pulled up to it.
+ *
+ * kind 5 = DESK. A desk is only 3 boxes / 18 faces (cheaper than the chair's 9 /
+ * 54) but it is physically much bigger, and registry limits.max_desks caps
+ * authored maps at 8; procgen stays well under that so a generated level still
+ * reads as sparse office rather than a showroom.
+ *
+ * PAIRING. The desk's model front is -z, which maps to these world cell steps
+ * for the four cardinal facings (E0 S64 W128 N192) — derived from the same
+ * fc/fs rotation draw_chair_3d uses, not guessed:
+ *     E -> (+1, 0)   S -> (0, +1)   W -> (-1, 0)   N -> (0, -1)
+ * A companion goes in that neighbouring cell, turned back toward the desk, which
+ * keeps the one-asset-per-cell rule intact and reads as a workstation.
+ *
+ * SURFACE props (a CRT sitting ON the tabletop) are the obvious next companion
+ * and are NOT possible yet: standup_t has no base height, so every free-standing
+ * object's feet are pinned to the floor. Adding a base-height field is the one
+ * engine change that unlocks them; the slot table below is where they'd hang. */
+#define DESK_KIND  5
+#define CHAIR_KIND 3
+static const int8_t DESK_FRONT_DX[4] = {  1,  0, -1,  0 };   /* E, S, W, N */
+static const int8_t DESK_FRONT_DY[4] = {  0,  1,  0, -1 };
+
+static void place_desks(int count) {
+    int placed = 0, attempts = count * 16;
+    while (attempts-- > 0 && placed < count) {
+        int x = xs32_range(2, MAP_W - 3);
+        int y = xs32_range(2, MAP_H - 3);
+        if (!footprint_clear(x, y, 1, 1)) continue;
+        if (raycast_standup_in_cell(x, y)) continue;
+        if (raycast_exit_path_cell(x, y)) continue;   /* never block the way out */
+        int q = xs32_range(0, 3);
+        uint8_t facing = (uint8_t)(q * 64);
+        raycast_add_standup(((fx_t)x << FX_SHIFT) + FX(0.5),
+                            ((fx_t)y << FX_SHIFT) + FX(0.5), facing, DESK_KIND);
+        placed++;
+        /* Companion at the knee, most of the time — a desk with nothing at it
+         * reads as stock, and an office is chairs pushed up to desks. */
+        if (!prob(PROCGEN_MAX_W * 3 / 4)) continue;
+        int cxp = x + DESK_FRONT_DX[q], cyp = y + DESK_FRONT_DY[q];
+        if (cxp < 1 || cyp < 1 || cxp >= MAP_W - 1 || cyp >= MAP_H - 1) continue;
+        if (!footprint_clear(cxp, cyp, 1, 1)) continue;
+        if (raycast_standup_in_cell(cxp, cyp)) continue;
+        if (raycast_exit_path_cell(cxp, cyp)) continue;
+        raycast_add_standup(((fx_t)cxp << FX_SHIFT) + FX(0.5),
+                            ((fx_t)cyp << FX_SHIFT) + FX(0.5),
+                            (uint8_t)(facing + 128), CHAIR_KIND);  /* turned to face it */
     }
 }
 
@@ -239,7 +500,7 @@ static void place_dark_crawlspace(void) {
         if ((unsigned)ox >= MAP_W || (unsigned)oy >= MAP_H) continue;
         if (world_map[oy][ox] != 0) continue;     /* need open floor outside */
         open_cell(cx, cy);                        /* carve the wall cell */
-        ceil_h_add_run(cx - dx, cy - dy, dx, dy, 2); /* low: interior + wall cell */
+        ceil_h_add_run_h(cx - dx, cy - dy, dx, dy, 2, CRAWL_CEIL_H); /* low: interior + wall cell */
         return;
     }
 }
@@ -438,6 +699,8 @@ static void place_crawlspaces(int count) {
         for (int k = 0; k < L && ok; k++) {
             int cx = x + dx * k, cy = y + dy * k;
             if (world_map[cy][cx] != 1) { ok = 0; break; }       /* must be wall to carve */
+            if (raycast_exit_path_cell(cx, cy)) { ok = 0; break; }  /* never tunnel
+                                                 * through the exit door's cavity */
             if (world_map[cy + dx][cx + dy] != 1 ||              /* perp sides wall   */
                 world_map[cy - dx][cx - dy] != 1) { ok = 0; break; }
             int ddx = cx - SPAWN_CX, ddy = cy - SPAWN_CY;        /* keep clear of spawn */
@@ -445,8 +708,37 @@ static void place_crawlspaces(int count) {
         }
         if (!ok) continue;
         for (int k = 0; k < L; k++) world_map[y + dy * k][x + dx * k] = 0;  /* carve passage */
-        ceil_h_add_run(x, y, dx, dy, L);                                    /* mark it low   */
+        ceil_h_add_run_h(x, y, dx, dy, L, CRAWL_CEIL_H);                    /* mark it low   */
         placed++;
+    }
+    if (placed) return;
+    /* Same guarantee as the neanderthal above: ~9% of seeds spent every dart
+     * and left the level with no forced-crouch passage at all. Scan for the
+     * simplest legal choke — ONE wall cell with open floor either side and
+     * wall on both flanks — which is the thinnest thing that still reads as
+     * a crawl. Carving only ever OPENS a cell, so connectivity cannot break. */
+    {
+        int seen = 0, bx = -1, by = -1, bhoriz = 0;
+        for (int horiz = 0; horiz < 2; horiz++) {
+            int dx = horiz ? 1 : 0, dy = horiz ? 0 : 1;
+            for (int y = 2; y < MAP_H - 3; y++)
+                for (int x = 2; x < MAP_W - 3; x++) {
+                    if (world_map[y - dy][x - dx] != 0) continue;   /* entrance open */
+                    if (world_map[y + dy][x + dx] != 0) continue;   /* exit open     */
+                    if (world_map[y][x] != 1) continue;             /* wall to carve */
+                    if (raycast_exit_path_cell(x, y)) continue;
+                    if (world_map[y + dx][x + dy] != 1 ||           /* flanks wall   */
+                        world_map[y - dx][x - dy] != 1) continue;
+                    int ddx = x - SPAWN_CX, ddy = y - SPAWN_CY;
+                    if (ddx > -2 && ddx < 2 && ddy > -2 && ddy < 2) continue;
+                    if (xs32_range(0, seen++) == 0) { bx = x; by = y; bhoriz = horiz; }
+                }
+        }
+        if (bx >= 0) {
+            int dx = bhoriz ? 1 : 0, dy = bhoriz ? 0 : 1;
+            world_map[by][bx] = 0;
+            ceil_h_add_run_h(bx, by, dx, dy, 1, CRAWL_CEIL_H);
+        }
     }
 }
 
@@ -490,9 +782,14 @@ void procgen_run(uint32_t seed) {
     place_stub_walls(xs32_range(6, 9 + dens));
     enforce_boundary();
     clear_spawn_vestibule();
-    /* The way out: every generated level gets the exit door behind spawn. It
-     * carves its own approach and only opens into the NEXT generated level. */
-    raycast_place_exit_door();
+    /* The way out: every generated level gets ONE exit, and the search is part
+     * of the game — a coin flip between the hinged EXIT door on the farthest
+     * reachable wall face and the dark ceiling HOLE you pull up through over
+     * the farthest reachable cell. Either way the spawn->exit corridor is
+     * recorded and protected from later placement. Only opens into the NEXT
+     * generated level. */
+    if (xs32() & 1) raycast_place_exit_door();
+    else            raycast_place_exit_hole();
 
     /* Elements (the lobby features), all weight-driven:
      *  - extra free-standing dividers on top of the room dividers
@@ -513,13 +810,30 @@ void procgen_run(uint32_t seed) {
      * crawlspace occurrence where it was. */
     place_crawlspaces(g_procgen_params.crawlspaces);
     raycast_place_outlets(g_procgen_params.outlets * 5);
-    place_neanderthals(2 + xs32_range(0, 2));   /* 2-4: 1-2 was too sparse to find
-                                                 * on the 32x32 field. Billboard-cheap
-                                                 * now; spread out so rarely >1 large
-                                                 * on screen at once. */
+    /* 1-2 usually, 3 at the cap and rarely (Mike, 2026-08-12). This was 2-4,
+     * raised back when 1-2 felt too sparse to FIND — but that was before
+     * placement was guaranteed, so a "sparse" level was often a level with
+     * none at all. With at least one now certain, scarcity is the point: the
+     * beat is "something is standing there", and four of them on a floor
+     * reads as a crowd instead. */
+    {
+        int neander = 1 + xs32_range(0, 1);        /* 1 or 2, the norm */
+        if (xs32_range(0, 5) == 0) neander = 3;    /* 3 now and then, never more */
+        place_neanderthals(neander);
+    }
     /* 6-9 chairs: the directional-billboard LOD made count nearly free (far
      * chairs are small sprites; only the nearest 3 render true-3D), stress-
      * verified at 21 chairs with no frame drops. Furnished, not spammed. */
+    /* Desks BEFORE chairs: each desk may pull a chair up to it, and the
+     * one-asset-per-cell guard is first-come. Placing loose chairs first would
+     * let them squat the knee cells and starve the pairings. 2-4 keeps a
+     * generated floor sparse (authored maps may go to max_desks 8) and leaves
+     * room in the 36-slot standup table for the chairs below. */
+    /* The monitor first: it's the guaranteed set-piece (one per level, hard
+     * budget 2) and the rarest, so it picks its floor before desks and
+     * chairs crowd the cells. */
+    place_pvms(1);
+    place_desks(2 + xs32_range(0, 2));
     place_chairs(6 + xs32_range(0, 3));
     /* Structure exists now, so a walled corridor can be found: a stretch of
      * unlit hallway cells. */

@@ -88,6 +88,34 @@ jobs:
         if: steps.exists.outputs.skip != 'true'
         run: make release MARSDEV="$MARSDEV"
 
+      # The flagship above ships core + curated content only. This one carries
+      # what contributors have sent in and the maintainer has accepted:
+      #   backrooms-community.32x   every community map + community asset
+      #
+      # There is deliberately NO per-author ROM here. Upstream cannot host a
+      # build per contributor: it is one more ROM compiled on every release,
+      # forever, growing with the community. The console says the same thing
+      # louder — the community palette arena holds 14 sprites TOTAL, and one
+      # contributor's set of decals took four, so a shared "everybody's work"
+      # ROM fills after a handful of people no matter how the CI is arranged.
+      # Contributors get their own ROM from their own FORK, where the whole
+      # budget is theirs (see the editor's "Your copy" panel).
+      #
+      # Skipped cleanly when maps/community/ is empty.
+      - name: Build the community ROM
+        if: steps.exists.outputs.skip != 'true'
+        id: sidebuilds
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          MAPS=(maps/community/*.map)
+          if [ ${#MAPS[@]} -eq 0 ]; then
+            echo "no community maps — flagship only"
+            echo "assets=" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          make community MARSDEV="$MARSDEV"
+          echo "assets=rom/backrooms-community.32x" >> "$GITHUB_OUTPUT"
+
       - name: Release notes (commits since the previous build tag)
         if: steps.exists.outputs.skip != 'true'
         id: notes
@@ -100,12 +128,57 @@ jobs:
           # New community maps in this release get a shout-out up top.
           NEWMAPS=$(git diff --diff-filter=A --name-only ${PREV:+$PREV..HEAD} -- 'maps/community/*.map' | \
                     sed 's|maps/community/||; s|\.map$||; s/^/- 🗺️ NEW community map: /' || true)
+          # Split the log: a reader wants the GAME changes, not five roadmap
+          # edits. Docs/chore commits still ship, just folded away underneath.
+          CHORE_RE='^- (Roadmap|Docs|README|Rebuild the tracked flagship ROM)'
+          CHANGES=$(printf '%s\n' "$NOTES" | grep -Ev "$CHORE_RE" || true)
+          CHORES=$(printf  '%s\n' "$NOTES" | grep -E  "$CHORE_RE" || true)
+          [ -n "$CHANGES" ] || { CHANGES="$NOTES"; CHORES=""; }
+          # Optional human headline. Only counts if RELEASE_HEADLINE.md was
+          # actually edited in THIS range — otherwise last build's headline
+          # would silently ride along on every release after it.
+          HEADLINE=""
+          if [ -f RELEASE_HEADLINE.md ] && \
+             git diff --name-only ${PREV:+$PREV..HEAD} -- RELEASE_HEADLINE.md | grep -q .; then
+            HEADLINE=$(cat RELEASE_HEADLINE.md)
+          fi
+          # Written to a FILE, not a step output. Passing the notes as an
+          # expression into --notes pasted this text inside a double-quoted
+          # shell string, where bash ran every backticked token as a command
+          # and substituted the empty result -- which is how both ROM filenames
+          # disappeared out of the footer below. --notes-file cannot do that.
           {
-            echo 'notes<<NOTES_EOF'
+            [ -n "$HEADLINE" ] && { echo "$HEADLINE"; echo; }
             [ -n "$NEWMAPS" ] && { echo "$NEWMAPS"; echo; }
-            echo "$NOTES"
-            echo 'NOTES_EOF'
-          } >> "$GITHUB_OUTPUT"
+            echo "$CHANGES"
+            if [ -n "$CHORES" ]; then
+              echo
+              echo '<details><summary>Docs and roadmap</summary>'
+              echo
+              echo "$CHORES"
+              echo
+              echo '</details>'
+            fi
+            echo
+            echo '---'
+            # In a FORK, the contributor's own maps are community-tier, so the
+            # flagship ROM does NOT contain them. Say which file is theirs
+            # before they download the wrong one.
+            if [ "$GITHUB_REPOSITORY" != "mholzinger/32x-builder" ]; then
+              echo '> **This is a fork build.** Your own maps and sprites are in'
+              echo '> `backrooms-community.32x` — the plain `backrooms.32x` is the'
+              echo '> upstream game without them.'
+              echo
+            fi
+            echo '**Which ROM do I want?** `backrooms.32x` is the game — canon plus the'
+            echo 'maps the project authors made or vetted. `backrooms-community.32x`'
+            echo 'adds every map and asset contributors have sent in, vetted or not.'
+            echo
+            echo 'Making your own maps or sprites? **Fork the repo** — your fork builds'
+            echo 'its own ROM, and the console’s 14-sprite palette budget is yours alone'
+            echo 'there instead of shared with everyone else. The'
+            echo '[editor](https://backrooms-32x-project.fly.dev/) sets it up in a click.'
+          } > release-notes.md
 
       - name: Publish release
         if: steps.exists.outputs.skip != 'true'
@@ -113,10 +186,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ steps.tag.outputs.tag }}" rom/backrooms.32x \
+            ${{ steps.sidebuilds.outputs.assets }} \
             -R "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "Build ${{ steps.tag.outputs.build }} — ${{ steps.tag.outputs.date }} (${{ steps.tag.outputs.sha }})" \
-            --notes "${{ steps.notes.outputs.notes }}"
+            --notes-file release-notes.md
 
       # Push the SAME artifact we just released, so the GitHub Release asset and
       # the itch.io download are byte-identical — no separate build, no drift.

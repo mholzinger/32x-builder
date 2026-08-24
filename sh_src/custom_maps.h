@@ -44,12 +44,14 @@ typedef struct { uint8_t x, y, flags; } cm_pedge_t;
 #define CM_PEDGE_FLUSH_LO 0x10
 #define CM_PEDGE_FLUSH_HI 0x20
 typedef struct { fx_t x, y, z; uint8_t axis, kind, facing; }          cm_decal_t;  /* facing: engine angle (E0 S64 W128 N192); free-standing kinds use it, wall decals ignore it */
-typedef struct { uint8_t cx, cy; int8_t dx, dy; uint8_t len; }        cm_crawl_t;  /* one ceil_h_add_run (dx,dy signed: N/W = -1) */
+typedef struct { uint8_t cx, cy; int8_t dx, dy; uint8_t len, h; }     cm_crawl_t;  /* one ceil_h_add_run_h (dx,dy signed: N/W = -1; h = slab ceil_h, registry crawl.h) */
 typedef struct cm_light_s { uint8_t cx, cy; }                        cm_light_t;  /* authored ceiling fixture, cell coords */
 typedef struct cm_dark_s { uint8_t x0, y0, x1, y1; }                 cm_dark_t;   /* DARK ROOM: unlit rect, inclusive cells */
 
 typedef struct {
     const char           *name;        /* shown in the menus; keep <= 16 chars  */
+    const char           *author;      /* map credit: automap top + pause CREDITS.
+                                        * "" => the project (shown as -BACKROOMS-). */
     uint8_t               w, h;        /* authored grid size (8/16/32/64, <=64)  */
     const uint8_t        *grid;        /* w*h row-major cells: 0 open,1 wall,2 void */
     const cm_pedge_t     *pedges; uint8_t n_pedges;   /* rasterized partitions */
@@ -76,6 +78,17 @@ extern const custom_map_t custom_maps[];
 extern const int          custom_map_count;   /* total, incl. lobby (load bounds) */
 extern const int          custom_pick_count;  /* selectable maps (pickable roles), ordered first */
 extern const int          custom_start_count; /* starter maps: [0, start); play/test: [start, core) */
-extern const int          custom_core_count;  /* core (starter/play) pickable; community span = [core, pick) */
+/* Tier blocks, in custom_maps[] order (gen_maps sorts by role priority):
+ *   [0, start)            starter        "-- START MAPS --"
+ *   [start, core)         play + test    "-- TEST --"
+ *   [core, core+curated)  curated        "-- MAPS --" / "-- STORIES --"
+ *   [core+curated, pick)  community      "-- COMMUNITY --"
+ * The community block is EMPTY in the flagship ROM: those maps compile in only
+ * for `make community` / `make author AUTHOR=<handle>`. */
+extern const int          custom_core_count;
+extern const int          custom_curated_count;
+/* "" on the flagship, else "COMMUNITY BUILD" / "BUILD FOR <AUTHOR>" — printed
+ * on the start menu + CREDITS so a side build never passes for the release. */
+extern const char         custom_build_label[];
 
 #endif /* CUSTOM_MAPS_H */

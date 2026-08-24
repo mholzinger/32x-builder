@@ -213,6 +213,139 @@ void HwMdSetVram(unsigned short word) {
 	while(MARS_SYS_COMM0) ;
 }
 
+/* BUS A/B (TESTING>BUS): tell the 68K whether to back its COMM0 poll off when
+ * idle. The 68K's main loop calls do_commands() as fast as it can spin, so it
+ * reads a 32X sysreg every few microseconds forever — the one actor in the
+ * system whose bus appetite nobody had throttled. It cannot be a blind divider:
+ * every sender above blocks on `while(MARS_SYS_COMM0)`, and HUD text is one
+ * command per tile, so slowing the service rate outright would just move the
+ * cost onto the primary. The 68K side backs off only after consecutive EMPTY
+ * polls and snaps back to every-iteration on the first live command. */
+void HwMdSetBusThrottle(int on) {
+	while(MARS_SYS_COMM0) ;
+	MARS_SYS_COMM0 = (unsigned short)(0x1300 | (on ? 1 : 0));
+	while(MARS_SYS_COMM0) ;
+}
+
+/* FULLSCREEN-ON-32X: switch the modal mini-game's picture from MD plane-B tiles
+ * to a raw tile-id broadcast this side renders itself. See md_main.c cmd 21.
+ * mode: bit0 = broadcast on, bit1 = dirty-epoch protocol (TESTING>EPOCH). */
+void HwMdSetSmsTileBcast(int mode) {
+	while(MARS_SYS_COMM0) ;
+	MARS_SYS_COMM0 = (unsigned short)(0x1500 | (mode & 3));
+	while(MARS_SYS_COMM0) ;
+}
+
+void HwMdSmsBoot(void) {
+	while(MARS_SYS_COMM0) ;
+	MARS_SYS_COMM0 = 0x0900; // upload Z80 hello, drop VDP to mode 4, run
+	while(MARS_SYS_COMM0) ;
+}
+
+void HwMdSmsStop(void) {
+	/* BOUNDED (see the exit-hang saga). The 68K sweeps the splash rows and
+	 * parks the Z80 — nothing more. The old "full restore" tail (register
+	 * replay + CRAM repaint + $3800 sweep) was the grey-menu font-eraser:
+	 * two bisect rounds proved any exit that skipped it kept the font, and
+	 * in the mode-5-only design it restores state that was never touched. */
+	uint32_t guard = 2000000;
+	while (MARS_SYS_COMM0 && --guard) ;
+	MARS_SYS_COMM0 = 0x0A00;
+	guard = 2000000;
+	while (MARS_SYS_COMM0 && --guard) ;
+}
+
+void HwMdSmsGameMap(const unsigned char *packed) {
+	/* Stream the 440-byte level patch (1bpp world_map + spawn + exit +
+	 * the 16-tile level name + the two edge-partition bitmaps) as 220
+	 * indexed words. Each word is stateless (index rides in the command
+	 * low byte — 220 still fits its 8 bits), so nothing can shear. */
+	for (int i = 0; i < 220; i++) {
+		while (MARS_SYS_COMM0) ;
+		MARS_SYS_COMM2 = (unsigned short)((packed[i * 2] << 8) | packed[i * 2 + 1]);
+		MARS_SYS_COMM0 = (unsigned short)(0x0B00 | i);
+	}
+	while (MARS_SYS_COMM0) ;
+}
+
+void HwMdSmsGameBoot(void) {
+	while (MARS_SYS_COMM0) ;
+	MARS_SYS_COMM0 = 0x0C00; // upload mini-game, patch map in, run the Z80
+	while (MARS_SYS_COMM0) ;
+}
+
+void HwMdSmsGameStop(void) {
+	/* BOUNDED like HwMdSmsStop — no COMM handshake may hold the exit. */
+	uint32_t guard = 2000000;
+	while (MARS_SYS_COMM0 && --guard) ;
+	MARS_SYS_COMM0 = 0x0D00;
+	guard = 2000000;
+	while (MARS_SYS_COMM0 && --guard) ;
+}
+
+void HwMdYmCmd(unsigned char op) {
+	/* Whole-action YM control (command 0x0F): 0 all off, 1 patch upload
+	 * + bed on, 2 sting key-on, 3 sting release. One COMM round trip —
+	 * the per-register path costs a frame per write (68K serves one
+	 * command per vblank) and a 70-write upload visibly hung the game. */
+	uint32_t guard = 2000000;
+	while (MARS_SYS_COMM0 && --guard) ;
+	MARS_SYS_COMM0 = (unsigned short)(0x0F00 | op);
+	guard = 2000000;
+	while (MARS_SYS_COMM0 && --guard) ;
+}
+
+void HwMdYmWrite(unsigned char reg, unsigned char val) {
+	/* One YM2612 part-I register write, relayed to the 68K (command
+	 * 0x0E). FIRE-AND-FORGET: waits for the slot to be free, posts, and
+	 * returns — no completion wait. The 68K serves ~one command per
+	 * vblank, so a caller pacing itself to one write per frame never
+	 * blocks at all, while a synchronous burst is both a hang (16ms per
+	 * write) and, empirically, silent (the B00246 mystery: 70-write
+	 * bursts never took effect on the chip even with settle pacing —
+	 * the frame-spaced stream is the PROVEN-sounding shape). */
+	uint32_t guard = 2000000;
+	while (MARS_SYS_COMM0 && --guard) ;
+	MARS_SYS_COMM2 = val;
+	MARS_SYS_COMM0 = (unsigned short)(0x0E00 | reg);
+}
+
+void HwMdSmsGlassBoot(void) {
+	/* Headless mini-game boot for the PVM glass: same upload + level
+	 * patch as the modal boot, but no text-layer blit and pad held 0 —
+	 * the picture leaves over the COMM6/COMM10 broadcast instead. */
+	while (MARS_SYS_COMM0) ;
+	MARS_SYS_COMM0 = 0x1000;
+	while (MARS_SYS_COMM0) ;
+}
+
+void HwMdSmsGlassHandoff(void) {
+	/* Glass -> fullscreen with the SAME Z80 still running: the 68K just
+	 * starts blitting and feeding the pad. No reboot means the chime and
+	 * the music never restart across the cut. */
+	uint32_t guard = 2000000;
+	while (MARS_SYS_COMM0 && --guard) ;
+	MARS_SYS_COMM0 = 0x1200;
+	guard = 2000000;
+	while (MARS_SYS_COMM0 && --guard) ;
+}
+
+void HwMdSmsGlassStop(void) {
+	/* BOUNDED like every SMS teardown. */
+	uint32_t guard = 2000000;
+	while (MARS_SYS_COMM0 && --guard) ;
+	MARS_SYS_COMM0 = 0x1100;
+	guard = 2000000;
+	while (MARS_SYS_COMM0 && --guard) ;
+}
+
+void HwMdSetColor(unsigned short index, unsigned short color) {
+	while(MARS_SYS_COMM0) ; // wait until 68000 has responded to any earlier requests
+	MARS_SYS_COMM2 = color;
+	MARS_SYS_COMM0 = 0x0800 | (index & 0xFF); // Set MD CRAM entry (BGR word)
+	while(MARS_SYS_COMM0) ;
+}
+
 static void NextChr(char c, uint16_t color) {
 	if(c >= '0' && c <= '9') {
 		c = c - '0' + 2;

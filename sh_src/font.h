@@ -18,6 +18,12 @@
  * one color. No alpha blending, no transparency. */
 
 void font_draw_char(uint8_t *fb, int x, int y, char c, uint8_t color);
+/* Same stamp, but the caller supplies the 8 row bytes instead of naming a
+ * glyph from THIS font. The SMS picture draws through this with rows from
+ * sms_font.h — the MD boot font, generated so both renderers share one
+ * source — not from the menu glyphs above. */
+void font_draw_rows(uint8_t *fb, int x, int y, const uint8_t *rows,
+                    uint8_t color);
 void font_draw_string(uint8_t *fb, int x, int y, const char *s, uint8_t color);
 
 #endif

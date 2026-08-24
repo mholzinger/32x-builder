@@ -9,6 +9,8 @@
 # on disk but untracked; GitHub Releases are the canonical archive.
 !rom/backrooms.32x
 !rom/md_start.bin
+# Which build profile the generated files were last made for (Makefile stamp)
+rom/.profile
 
 # macOS
 .DS_Store
@@ -25,6 +27,7 @@ sh_src/custom_maps.c
 
 # Codegen'd from registry.json "assets" by tools/gen_assets.py every build
 sh_src/sprite_defs.h
+sh_src/sms_font.h
 
 # Debug capture artifacts (snapshotted to share with reviewers, not history)
 screenshots/
@@ -56,3 +59,13 @@ __pycache__/
 rom/release/
 # Devlog drafts — authored here, published to itch/Reddit, not tracked
 posts/
+
+# Voyager full greetings: the mp3 is the tracked bake source; the lossless
+# wav/aiff duplicates (~93MB) stay local-only.
+sound/Voyager_*.wav
+sound/Voyager_*.aiff
+# host-side bake tool binary (build from tools/speex_bake.c)
+tools/speex_bake
+# Claude Code: skills are shared, per-machine permissions are not. Only Mike's
+# global gitignore was covering this, which does nothing for a fresh clone.
+.claude/settings.local.json

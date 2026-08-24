@@ -120,7 +120,8 @@ def parse(text):
                 err(n, "crawl needs cx cy")
             m["crawls"].append({"cx": int(pos[0]), "cy": int(pos[1]),
                                 "dir": kw.get("dir", "S").upper(),
-                                "len": int(kw.get("len", "1"))})
+                                "len": int(kw.get("len", "1")),
+                                "h": kw.get("h", "crawl").lower()})
 
         elif section in ("partition", "partitions"):
             left, sep, right = line.partition("->")
@@ -212,7 +213,10 @@ def serialize(model):
     if m["crawls"]:
         L.append("[crawl]")
         for c in m["crawls"]:
-            L.append("%d,%d dir=%s len=%d" % (c["cx"], c["cy"], c["dir"], c["len"]))
+            line = "%d,%d dir=%s len=%d" % (c["cx"], c["cy"], c["dir"], c["len"])
+            if c.get("h", "crawl") != "crawl":
+                line += " h=%s" % c["h"]
+            L.append(line)
         L.append("")
     if m["partitions"]:
         L.append("[partitions]")

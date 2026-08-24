@@ -118,6 +118,8 @@ const BUDGET_ROWS = [
   ['decals',     'Decals',     'max_decals',
                  m => m.decals.filter(d => !isStandaloneKind(d.kind)).length],
   ['chairs',     'Chairs','max_chairs',     m => m.decals.filter(d => d.kind === 'chair').length],
+  ['desks',      'Desks', 'max_desks',      m => m.decals.filter(d => d.kind === 'desk').length],
+  ['pvms',       'PVMs',  'max_pvms',       m => m.decals.filter(d => d.kind === 'pvm').length],
   ['crawls',     'Crawl runs', 'max_crawl_runs', m => m.crawls.length],
   ['lights',     'Lights',     'max_lights',     m => (m.lights || []).length],
   ['dark',       'Dark rooms', 'max_dark_rooms', m => (m.dark || []).length],
@@ -141,11 +143,22 @@ function updateBudget() {
   const box = $('#budget');
   if (!box || !ME.model || !ME.reg) return;
   box.innerHTML = '';
+  /* The ~15fps floor in partition edges: the Smooth band's ceiling. The edge
+   * CAP (max_partition_edges, 255) is a hardware uint8 limit, ~3.6x looser than
+   * this \u2014 so an edge count can be "green" against the cap while already under
+   * 15fps. Flag that gap amber on the edges row so the framerate floor is
+   * visible before the hardware cap, not only after. */
+  const smoothEdges = (ME.reg.playability && ME.reg.playability.bands &&
+                       ME.reg.playability.bands[0] && ME.reg.playability.bands[0].max) || Infinity;
   for (const [kind, label, capKey, count] of BUDGET_ROWS) {
     const n = count(ME.model), cap = budgetCap(capKey);
+    const overFloor = kind === 'edges' && n > smoothEdges && n < cap;
     const row = document.createElement('div');
     row.id = 'budget-' + kind;
-    row.className = 'brow' + (n > cap ? ' bover' : n >= cap ? ' bfull' : '');
+    row.className = 'brow' + (n > cap ? ' bover' : n >= cap ? ' bfull' : overFloor ? ' bwarn' : '');
+    if (overFloor)
+      row.title = n + ' edges is past the ~15fps floor (' + smoothEdges + '). Still under the '
+                + cap + '-edge hardware cap, but expect ~12fps or below \u2014 walk-test it.';
     const name = document.createElement('span'); name.textContent = label;
     const val  = document.createElement('span');
     val.textContent = n + ' / ' + (cap === Infinity ? '\u2014' : cap);
@@ -398,7 +411,8 @@ function drawDecal(d) {
   ctx.beginPath(); ctx.arc(d.x * cs, d.y * cs, cs * 0.22, 0, 7); ctx.fill();
   ctx.fillStyle = '#000'; ctx.font = Math.round(cs * 0.42) + 'px monospace';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  const g = d.kind === 'door' ? 'D' : d.kind === 'neanderthal' ? 'N' : '⊙';
+  const g = d.kind === 'door' ? 'D' : d.kind === 'neanderthal' ? 'N'
+          : d.kind === 'exit_hole' ? '▩' : '⊙';
   ctx.fillText(g, d.x * cs, d.y * cs);
 }
 function drawSpawn(s) {
@@ -775,6 +789,16 @@ async function doLoad(name) {
   fitCell(); buildPalette(); buildNextSel(); draw(); saveWip(); announceBudget('loaded ' + name + tag);
 }
 
+/* Trigger a browser download of `text` as `fname`. Unlike a clipboard write,
+   this can't silently fail on a stale user-gesture, so it's the reliable way to
+   get a large map's real content over to GitHub. */
+function downloadText(text, fname) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+  const a = document.createElement('a'); a.href = url; a.download = fname;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
 /* Export = download the .map to the user's disk (the save path on the hosted,
    read-only editor). The session never leaves the browser; the file does. */
 async function doExport() {
@@ -793,11 +817,191 @@ async function doExport() {
   status('exported ' + fname + ' → add it under maps/community/ and open a PR');
 }
 
-/* Submit = the community-PR pipeline. Server runs the SAME lint gate CI runs,
-   then hands back a pre-filled github.com new-file URL: GitHub walks the
-   (signed-in) contributor through fork -> commit -> pull request natively, so
-   the PR is authored by THEIR GitHub identity — no tokens ever touch this
-   server. CI then lints + builds the ROM on the PR; merge = in the next ROM. */
+/* ---------- GitHub sign-in (the one-click submit path) ----------
+ * The backend has done the whole fork -> branch -> commit -> PR dance as the
+ * signed-in user since Phase 3, but the editor never rendered a way to sign
+ * in — so every contributor fell through to the pre-filled-URL flow and hit
+ * github.com's "you must fork this repository" wall, which is exactly where
+ * non-git authors stop. This is that missing control. */
+function goSignIn() {
+  saveWipNow();                     // the round trip leaves the page; keep the map
+  window.location.href = '/auth/login';
+}
+
+async function refreshAuth() {
+  const el = $('#gh-auth');
+  if (!el) return;
+  const j = await jget('/auth/user').catch(() => ({}));
+  ME.ghOAuth = !!j.oauth;
+  ME.ghUser = j.login || null;
+  el.textContent = '';
+  if (!ME.ghOAuth) return;          // instance without OAuth: manual flow only
+  if (ME.ghUser) {
+    const who = document.createElement('span');
+    who.className = 'gh-who';
+    who.textContent = '@' + ME.ghUser;
+    who.title = 'Signed in with GitHub — Submit opens your pull request in one click';
+    const out = document.createElement('button');
+    out.className = 'gh-out'; out.textContent = 'sign out';
+    out.onclick = async () => {
+      await fetch('/auth/logout', { method: 'POST' });
+      await refreshAuth(); status('signed out of GitHub');
+    };
+    el.append(who, out);
+    refreshFork();
+  } else {
+    const inb = document.createElement('button');
+    inb.className = 'gh-signin'; inb.textContent = 'Sign in with GitHub';
+    inb.title = 'One click: the editor makes your own copy (fork) of the game repo, ' +
+                'commits your map to it and opens the pull request for you.';
+    inb.onclick = goSignIn;
+    el.append(inb);
+    const fw = $('#fork-panel-wrap'); if (fw) fw.style.display = 'none';
+  }
+}
+
+/* ---------- your own fork ----------
+ * A fork isn't plumbing on the way to a PR, it's the contributor's own copy of
+ * the game. In it they own the whole budget — the community palette arena, the
+ * sprite numbering, the ROM — so they can build out as many maps and assets as
+ * they like without competing with anyone else's uploads, and their fork's CI
+ * cuts them a ROM on every push. Submitting upstream stays available for work
+ * they want in the main game. */
+async function refreshFork() {
+  const p = $('#fork-panel');
+  if (!p || !ME.ghUser) return;
+  const j = await jget('/fork/status').catch(() => ({}));
+  ME.fork = (j && j.exists) ? j.fork : null;
+  ME.forkIsUpstream = !!(j && j.is_upstream);
+  const wrap = $('#fork-panel-wrap');
+  if (ME.forkIsUpstream) { if (wrap) wrap.style.display = 'none'; return; }  // maintainer
+  if (wrap) wrap.style.display = '';
+  p.style.display = '';
+  p.textContent = '';
+  const line = document.createElement('div');
+  if (ME.fork) {
+    line.innerHTML = 'Your copy: <a href="https://github.com/' + ME.fork +
+      '" target="_blank" rel="noopener">' + ME.fork + ' ↗</a>';
+    p.appendChild(line);
+    const save = document.createElement('button');
+    save.className = 'primary'; save.textContent = '⬇ Save to my copy';
+    save.title = 'Commit this map to YOUR repo. Your copy builds its own ROM ' +
+                 'with your maps and sprites in it — no review, no waiting.';
+    save.onclick = doForkSaveMap;
+    const ld = document.createElement('button');
+    ld.textContent = '↻ my sprites';
+    ld.title = 'Re-read the sprites in your copy and put them in the Decals palette.';
+    ld.onclick = () => loadForkAssets(false);
+    p.appendChild(ld);
+    loadForkAssets(true);            // silent on load: your assets are just there
+    const rom = document.createElement('button');
+    rom.textContent = 'my builds ↗';
+    rom.title = 'Your fork’s Actions tab: each push builds a ROM you can download.';
+    rom.onclick = () => window.open('https://github.com/' + ME.fork + '/actions', '_blank');
+    p.append(save, rom);
+  } else {
+    line.textContent = 'Make your own copy of the game: your maps, your sprites, ' +
+                       'your whole asset budget, your own ROM builds.';
+    p.appendChild(line);
+    const mk = document.createElement('button');
+    mk.className = 'primary'; mk.textContent = 'Create my copy';
+    mk.title = 'Forks the game on GitHub under your account. Takes a few seconds.';
+    mk.onclick = async () => {
+      mk.disabled = true; status('creating your copy of the game…');
+      const r = await jpost('/fork/create', {});
+      mk.disabled = false;
+      if (r.error) { status('fork failed: ' + r.error); return; }
+      await refreshFork();
+      status('your copy is ready: ' + r.fork + ' — enable Actions on it once and ' +
+             'every save builds you a ROM.');
+    };
+    p.appendChild(mk);
+  }
+}
+
+/* Pull the signed-in contributor's OWN sprites out of their fork and register
+   them in this session — palette button, grid glyph, preview texels — using the
+   same injection the bake flow uses. Without it a fork is write-only: assets
+   you saved yesterday simply aren't there today. */
+async function loadForkAssets(quiet) {
+  if (!ME.ghUser || !ME.fork) return 0;
+  const j = await jget('/fork/assets').catch(() => ({}));
+  const list = (j && j.sprites) || [];
+  let added = 0;
+  for (const s of list) {
+    if (!ME.reg.decals.kinds.find(k => k.id === s.id)) {
+      const ent = { id: s.id, kind: s.kind, z: s.z, glyph: '⧉', color: '#b8b0a4',
+                    label: s.id + ' (your copy)' };
+      if (s.mount !== 'wall') ent.standalone = true;
+      ME.reg.decals.kinds.push(ent);
+    }
+    const A = window.ME.assets;
+    if (A && !A.sprites[s.id]) {
+      for (let i = 0; i < s.pal8.length; i++) A.palette[s.base + 1 + i] = s.pal8[i];
+      const px = new Array(s.w * s.h);
+      for (let i = 0; i < s.texels.length; i++)
+        px[i] = s.texels[i] === 0 ? -1 : s.base + s.texels[i];
+      A.sprites[s.id] = { w: s.w, h: s.h, px, world_h: s.world_h,
+                          world_hw: s.world_hw, wall: s.mount === 'wall' };
+    }
+    added++;
+  }
+  if (added) buildPalette();
+  if (!quiet) {
+    status(added ? 'loaded ' + added + ' sprite(s) from ' + ME.fork +
+                   ' — they are in the Decals palette'
+                 : 'no extra sprites in ' + ME.fork + ' yet');
+  }
+  return added;
+}
+
+async function doForkSaveMap() {
+  syncName();
+  status('saving to your copy…');
+  const r = await fetch('/fork/save_map', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(ME.model),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.ok) {
+    const errs = (j.errors || [j.error || ('HTTP ' + r.status)]);
+    status('save failed: ' + errs[0]); return;
+  }
+  statusActions('saved to ' + j.fork + ' as ' + j.path + '.', [
+    ['see the build', () => window.open(j.actions_url, '_blank'),
+     'Your fork builds a ROM on each push (enable Actions on the fork once).'],
+  ]);
+}
+
+/* The status bar can carry ACTIONS, not just text — a dead-end message ("sign
+   in first") is what stranded the first outside tester. */
+function statusActions(text, actions) {
+  const el = $('#status');
+  el.textContent = text + ' ';
+  for (const [label, fn, title] of actions) {
+    const b = document.createElement('button');
+    b.className = 'status-act'; b.textContent = label;
+    if (title) b.title = title;
+    b.onclick = fn;
+    el.append(b);
+  }
+}
+
+function promptSignIn(prefix) {
+  statusActions((prefix || '') + 'submitting opens a pull request under your own ' +
+                'GitHub account:', [
+    ['Sign in with GitHub', goSignIn,
+     'One click — the editor forks the repo, commits your map and opens the PR for you.'],
+    ['do it by hand instead', () => submitManual(),
+     'Opens github.com with your map pre-filled. GitHub will ask you to fork first.'],
+  ]);
+}
+
+/* Submit = the community-PR pipeline. Server runs the SAME lint gate CI runs;
+   signed in, it forks/commits/opens the PR for you. Signed out, it hands back a
+   pre-filled github.com new-file URL and GitHub walks you through the same steps
+   manually. Either way the PR is authored by THEIR GitHub identity — no tokens
+   ever touch this server. CI lints + builds the ROM on the PR; merge = next ROM. */
 async function doSubmit() {
   syncName();
   /* Preflight the budget CLIENT-SIDE: refuse before posting anything, with
@@ -828,8 +1032,21 @@ async function doSubmit() {
     }
     const errs = (j.errors || [j.error || ('HTTP ' + r.status)]);
     if (r.status !== 401) { status('submit failed: ' + errs.join(' | ')); return; }
-    /* session expired -> fall through to the URL flow */
+    /* session expired -> sign in again rather than silently demoting them to
+     * the manual flow they signed in to avoid. */
+    await refreshAuth();
+    promptSignIn('your GitHub session expired — ');
+    return;
   }
+  /* Not signed in, but this instance CAN do it for them: offer that first. */
+  if (ME.ghOAuth) { promptSignIn(''); return; }
+  await submitManual();
+}
+
+/* The zero-auth path: lint server-side, then hand the author a pre-filled
+   github.com page. GitHub itself asks them to fork — say so up front, because
+   an unexplained "you must fork this repository" reads as a permission error. */
+async function submitManual() {
   const r = await fetch('/submit_url', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(ME.model),
@@ -842,12 +1059,22 @@ async function doSubmit() {
   }
   if (j.url_len < 7500) {                 // fits comfortably in a URL
     window.open(j.url, '_blank');
-    status('opening GitHub: sign in, then "Propose new file" → "Create pull request". ' +
-           'Your map lands in ' + j.filename + ' under your own name.');
-  } else {                                // huge map: clipboard + bare new-file page
-    try { await navigator.clipboard.writeText(j.text); } catch (e) { /* fall through */ }
-    window.open(j.bare_url, '_blank');
-    status('map copied to clipboard (too big for a URL) — paste it into the GitHub editor that just opened, then "Propose new file".');
+    status('opening GitHub. It will ask you to FORK the repository — that just makes ' +
+           'your own copy to commit into, so click it. Then "Propose new file" → ' +
+           '"Create pull request". Your map lands in ' + j.filename + ' under your own name.');
+  } else {                                // too big for a URL: hand over a REAL file
+    /* The old path opened GitHub's empty new-file editor and copied the map to
+     * the clipboard for a manual paste — a paste that silently failed (stale
+     * user-gesture) or got skipped, committing an empty file. Instead download
+     * the actual .map and open GitHub's drag-drop UPLOAD page: real content, no
+     * clipboard, no empty editor. */
+    const fname = (j.filename.split('/').pop()) || 'map.map';
+    downloadText(j.text, fname);
+    window.open(j.upload_url, '_blank');
+    status('your map is too big for GitHub’s URL editor, so it downloaded as ' +
+           fname + ' — drag that file into the GitHub upload page that just opened ' +
+           '(it will ask you to fork the repo first: that is your own copy, click it), ' +
+           'then "Propose changes" to open your PR.');
   }
 }
 
@@ -906,6 +1133,11 @@ function saveWip() {                                // debounced; keeps the sess
     try { localStorage.setItem(WIP_KEY, JSON.stringify({ model: ME.model, name: ME.name })); } catch (e) {}
   }, 800);
 }
+function saveWipNow() {                             // before we leave the page (sign-in)
+  if (_wipTimer) { clearTimeout(_wipTimer); _wipTimer = null; }
+  try { localStorage.setItem(WIP_KEY, JSON.stringify({ model: ME.model, name: ME.name })); }
+  catch (e) {}
+}
 function loadWip() {
   try { const s = localStorage.getItem(WIP_KEY); return s ? JSON.parse(s) : null; } catch (e) { return null; }
 }
@@ -948,3 +1180,233 @@ async function init() {
   setInterval(saveWip, 4000);                      // periodic safety net while editing
 }
 init();
+
+
+/* ---------- community sprite upload (Add a sprite panel) ----------
+ * POSTs the image to /bake_sprite; the server bakes it against the shared
+ * COMM ramp and returns the full submission bundle. The baked standee is
+ * immediately PLACEABLE in this session (registry + assets patched
+ * client-side) so authors can walk their map with it before the PR merges. */
+(function () {
+  const $s = id => document.getElementById(id);
+  if (!$s('spr-bake')) return;
+  let bundle = null;
+  const mountVal = () =>
+    (document.querySelector('input[name="spr-mount"]:checked') || {}).value || 'billboard';
+  const RULES = {
+    billboard: 'Free-standing: it will stand on the floor and block ' +
+               'movement, like the neanderthal.',
+    wall: 'Wall decal: painted flat on a wall face at the height you ' +
+          'set, like the outlet.'
+  };
+  /* Steps 1+2 gate the bake; the button stays CLICKABLE either way and the
+     click says what is missing. It used to be disabled until ready, and a
+     disabled button swallows clicks silently \u2014 reported from the field as
+     "clicking on step five doesn't do anything" (the only feedback was a
+     hover tooltip). Dim it when not ready, never deafen it. */
+  const NAME_RE = /^[a-z][a-z0-9_]{1,15}$/;
+  const nameFix = n => n.toLowerCase().replace(/[^a-z0-9_]+/g, '_')
+                        .replace(/^[^a-z]+/, '').slice(0, 16);
+  const readiness = () => {
+    const f = $s('spr-file').files[0];
+    const name = $s('spr-name').value.trim();
+    const nameOk = NAME_RE.test(name);
+    $s('spr-name-hint').textContent =
+      name === '' ? '' :
+      nameOk ? '\u2713 ' + name : 'lowercase a-z 0-9 _ only, 2-16 chars, letter first';
+    const btn = $s('spr-bake');
+    btn.style.opacity = (f && nameOk) ? '' : '.55';
+    btn.title = !f ? 'Step 1: pick an image first'
+              : !nameOk ? 'Step 2: give it a valid name'
+              : 'Bake it \u2014 the preview shows exactly what ships';
+  };
+  let sprRot = 0, sprMir = false;
+  let sprMark = 0;          /* 0 = whole image; N = only that mark of a sheet */
+  const thumbCss = () => {
+    $s('spr-thumb').style.transform =
+      'rotate(' + sprRot + 'deg) scaleX(' + (sprMir ? -1 : 1) + ')';
+  };
+  $s('spr-file').addEventListener('change', () => {
+    const f = $s('spr-file').files[0];
+    sprRot = 0; sprMir = false; sprMark = 0; thumbCss();
+    $s('spr-sheet').style.display = 'none';
+    if (f) {
+      $s('spr-thumb').src = URL.createObjectURL(f);
+      $s('spr-orient').style.display = '';
+    } else $s('spr-orient').style.display = 'none';
+    readiness();
+  });
+  $s('spr-rot').addEventListener('click', () => { sprRot = (sprRot + 90) % 360; thumbCss(); });
+  $s('spr-mir').addEventListener('click', () => { sprMir = !sprMir; thumbCss(); });
+  $s('spr-name').addEventListener('input', readiness);
+  for (const r of document.querySelectorAll('input[name="spr-mount"]'))
+    r.addEventListener('change', () => {
+      const m = mountVal();
+      $s('spr-rules').innerHTML = RULES[m];
+      $s('spr-z-label').style.display = (m === 'wall') ? '' : 'none';
+      $s('spr-h-label').firstChild.textContent = (m === 'wall') ? 'size ' : 'size ';
+    });
+  $s('spr-h').addEventListener('input', () =>
+    $s('spr-h-val').textContent = ($s('spr-h').value / 100).toFixed(2));
+  $s('spr-z').addEventListener('input', () =>
+    $s('spr-z-val').textContent = ($s('spr-z').value / 100).toFixed(2));
+  $s('spr-bake').addEventListener('click', async () => {
+    const f = $s('spr-file').files[0];
+    if (!f) { $s('spr-msg').textContent = 'step 1: pick an image first'; return; }
+    const name = $s('spr-name').value.trim();
+    if (!NAME_RE.test(name)) {
+      const fix = nameFix(name);
+      $s('spr-msg').textContent = 'step 2: name it first — lowercase ' +
+        'a-z 0-9 _ only, 2-16 chars, letter first' +
+        (fix && fix.length >= 2 ? ' (try "' + fix + '")' : '');
+      return;
+    }
+    const fd = new FormData();
+    fd.append('image', f);
+    fd.append('id', $s('spr-name').value.trim());
+    fd.append('height', ($s('spr-h').value / 100).toFixed(2));
+    fd.append('mount', mountVal());
+    fd.append('z', ($s('spr-z').value / 100).toFixed(2));
+    fd.append('rotate', String(sprRot));
+    fd.append('mirror', sprMir ? '1' : '0');
+    fd.append('hi', $s('spr-hi').checked ? '1' : '0');
+    fd.append('mark', String(sprMark));
+    $s('spr-msg').textContent = 'baking…';
+    const r = await fetch('/bake_sprite', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!j.ok) { $s('spr-msg').textContent = j.error || 'bake failed'; return; }
+    bundle = j;
+    $s('spr-preview').innerHTML =
+      '<img alt="preview" style="image-rendering:pixelated;background:#333" ' +
+      'src="data:image/png;base64,' + j.preview_png + '">' +
+      '<div style="font-size:11px">' + j.id + ' — ' + j.w + 'x' + j.h +
+      ' texels, kind ' + j.kind + ' (' +
+      (j.mount === 'wall' ? 'wall decal' : 'standee') +
+      ', ' + j.pal8.length + ' colors' + (j.hi ? ', +hi-res' : '') +
+      (j.mark ? ', mark ' + j.mark + ' of ' + j.marks : '') + ')</div>';
+    $s('spr-actions').style.display = '';
+    /* A SHEET (several separate marks on one canvas) is the one case where the
+       preview looks plausible and the in-game decal is a smudge: the marks are
+       all there, each shrunk into a corner of one decal. Say so, and offer the
+       per-mark bake right here. */
+    showSheetChoice(j);
+    /* Palette headroom: the shared game holds 14 sprite palettes TOTAL. Say so
+       at bake time, because it decides where this asset should live. */
+    if (j.arena) {
+      const a = j.arena, m = $s('spr-arena');
+      m.style.display = '';
+      m.textContent = a.left > 3
+        ? 'Shared game: ' + a.left + ' of ' + a.cap + ' sprite palettes left. ' +
+          'In your own copy you have all ' + a.cap + '.'
+        : 'Shared game: only ' + a.left + ' of ' + a.cap + ' sprite palettes left — ' +
+          'the console holds no more. Save this to your own copy instead, where ' +
+          'the whole budget is yours.';
+    }
+    $s('spr-msg').textContent = 'baked \u2014 now try it in the map (step 6)';
+  });
+
+  function showSheetChoice(j) {
+    const box = $s('spr-sheet');
+    box.textContent = '';
+    if (!j.sheet_warning) { box.style.display = 'none'; return; }
+    box.style.display = '';
+    const p = document.createElement('div');
+    p.textContent = j.sheet_warning;
+    box.appendChild(p);
+    for (let i = 1; i <= j.marks; i++) {
+      const b = document.createElement('button');
+      b.textContent = 'bake mark ' + i;
+      b.title = 'Re-bake using ONLY mark ' + i + ' (1 is the biggest). Upload the '
+              + 'same image again under another name for the others.';
+      b.onclick = () => { sprMark = i; $s('spr-bake').click(); };
+      box.appendChild(b);
+    }
+  }
+  $s('spr-try').addEventListener('click', () => {
+    if (!bundle) return;
+    /* Session-local registration: palette button, grid glyph, walkthrough
+     * billboard. The .map will reference the kind by ID — it builds only
+     * after the sprite PR merges, and lint says so. */
+    if (!ME.reg.decals.kinds.find(k => k.id === bundle.id)) {
+      const ent = { id: bundle.id, kind: bundle.kind, z: bundle.z,
+        glyph: '⧉', color: '#b8b0a4',
+        label: bundle.id + ' (community ' +
+               (bundle.mount === 'wall' ? 'wall decal' : 'standee') + ')' };
+      if (bundle.mount !== 'wall') ent.standalone = true;
+      ME.reg.decals.kinds.push(ent);
+    }
+    const A = window.ME.assets;
+    if (A && !A.sprites[bundle.id]) {
+      /* The sprite's own palette isn't in the exported CRAM yet (it ships
+       * with the PR), so patch its 7 entries into the session palette at
+       * the allocated arena base, then index texels against them. */
+      for (let i = 0; i < bundle.pal8.length; i++)
+        A.palette[bundle.base + 1 + i] = bundle.pal8[i];
+      const px = new Array(bundle.w * bundle.h);
+      for (let i = 0; i < bundle.texels.length; i++)
+        px[i] = bundle.texels[i] === 0 ? -1 : bundle.base + bundle.texels[i];
+      A.sprites[bundle.id] = { w: bundle.w, h: bundle.h, px,
+        world_h: bundle.world_h, world_hw: bundle.world_hw,
+        wall: bundle.mount === 'wall' };
+    }
+    ME.layer = 'decals'; ME.decalKind = bundle.id;
+    buildPalette();
+    status(bundle.mount === 'wall'
+      ? 'wall decal armed — click a wall EDGE to mount it (ships after the PR merges)'
+      : 'standee armed — click a cell to place it (ships after the PR merges)');
+  });
+  $s('spr-download').addEventListener('click', () => {
+    if (!bundle) return;
+    const dl = (name, text) => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+      a.download = name; a.click(); URL.revokeObjectURL(a.href);
+    };
+    dl('spr_' + bundle.id + '_tex.h', bundle.tex_h);
+    if (bundle.tex_h_hi) dl('spr_' + bundle.id + '_tex_hi.h', bundle.tex_h_hi);
+    dl('registry.json', bundle.registry);
+    status('bundle downloaded — see SPRITES.md for the PR steps');
+  });
+  $s('spr-fork').addEventListener('click', async () => {
+    if (!bundle) return;
+    $s('spr-msg').textContent = 'saving to your copy…';
+    const r = await fetch('/fork/save_sprite', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: bundle.id, tex_h: bundle.tex_h,
+                             tex_h_hi: bundle.tex_h_hi || '',
+                             registry: bundle.registry }) });
+    const j = await r.json().catch(() => ({}));
+    if (j.ok) {
+      $s('spr-msg').innerHTML = 'saved to <a href="' + j.repo_url +
+        '" target="_blank">' + j.fork + ' ↗</a> — your next build has it';
+    } else if (r.status === 401) {
+      $s('spr-msg').textContent = 'sign in with GitHub (top right) first';
+    } else {
+      $s('spr-msg').textContent = (j.errors || [j.error || 'failed']).join('; ');
+    }
+  });
+  $s('spr-submit').addEventListener('click', async () => {
+    if (!bundle) return;
+    $s('spr-msg').textContent = 'opening PR…';
+    const r = await fetch('/submit_sprite_pr', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: bundle.id, tex_h: bundle.tex_h,
+                             tex_h_hi: bundle.tex_h_hi || '',
+                             registry: bundle.registry }) });
+    const j = await r.json();
+    if (j.ok) {
+      $s('spr-msg').innerHTML = '<a href="' + j.pr_url + '" target="_blank">PR #'
+        + j.pr_number + ' opened ↗</a>';
+    } else if (r.status === 401) {
+      /* Actionable, not a dead end: the sign-in is one click from here. */
+      $s('spr-msg').textContent = 'this opens a PR under your GitHub account — ';
+      const b = document.createElement('button');
+      b.className = 'status-act'; b.textContent = 'Sign in with GitHub';
+      b.title = 'Or use ⬇ Bundle to download the files and PR them yourself.';
+      b.onclick = goSignIn;
+      $s('spr-msg').append(b);
+    } else {
+      $s('spr-msg').textContent = (j.errors || [j.error || 'failed']).join('; ');
+    }
+  });
+})();

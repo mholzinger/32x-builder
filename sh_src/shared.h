@@ -65,6 +65,12 @@ typedef struct {
      * footstep audio — advances and mixes the step sample when set,
      * silent otherwise. */
     volatile uint8_t is_walking;
+    /* Turning in place (angle changed this frame, no positional move needed).
+     * The res/LOD gates treat it as motion -- a spin re-renders every column,
+     * so it deserves the same near-band drop walking gets; chunkiness is
+     * masked by the rotation just like it is by the stride. Does NOT drive
+     * footsteps/bob (those stay on is_walking). */
+    volatile uint8_t is_turning;
     /* Set by the primary to 1 when the player is moving AND sprinting (A
      * held). The pump advances the footstep sample ~1.5x faster while set,
      * so the carpet cadence quickens to match the run. Ignored unless
@@ -75,6 +81,48 @@ typedef struct {
      * menu. 0..255, 128 = current half-amp baseline, 256 would be
      * full but capped at 255. Applied as a >> 8 scale in the pump. */
     volatile uint8_t step_volume;
+    /* Exit-passage SFX request. Primary sets the MODE; the secondary's
+     * pump latches it at the next buffer fill and writes 0 back.
+     *   1 = landing scuff (amb_shuffle), one-shot at native rate
+     *   2 = corridor loop (amb_sliding) until the landing takes over */
+    volatile uint8_t slide_sfx;
+    /* ONE-SHOT CRT power SFX request (the PVM's A toggle). Primary sets
+     * 1 = power-on clip, 2 = power-off clip; the mixer starts the chosen
+     * bake once and writes 0 back. */
+    volatile uint8_t crt_sfx;
+    /* 1 while the primary sits in swapBuffers' vblank-tick wait — the
+     * only window where BOTH CPUs are off the ROM/SDRAM bus. The
+     * secondary gates Speex hello decode on this: decode is bus-heavy
+     * (code fetches thrash the 4 KB cache, every write-through store
+     * hits SDRAM), so running it while the primary still renders slows
+     * the PRIMARY — measured as ~2,800 ticks (one vblank, 9→7 fps)
+     * near the neanderthal even though the secondary itself was idle. */
+    volatile uint8_t primary_vwait;
+    /* 1 = kill the Speex hello decode entirely (AUDIO menu, HELLO row).
+     * The same-binary A/B knob for the decode's true cost: toppling the
+     * neanderthal is NOT a valid A/B — it also removes a screen-filling
+     * sprite worth multiple fps on its own. Toggle this at a fixed
+     * standing spot and read T/F with nothing else changing. */
+    volatile uint8_t voice_off;
+    /* 1 = the whole hum system is YM2612 FM synthesis (68K-driven over
+     * COMM 0x0E): channel 2 sustains the buzz bed, channel 1 fires the
+     * neon sting, and the mixer mutes BOTH sample voices (437KB buzz +
+     * 31KB neon). The A/B for the hum-synthesis experiment (AUDIO menu,
+     * HUM row); if the Yamaha passes the ear, both bakes get deleted. */
+    volatile uint8_t hum_ym;
+    /* Sting handshake: the secondary's audio pump rolls the sting dice
+     * but only the primary may drive COMM0 — pump sets 1, primary
+     * key-ons YM ch1 and clears it. */
+    volatile uint8_t ym_sting;
+    /* Speex decode profiling (secondary writes, primary HUD reads):
+     * ticks of the LAST frame decode on the secondary's FRT (same
+     * prescaler as secondary_render_ticks) and a cumulative decoded-
+     * frame counter (wraps; the HUD reader shows its climb rate).
+     * Real-time playback needs 50 decodes/s — if DX climbs slower
+     * than ~50/s while the hello is audible, the ring is starving
+     * and you hear snippets. DT x 50 = ticks/second of decode load. */
+    volatile uint16_t spx_dec_ticks;
+    volatile uint16_t spx_dec_count;
     /* Profile counter: secondary's own FRT ticks spent processing CMD_HALF.
      * Secondary initializes its FRT to match primary's prescaler (Φ/32) and
      * writes its render delta here at the end of each command. Primary
@@ -119,6 +167,108 @@ typedef struct {
      * above each frame — that effective flag is what both CPUs' draw_walls read.
      * AUTO uses hysteresis on the frame period so it doesn't flip-flop per frame. */
     volatile uint8_t wall_res_mode;
+    /* Vertical half-res toggle. 1 = every render pass writes only EVEN framebuffer
+     * rows and the display line table maps each row-pair to that even row (2px-tall
+     * blocks) — halves the whole frame's stores at once (walls + clear + ceiling +
+     * carpet + sprites), the one lever horizontal half-res can't reach (wall stores
+     * are 320-strided vertical). Like wall_halfres it lives here because every pass
+     * on BOTH CPUs reads it; cache-through keeps the two halves in lockstep. */
+    volatile uint8_t wall_vert;
+    /* Seam-smoothing toggle (VISUALS: SEAMS HARD/SMOOTH). When half/quarter-res
+     * coarsens the wall fill, the wall→ceiling and wall→floor silhouette turns
+     * into a 2/4px staircase. SMOOTH interpolates each block's top/bottom edge
+     * between the raycast anchor columns (exact for a flat face — its edges
+     * project to straight lines) and repaints the fringe, so the silhouette
+     * reads as a clean diagonal over the still-coarse interior. */
+    volatile uint8_t wall_seam_smooth;
+    /* Half→full dissolve level (0 = off, else 1..N). There's no resolution
+     * between half and full, so the up-transition would otherwise be one hard
+     * flip. During it we render FULL (affordable while still) and this many
+     * "steps" of a dither-selected fraction of column pairs get re-doubled back
+     * to half over the wall band — a focus-pull sweep from half to full. Decays
+     * to 0 across a few frames. Both CPUs' wall post-pass read it. */
+    volatile uint8_t wall_dissolve;
+    /* Quarter-res boundary DITHER (1 = on). Real spatial ordered-dither: a post-
+     * pass ramps the right edge of each 4px block toward the next block's color
+     * (ordered Bayer threshold over the wall band), turning the hard 4px shade
+     * step into a dithered gradient. Static per frame (no stutter). On the PVM the
+     * dither fuses toward smooth; on sharp HDMI it reads as an intentional dither
+     * texture rather than a blocky step. Both CPUs read it, each dithers its half. */
+    volatile uint8_t wall_qdither;
+    /* WALLS=LOD prototype (1 = on). Full-res render + a post-pass that re-blocks
+     * each 4-col quad by DEPTH: near = leave full, mid = half (2px pairs), far =
+     * quarter + dither toward the neighbour. Visual proof of the three-band zoning
+     * — it ADDS cost (no render saving yet); the perf version skips rendering. */
+    volatile uint8_t wall_lod;
+    /* Partition-dense hint for LOD's near band (1 = drop the nearest quads to
+     * half-res even while standing still). The near band normally stays full-res
+     * when stationary (the "taking stock" sharpen), but in a slab-heavy view the
+     * near partitions are ~84% of the wall pass, so full-res-standing there is the
+     * F:05 pit. Primary latches this from last frame's wall cost (hysteresis) and
+     * publishes it cache-through so both CPUs drop their near band together. */
+    volatile uint8_t wall_dense;
+    /* Bulkhead kill-switch (TESTING menu): 1 = skip the bulkhead-height ceiling
+     * slab + cap passes, for same-binary A/B of their cost (HUD L:). Both CPUs
+     * read it cache-through in raycast_draw_tail. Crawl passes unaffected. */
+    volatile uint8_t bulk_kill;
+    /* Carpet VERTICAL depth LOD: stamp stains on every OTHER screen row once the
+     * row's fog shade reaches the mid band, mirroring the x_step 4/8/16 banding
+     * that already runs horizontally. Each row costs a DIVU plus ~6 muls of setup
+     * before a single stain lands, so halving rows halves setup AND the column
+     * walk -- measured via the blunt all-rows VERT toggle, carpet went 2,068 ->
+     * 888 ticks (-57%). Same-binary A/B lives in TESTING>CARPETLOD. */
+    volatile uint8_t carpet_vlod;
+    /* UNLIT-FLOOR kill: skips BOTH carpet zone re-stamps (dark-room fill +
+     * crawlspace darken) for a same-binary A/B of their cost inside HUD R:.
+     * Phase-1 hardware baseline read R:8,122 in the crawl scene vs ~2-4k
+     * elsewhere — this toggle tells us how much of that is the zone fills
+     * (double-painting the floor with per-pair grid tests) vs the base
+     * stain pass, BEFORE any refactor spends effort on the wrong half.
+     * Diagnostic only: ON leaves unlit floors rendered LIT. */
+    volatile uint8_t unlit_kill;
+    /* Exit-hole close-up work: the vertical JAMB (the wall's cut thickness at
+     * the aperture's left/right edges) and the chevron skin on the cavity side
+     * walls. Both only render on side_hit columns, so the cost is bounded by
+     * the hole's own width and vanishes past ~2 cells where the jamb goes
+     * sub-pixel. Same-binary A/B lives in TESTING>HOLEJAMB. */
+    volatile uint8_t hole_jamb;
+    /* AUTO's motion-gated QUARTER rung. Off = the shipped behaviour (AUTO
+     * floors at half). On = drop to quarter while MOVING on a very heavy frame
+     * (frame_ema past AUTO_QTR_ON), snapping back the instant you stand still.
+     * A toggle rather than a decision because the A/B that removed it measured
+     * a standing corridor at F:07-11 and the rung only arms moving at ~F:09 or
+     * worse -- it never entered its own trigger condition. TESTING>AUTOQTR. */
+    volatile uint8_t auto_qtr;
+    /* ULTRA rest pair (TESTING>ULTRA). After ~1s of stillness the primary
+     * renders a TWIN of the frame on screen — same world state, camera shifted
+     * HALF A COLUMN — into the other framebuffer, then parks in a loop that
+     * flips the pair at 60Hz with both CPUs idle. On a CRT the phosphor+eye
+     * blend the two into an effective 640-wide antialiased image. Any input
+     * breaks the park and the normal loop simply overwrites the pair. */
+    volatile uint8_t ultra_enable;
+    /* Nonzero while an ULTRA pass renders: 1 = pass A (no jitter), 2 = pass
+     * B (every pass on both CPUs shifts sampling half a column). m_main
+     * checkerboard-merges the two into ONE static frame — differences are
+     * spatial dither the CRT fuses, never temporal (the B00288-290 lesson:
+     * a 30Hz flip pair reads as shimmer no matter which leak you pin).
+     * Either value makes raycast_render freeze EVERY piece of adaptive
+     * state (frame EMA, AUTO/ratchet/dissolve, split nudge, dense latch) so
+     * the passes stay decision-identical and differ only by the jitter. */
+    volatile uint8_t ultra_twin;
+    /* Set by EITHER CPU during a render that actually painted live PVM static
+     * (a powered screen with no telegraph/glass picture on it). The ULTRA park
+     * holds one motionless frame by design — "nothing can shimmer" — and the
+     * tube's noise IS shimmer, so a parked frame freezes it into a still
+     * photograph of static. Standing still to look at a monitor is exactly the
+     * condition that arms the park, so the two features met head-on the moment
+     * ULTRA started arming. m_main clears this before each render and gates the
+     * park on it: supersample the quiet rooms, leave the live tubes alone. */
+    volatile uint8_t pvm_static_live;
+    /* Caveman death: 0 = alive, 1..255 = the "broken analogue tape" death phase.
+     * Primary ramps it over ~2.5s once the neanderthal is knocked down; the audio
+     * mixer reads it to warp the Voyager hello — speed up, reverse, drift to
+     * nothing. Cache-through so the secondary sees each frame's value. */
+    volatile uint8_t hero_dying;
     /* Door swing animation, 0 = closed .. 16 = fully open. Primary eases it each
      * frame toward the target (toggled by the interact button near the door);
      * both CPUs' wall-embedded door fill read it to foreshorten the leaf and
@@ -145,6 +295,64 @@ typedef struct {
      * the fill method, not geometry, so the primary-half prof_pass_chair
      * delta between arms is the true per-pixel texturing cost. */
     volatile uint8_t chair_tex;
+    /* TESTING>SMS32X: 1 = the modal mini-game's picture is rendered by the SH-2
+     * into the 32X framebuffer from broadcast tile ids, 0 = the shipping path
+     * (68K blits TILEBUF to MD plane B over a black 32X frame). Step 1 of the
+     * zoom-into-the-glass arc: the transition needs its start and end on ONE
+     * renderer, and this is the end. */
+    volatile uint8_t sms_on_32x;
+    /* TESTING>EPOCH (default OFF): the SMS picture channel runs the
+     * dirty-epoch delta protocol instead of the full-picture rotation —
+     * only changed cells cross, stamped with a frame epoch and applied
+     * atomically; a slow absolute repair rotation bounds how long any
+     * lost delta can survive. The legacy rotation is the fallback arm. */
+    volatile uint8_t sms_epoch_on;
+    /* The desk console's GLASS as projected in the most recent world frame
+     * (screen px, x1/y1 exclusive; x1<=x0 = not drawn). Written by whichever
+     * CPU rasterizes the front face, read by the primary to birth the zoom's
+     * picture rect exactly on the tube — uncached so the halves never skew. */
+    volatile int16_t glass_sr_x0, glass_sr_y0, glass_sr_x1, glass_sr_y1;
+    /* BUS A/B, SPLIT INTO THREE (TESTING>SPIN / IDLE / 68K). They shipped as
+     * one flag and the first A/B came back NET WORSE (T 22018 -> 23654) with a
+     * clear win buried inside it -- exactly what a bundled toggle cannot tell
+     * apart. Per-pass costs were IDENTICAL across both arms (W/R/G/I/P to the
+     * tick), so none of this touches render work: every delta lives in the
+     * overhead paths, and each flag now has a metric that measures it alone.
+     *
+     * bus_spin -> NOT CONFIRMED, and SW does not confirm it. SW is the primary
+     *   WAITING for the flip -- it is slack, not cost. When work grows there is
+     *   less slack left to wait in, so SW shrinks: its 751 -> 359 was a symptom
+     *   of the regression alongside it (T/H/S/HU all rose), not a win. The
+     *   change is still sound in principle -- the COMM12 tick, FBCTL flip and
+     *   ULTRA park are bare polls of 32X sysregs at ~3M reads/sec, and
+     *   raycast.c's barrier waits have carried this 16-nop throttle for years
+     *   -- but throttling a wait cannot make the wait shorter. Only the
+     *   contention it relieves can pay, and see VENUE. Default OFF.
+     * bus_idle -> H/S. The secondary's idle throttle. The old volatile-counter
+     *   loop was ACCIDENTALLY SELF-TUNING -- its write-through stores stall on
+     *   the write buffer, so it stretched exactly when the bus was busy. A
+     *   constant nop count deletes that backpressure and the COMM4 poll rate
+     *   climbs under load: the failure the original 64->256 bump existed to
+     *   stop. Now an FRT delay -- on-chip timer, zero bus, true wall clock.
+     * bus_68k -> HU (post-render HUD). Backing the 68K's COMM0 poll off when
+     *   idle cost 11% there. The HUD is not one burst -- it is many short
+     *   HwMdPuts runs with SH-2 work between them, so the 68K goes idle and
+     *   re-backs-off before every one, paying the latency again each time.
+     *
+     * VENUE -- READ THIS BEFORE MEASURING. All three of these trade CPU cycles
+     * for reduced bus contention. Ares models the cycles faithfully and the
+     * cart-bus arbitration between the 68K and two SH-2s much less so, which
+     * means it shows the full COST of each and little or none of the benefit.
+     * That is not a flaw in the experiment, it is the wrong instrument: the
+     * Ares run above measured all three costs correctly (the 68K backoff really
+     * does cost ~369 ticks of HU, a fixed nop count really does lose the old
+     * loop's backpressure) and could not price a single benefit. Every flag
+     * therefore defaults OFF and stays unproven until a MiSTer sitting.
+     *
+     * DO NOT re-run this A/B in Ares and conclude anything from it. */
+    volatile uint8_t bus_spin;
+    volatile uint8_t bus_idle;
+    volatile uint8_t bus_68k;
 
     /* Sprite-pass column split, decoupled from the wall split_col. A large
      * screen-filling standup (the world-quad neanderthal up close) can land

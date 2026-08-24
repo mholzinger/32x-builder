@@ -15,6 +15,10 @@ extern uint8_t g_metrics_on;
  * Called on menu OPEN so a player stuck with phantom-toggled overlays can
  * always clear them with START, the one button every pad has. */
 extern void debug_overlays_clear(void);
+/* Owned by m_main.c — the current level's name + author, for the CREDITS tab
+ * "now playing" lines (shared with the automap credits). */
+extern void        cur_map_name(char *out);
+extern const char *cur_map_author(void);
 /* Owned by m_main.c — wipes the metrics overlay's Genesis tile rows. The
  * VISUALS toggle must blank on OFF or the last-drawn tiles hover forever
  * (they only redraw while the flag is on). */
@@ -22,6 +26,17 @@ extern void hud_genesis_blank(void);
 /* Owned by m_main.c — the MAPS tab writes the chosen custom-map index here and
  * the main loop drains it into the warp. -1 = no request. */
 extern volatile int g_warp_request;
+extern volatile int g_ym_tl_dirty;   /* m_main.c: bed-level update request */
+/* GAME tab plumbing (m_main.c): the automap lives there, and the viewer /
+ * exit-to-lobby are whole-screen flows the main loop owns. The menu just
+ * pokes state and posts requests -- Michael's "no memorizing" note: every
+ * utility reachable from START on any pad, MODE combos stay optional. */
+extern volatile int g_viewer_request, g_lobby_request;
+extern volatile int g_sms_request;
+extern volatile int g_smsgame_request;
+uint8_t m_main_automap_get(void);
+void    m_main_automap_cycle(int dir);
+void    m_main_automap_zoom(int dir);
 
 /* Two-tab pause menu. START opens/closes; tabs (AUDIO / LIGHTING) sit
  * on row 0 and LEFT/RIGHT switches between them when that row is
@@ -31,30 +46,59 @@ extern volatile int g_warp_request;
  * secondary's audio pump and the raycaster's effect gates see edits
  * immediately via cache-through. */
 
-#define TAB_AUDIO    0
-#define TAB_LIGHTING 1
-#define TAB_VISUALS  2
-#define TAB_CREDITS  3
-#define TAB_MAPS     4
-#define NUM_TABS     5
+#define TAB_GAME     0
+#define TAB_AUDIO    1
+#define TAB_LIGHTING 2
+#define TAB_VISUALS  3
+#define TAB_COLOR    4
+#define TAB_TESTING  5
+#define TAB_CREDITS  6
+#define TAB_MAPS     7
+#define NUM_TABS     8
 
-#define AUDIO_CONTENT_ROWS    4   /* AMBIENCE, FOOTSTEPS, BUFFER, VOICE */
+#define GAME_CONTENT_ROWS     4   /* MAP, ZOOM, 3D VIEWER, EXIT TO LOBBY */
+#define AUDIO_CONTENT_ROWS    6   /* AMBIENCE, FOOTSTEPS, BUFFER, VOICE, HELLO, HUM */
 #define LIGHTING_CONTENT_ROWS 3   /* FLICKER, STROBES, SHIMMER */
-#define VISUALS_CONTENT_ROWS  3   /* WALLS, METRICS, SHADOWS */
-#define CREDITS_CONTENT_ROWS  0   /* BUILD/DATE/SHA are read-only display */
+#define VISUALS_CONTENT_ROWS  6   /* WALLS, ADAPTIVE, METRICS, SHADOWS, SEAMS, DITHER */
+#define TESTING_CONTENT_ROWS 15   /* SERIAL, VERT, BULKHEAD, CARPETLOD, HOLEJAMB, AUTOQTR, UNLITF, ULTRA, SPIN, IDLE, 68K, SMS32X, SMSBOOT, SMSGAME, EPOCH */
+#define COLOR_CONTENT_ROWS    6   /* SURFACE, R, G, B, WARMTH, SAT */
+#define CREDITS_CONTENT_ROWS  0   /* read-only display, no selection cursor */
+#define CREDITS_DRAWN_ROWS    4   /* MAP / BY / BUILD / DATE lines it paints */
+#define MAPS_WINDOW           6   /* map-list rows shown at once (fills the box) */
 
 static int      menu_active = 0;
 static int      menu_dirty  = 1;   /* menu content changed -> rewrite tiles */
 static int      menu_redraw = 0;   /* this frame's gate (set from menu_dirty) */
-static int      menu_tab    = TAB_AUDIO;
+static int      menu_tab    = TAB_GAME;
 static int      menu_row    = 0;   /* 0 = tab row, 1..N = content row */
 static uint16_t menu_prev_pad = 0;
+static int      pal_sel     = 2;   /* COLOR tab: selected surface (0=WALL..3=LIGHT); default CEIL */
+static const char *const pal_surf_names[4] = { " WALL", "FLOOR", " CEIL", "LIGHT" };
+static int      auto_lod    = 1;   /* AUTO adaptive style: 0 = SCALE, 1 = LOD (default) */
+
+/* Friendly WALLS resolution category: 0=FULL 1=HALF 2=LOW 3=AUTO. wall_res_mode
+ * stays the render driver (0 FULL, 1 HALF, 4 LOW/quarter, 2 AUTO-scale, 6 AUTO-
+ * LOD; 3 SERIAL and 5 VERT are the TESTING-tab diagnostics). */
+static int res_cat_of(int m) {
+    switch (m) { case 0: return 0; case 1: return 1; case 4: return 2;
+                 case 2: case 6: return 3; default: return 3; }
+}
 
 /* Layout — 22-char × 10-row box (176 × 80 px) centered on the 320×224
  * screen, wide enough for the "LIGHTING |CREDITS|" tab row and tall
  * enough for the LIGHTING tab's three toggle rows. */
 #define MENU_W_PX      176
-#define MENU_H_PX       80
+#define MENU_H_PX      176   /* 15 content rows (TESTING grew again: EPOCH) +
+                              * footer. MUST be a multiple of 16 so MENU_Y stays
+                              * 8-aligned — else the tile-layer text and the
+                              * pixel-drawn highlight bar diverge 4px. Was 112/6
+                              * rows; SMSBOOT overflowed into the footer's row
+                              * (Mike's screenshot, 2026-08-09), then 128/8,
+                              * then 144/10, then 160/13 (EPOCH hit the hint
+                              * row, same overflow). The hint row moves with
+                              * it. 176 is the last comfortable bump — one
+                              * more TESTING row after this and the tab needs
+                              * real scrolling, not a taller box. */
 #define MENU_X        ((SCREEN_W - MENU_W_PX) / 2)
 #define MENU_Y        ((SCREEN_H - MENU_H_PX) / 2)
 
@@ -101,11 +145,23 @@ int menu_is_active(void) {
     return menu_active;
 }
 
+/* Rows whose value is a NUMBER worth auto-repeating while a direction is held
+ * (vs tabs/surfaces/toggles, which should only step on a fresh press). */
+static int menu_row_numeric(int tab, int row) {
+    if (tab == TAB_COLOR) return row >= 2;                      /* R,G,B,WARMTH,SAT */
+    if (tab == TAB_AUDIO) return row == 1 || row == 2 || row == 4;  /* volumes, voice */
+    if (tab == TAB_GAME)  return row == 2;                      /* ZOOM ramps while held */
+    return 0;
+}
+
 static int content_rows_for(int tab) {
     switch (tab) {
+    case TAB_GAME:     return GAME_CONTENT_ROWS;
     case TAB_AUDIO:    return AUDIO_CONTENT_ROWS;
     case TAB_LIGHTING: return LIGHTING_CONTENT_ROWS;
     case TAB_VISUALS:  return VISUALS_CONTENT_ROWS;
+    case TAB_COLOR:    return COLOR_CONTENT_ROWS;
+    case TAB_TESTING:  return TESTING_CONTENT_ROWS;
     case TAB_MAPS:     return custom_pick_count;   /* one row per compiled-in map */
     default:           return CREDITS_CONTENT_ROWS;
     }
@@ -133,6 +189,23 @@ void menu_update(uint16_t pad) {
         menu_row = (menu_row + 1) % total_rows;
     }
 
+    /* GAME tab: A commits the action rows. VIEWER and EXIT close the menu
+     * first (warp-close, like MAPS) -- both hand the screen to main-loop
+     * flows that draw over the whole frame. */
+    if (menu_tab == TAB_GAME && (pressed & SEGA_CTRL_A)) {
+        if (menu_row == 1) m_main_automap_cycle(+1);
+        else if (menu_row == 3) {
+            g_viewer_request = 1;
+            menu_active = 0;
+            menu_genesis_blank();
+        } else if (menu_row == 4) {
+            g_lobby_request = 1;
+            menu_active = 0;
+            menu_genesis_blank();
+        }
+        return;
+    }
+
     /* MAPS tab: A on a map row warps there and closes the menu. */
     if (menu_tab == TAB_MAPS && menu_row >= 1 && (pressed & SEGA_CTRL_A)) {
         if (menu_row - 1 < custom_pick_count) {
@@ -143,9 +216,37 @@ void menu_update(uint16_t pad) {
         return;
     }
 
-    int dir = 0;
-    if (pressed & SEGA_CTRL_LEFT)  dir = -1;
-    if (pressed & SEGA_CTRL_RIGHT) dir = +1;
+    /* COLOR tab: A resets the whole palette to the shipped defaults. */
+    if (menu_tab == TAB_TESTING && (menu_row == 13 || menu_row == 14)
+        && (pressed & SEGA_CTRL_A)) {
+        /* SMSBOOT/SMSGAME are ACTIONS, not toggles — they must fire on A
+         * like the GAME/MAPS rows do. (They also fire on LEFT/RIGHT via the
+         * dispatch below, but nobody's thumb believes that for a GO row.) */
+        if (menu_row == 13) g_sms_request = 1;
+        else                g_smsgame_request = 1;
+        menu_active = 0;
+        menu_genesis_blank();
+        return;
+    }
+    if (menu_tab == TAB_COLOR && (pressed & SEGA_CTRL_A)) {
+        raycast_pal_reset();
+        return;
+    }
+
+    /* LEFT/RIGHT step. A fresh press always steps once; HOLDING on a numeric
+     * value row auto-repeats after a short delay so you can scroll the number
+     * instead of tapping. Non-numeric rows (tabs/surface/toggles) stay edge-only. */
+    #define REPEAT_DELAY 8    /* frames held before auto-repeat kicks in */
+    #define REPEAT_RATE  1    /* frames between repeats once rolling */
+    static int repeat_ctr = 0;
+    int held = (pad & SEGA_CTRL_LEFT) ? -1 : (pad & SEGA_CTRL_RIGHT) ? +1 : 0;
+    int dir  = (pressed & SEGA_CTRL_LEFT) ? -1 : (pressed & SEGA_CTRL_RIGHT) ? +1 : 0;
+    if (dir) {
+        repeat_ctr = REPEAT_DELAY;                 /* fresh press: step + arm repeat */
+    } else if (held && menu_row_numeric(menu_tab, menu_row)) {
+        if (--repeat_ctr <= 0) { dir = held; repeat_ctr = REPEAT_RATE; menu_dirty = 1; }
+    }
+    if (!held) repeat_ctr = 0;
     if (dir == 0) return;
 
     if (menu_row == 0) {
@@ -154,6 +255,11 @@ void menu_update(uint16_t pad) {
         return;
     }
 
+    if (menu_tab == TAB_GAME) {
+        if (menu_row == 1) m_main_automap_cycle(dir);       /* OFF/FULL/LOCAL */
+        else if (menu_row == 2) m_main_automap_zoom(dir);   /* held: ramps */
+        return;
+    }
     if (menu_tab == TAB_AUDIO) {
         if (menu_row == 3) {
             /* BUFFER: underrun-fix A/B — 64MS fixed vs 16MS chop-prone
@@ -168,6 +274,22 @@ void menu_update(uint16_t pad) {
             amb_voice_speed_adjust(dir);
             return;
         }
+        if (menu_row == 5) {
+            /* HELLO: same-binary A/B for the Speex decode cost — the
+             * ONLY honest way to measure it (toppling the neanderthal
+             * also removes a screen-filling sprite, which is its own
+             * multi-fps cost; see the world-quad 7fps floor). */
+            SHARED_UC->voice_off ^= 1;
+            return;
+        }
+        if (menu_row == 6) {
+            /* HUM: the YM2612 bed, live. OFF keys the bed off and stops
+             * every YM write; ON re-strikes the tube. The isolation
+             * toggle the tick hunt was missing — FM never routes through
+             * the PWM volumes above, so this row is its only mute. */
+            SHARED_UC->hum_ym ^= 1;
+            return;
+        }
         volatile uint8_t *target =
             (menu_row == 1) ? &SHARED_UC->amb_volume
                             : &SHARED_UC->step_volume;
@@ -175,6 +297,7 @@ void menu_update(uint16_t pad) {
         if (v < 0)   v = 0;
         if (v > 255) v = 255;
         *target = (uint8_t)v;
+        if (menu_row == 1) g_ym_tl_dirty = 1;   /* bed follows AMBIENCE */
     } else if (menu_tab == TAB_LIGHTING) {
         /* LIGHTING tab: toggle the corresponding effect bit. dir doesn't
          * matter — LEFT and RIGHT both flip. */
@@ -186,16 +309,70 @@ void menu_update(uint16_t pad) {
         }
         SHARED_UC->lighting_flags ^= bit;
     } else if (menu_tab == TAB_VISUALS) {
-        /* WALLS res mode cycles FULL/HALF/AUTO/SERL (LEFT/RIGHT step the cycle);
-         * AUTO drives vertical half-res itself now, so no manual VERT row. */
         if (menu_row == 1) {
-            int m = (int)SHARED_UC->wall_res_mode + dir;
-            SHARED_UC->wall_res_mode = (uint8_t)((m + 4) % 4);
+            /* WALLS resolution: cycle FULL / HALF / LOW / AUTO. AUTO maps to the
+             * ADAPTIVE style (SCALE=mode2 or LOD=mode6). */
+            static const uint8_t cat_mode[4] = { 0, 1, 4, 2 };  /* AUTO base = SCALE */
+            int cat = (res_cat_of(SHARED_UC->wall_res_mode) + dir + 4) % 4;
+            SHARED_UC->wall_res_mode = (cat == 3) ? (auto_lod ? 6 : 2) : cat_mode[cat];
         } else if (menu_row == 2) {
+            /* ADAPTIVE style for AUTO: LOD (dithered depth bands) vs SCALE (whole-
+             * frame frame-time scaling). Toggles the pref; applies live if AUTO. */
+            auto_lod ^= 1;
+            uint8_t cur = SHARED_UC->wall_res_mode;
+            if (cur == 2 || cur == 6) SHARED_UC->wall_res_mode = auto_lod ? 6 : 2;
+        } else if (menu_row == 3) {
             g_metrics_on ^= 1;
             if (!g_metrics_on) hud_genesis_blank();   /* wipe, don't just stop drawing */
         }
-        else if (menu_row == 3) SHARED_UC->shadows_off ^= 1;  /* A/B the shadow cost */
+        else if (menu_row == 4) SHARED_UC->shadows_off ^= 1;       /* A/B the shadow cost */
+        else if (menu_row == 5) SHARED_UC->wall_seam_smooth ^= 1;  /* HARD/SMOOTH seams */
+        else if (menu_row == 6) SHARED_UC->wall_qdither ^= 1;      /* quarter boundary dither */
+    } else if (menu_tab == TAB_TESTING) {
+        /* Diagnostic RENDER modes — each ON overrides the resolution, OFF returns
+         * to AUTO. LEFT/RIGHT both flip. mode 3 = SERIAL (no CPU overlap), 5 = VERT. */
+        uint8_t cur = SHARED_UC->wall_res_mode;
+        if (menu_row == 1) SHARED_UC->wall_res_mode = (cur == 3) ? 2 : 3;   /* SERIAL */
+        else if (menu_row == 2) SHARED_UC->wall_res_mode = (cur == 5) ? 2 : 5;  /* VERT */
+        else if (menu_row == 3) SHARED_UC->bulk_kill ^= 1;   /* bulkhead A/B (L:) */
+        else if (menu_row == 4) SHARED_UC->carpet_vlod ^= 1; /* carpet vertical LOD A/B (R:) */
+        else if (menu_row == 5) SHARED_UC->hole_jamb ^= 1;   /* exit-hole jamb + cavity skin A/B */
+        else if (menu_row == 6) SHARED_UC->auto_qtr ^= 1;    /* AUTO motion-gated quarter rung A/B */
+        else if (menu_row == 7) SHARED_UC->unlit_kill ^= 1;  /* unlit-floor zone fills A/B (R:) */
+        else if (menu_row == 8) SHARED_UC->ultra_enable ^= 1; /* rest-pair 60Hz flip A/B */
+        else if (menu_row == 9)  SHARED_UC->bus_spin ^= 1;   /* -> SW */
+        else if (menu_row == 10) SHARED_UC->bus_idle ^= 1;   /* -> H/S */
+        else if (menu_row == 11) {                           /* -> HU */
+            SHARED_UC->bus_68k ^= 1;
+            /* The 68K arm has to be TOLD — it polls COMM0 out of its own RAM
+             * and never sees shared memory. Sent on the toggle, not per frame:
+             * it is a mode, and every send blocks on the COMM0 handshake. */
+            HwMdSetBusThrottle((int)SHARED_UC->bus_68k);
+        }
+        else if (menu_row == 12) SHARED_UC->sms_on_32x ^= 1; /* SH-2 draws the SMS */
+        else if (menu_row == 13) {                           /* the spike */
+            g_sms_request = 1;
+            menu_active = 0;
+            menu_genesis_blank();
+        }
+        else if (menu_row == 14) {                           /* the mini-game */
+            g_smsgame_request = 1;
+            menu_active = 0;
+            menu_genesis_blank();
+        }
+        else if (menu_row == 15) SHARED_UC->sms_epoch_on ^= 1;  /* delta bcast */
+    } else if (menu_tab == TAB_COLOR) {
+        /* Live palette lab. Row 1 picks a surface; 2-4 nudge its R/G/B anchor;
+         * 5-6 are the global WARMTH/SAT masters. Every change flags the palette
+         * dirty and repaints in the next vblank (see raycast_pal_flush). */
+        switch (menu_row) {
+        case 1: pal_sel = (pal_sel + dir + 4) % 4;        break;  /* SURFACE */
+        case 2: raycast_pal_ch(pal_sel, 0, dir);          break;  /* R */
+        case 3: raycast_pal_ch(pal_sel, 1, dir);          break;  /* G */
+        case 4: raycast_pal_ch(pal_sel, 2, dir);          break;  /* B */
+        case 5: raycast_pal_warmth(dir);                  break;  /* WARMTH */
+        case 6: raycast_pal_sat(dir);                     break;  /* SAT */
+        }
     }
 }
 
@@ -205,6 +382,18 @@ static void fmt_pct(uint8_t v, char out[4]) {
     out[1] = (pct >=  10) ? ('0' + ((pct / 10) % 10)) : ' ';
     out[2] = ('0' + (pct % 10));
     out[3] = 0;
+}
+
+/* Right-justified signed int in a width-4 field (COLOR tab values). */
+static void fmt_int(int v, char out[6]) {
+    int neg = v < 0; if (neg) v = -v;
+    char tmp[6]; int n = 0;
+    if (v == 0) tmp[n++] = '0';
+    while (v) { tmp[n++] = (char)('0' + v % 10); v /= 10; }
+    if (neg) tmp[n++] = '-';
+    int p = 0; while (p < 4 - n) out[p++] = ' ';
+    while (n) out[p++] = tmp[--n];
+    out[p] = 0;
 }
 
 static void fill_bg(uint8_t *fb) {
@@ -265,8 +454,8 @@ void menu_render(uint8_t *fb) {
     /* Top + bottom rule. Every write below is full-width and overwrites its row
      * in place, so no blank pass is needed on a change — that blank-then-redraw
      * was the per-move flash. (The close path still blanks to clear the menu.) */
-    menu_puts_pad(TX(X), 0,  "+--------------------+", 22);
-    menu_puts_pad(TX(X), 72, "+--------------------+", 22);
+    menu_puts_pad(TX(X), 0,   "+--------------------+", 22);
+    menu_puts_pad(TX(X), 104, "+--------------------+", 22);
 
     /* Tab row at y=16: the > cursor points at the active tab, with the next
      * tab in the cycle shown after a pipe separator — e.g. "> AUDIO |
@@ -275,7 +464,8 @@ void menu_render(uint8_t *fb) {
      * as the focus marker; LEFT/RIGHT cycles tabs there. The active tab is
      * always leftmost, so it stays clear even with the cursor hidden. */
     static const char *const tab_names[NUM_TABS] = {
-        "AUDIO", "LIGHTING", "VISUALS", "CREDITS", "MAPS" };
+        "GAME", "AUDIO", "LIGHTING", "VISUALS", "COLOR", "TESTING", "CREDITS",
+        "MAPS" };
     int tab_sel  = (menu_row == 0);
     int next_tab = (menu_tab + 1) % NUM_TABS;
     char tab_text[24];
@@ -301,7 +491,13 @@ void menu_render(uint8_t *fb) {
 
     /* Content rows at y = 32, 40, 48. */
     char num[4];
-    if (menu_tab == TAB_AUDIO) {
+    if (menu_tab == TAB_GAME) {
+        static const char *const am_names[3] = { "  OFF", " FULL", "LOCAL" };
+        draw_row(fb, 32, menu_row == 1, "MAP", am_names[m_main_automap_get() % 3]);
+        draw_row(fb, 40, menu_row == 2, "ZOOM", "< >");
+        draw_row(fb, 48, menu_row == 3, "3D VIEWER", " OPEN");
+        draw_row(fb, 56, menu_row == 4, "EXIT", "LOBBY");
+    } else if (menu_tab == TAB_AUDIO) {
         fmt_pct(SHARED_UC->amb_volume, num);
         draw_row(fb, 32, menu_row == 1, "AMBIENCE",  num);
         fmt_pct(SHARED_UC->step_volume, num);
@@ -319,6 +515,10 @@ void menu_render(uint8_t *fb) {
             pc[4] = 0;
             draw_row(fb, 56, menu_row == 4, "VOICE", pc);
         }
+        draw_row(fb, 64, menu_row == 5, "HELLO",
+                 SHARED_UC->voice_off ? "  OFF" : "   ON");
+        draw_row(fb, 72, menu_row == 6, "HUM",
+                 SHARED_UC->hum_ym ? "   ON" : "  OFF");
     } else if (menu_tab == TAB_LIGHTING) {
         uint8_t f = SHARED_UC->lighting_flags;
         draw_row(fb, 32, menu_row == 1, "FLICKER",
@@ -328,34 +528,77 @@ void menu_render(uint8_t *fb) {
         draw_row(fb, 48, menu_row == 3, "SHIMMER",
                  (f & LIGHTING_SHIMMER) ? " ON" : "OFF");
     } else if (menu_tab == TAB_VISUALS) {
-        static const char *res_lbl[4] = { "FULL", "HALF", "AUTO", "SERL" };
-        uint8_t m = SHARED_UC->wall_res_mode; if (m > 3) m = 1;
-        draw_row(fb, 32, menu_row == 1, "WALLS", res_lbl[m]);
-        draw_row(fb, 40, menu_row == 2, "METRICS",
+        static const char *res_names[4] = { "FULL", "HALF", " LOW", "AUTO" };
+        uint8_t m = SHARED_UC->wall_res_mode;
+        draw_row(fb, 32, menu_row == 1, "WALLS", res_names[res_cat_of(m)]);
+        const char *adaptive = (m == 6) ? "  LOD" : (m == 2) ? "SCALE"
+                             : (auto_lod ? "  LOD" : "SCALE");
+        draw_row(fb, 40, menu_row == 2, "ADAPTIVE", adaptive);
+        draw_row(fb, 48, menu_row == 3, "METRICS",
                  g_metrics_on ? " ON" : "OFF");
-        draw_row(fb, 48, menu_row == 3, "SHADOWS",
+        draw_row(fb, 56, menu_row == 4, "SHADOWS",
                  SHARED_UC->shadows_off ? "OFF" : " ON");
+        draw_row(fb, 64, menu_row == 5, "SEAMS",
+                 SHARED_UC->wall_seam_smooth ? "SMOOTH" : "  HARD");
+        draw_row(fb, 72, menu_row == 6, "DITHER",
+                 SHARED_UC->wall_qdither ? " ON" : "OFF");
+    } else if (menu_tab == TAB_TESTING) {
+        uint8_t m = SHARED_UC->wall_res_mode;
+        draw_row(fb, 32, menu_row == 1, "SERIAL", (m == 3) ? " ON" : "OFF");
+        draw_row(fb, 40, menu_row == 2, "VERT",   (m == 5) ? " ON" : "OFF");
+        draw_row(fb, 48, menu_row == 3, "BULKHEAD", SHARED_UC->bulk_kill ? "OFF" : " ON");
+        draw_row(fb, 56, menu_row == 4, "CARPETLOD", SHARED_UC->carpet_vlod ? " ON" : "OFF");
+        draw_row(fb, 64, menu_row == 5, "HOLEJAMB", SHARED_UC->hole_jamb ? " ON" : "OFF");
+        draw_row(fb, 72, menu_row == 6, "AUTOQTR", SHARED_UC->auto_qtr ? " ON" : "OFF");
+        draw_row(fb, 80, menu_row == 7, "UNLITF", SHARED_UC->unlit_kill ? "OFF" : " ON");
+        draw_row(fb, 88, menu_row == 8, "ULTRA", SHARED_UC->ultra_enable ? " ON" : "OFF");
+        draw_row(fb, 96,  menu_row == 9,  "SPIN", SHARED_UC->bus_spin ? " ON" : "OFF");
+        draw_row(fb, 104, menu_row == 10, "IDLE", SHARED_UC->bus_idle ? " ON" : "OFF");
+        draw_row(fb, 112, menu_row == 11, "68K",  SHARED_UC->bus_68k  ? " ON" : "OFF");
+        draw_row(fb, 120, menu_row == 12, "SMS32X", SHARED_UC->sms_on_32x ? " ON" : "OFF");
+        draw_row(fb, 128, menu_row == 13, "SMSBOOT", "GO");
+        draw_row(fb, 136, menu_row == 14, "SMSGAME", "GO");
+        draw_row(fb, 144, menu_row == 15, "EPOCH",
+                 SHARED_UC->sms_epoch_on ? " ON" : "OFF");
+    } else if (menu_tab == TAB_COLOR) {
+        char v[6];
+        draw_row(fb, 32, menu_row == 1, "SURFACE", pal_surf_names[pal_sel]);
+        fmt_int(raycast_pal_ch_get(pal_sel, 0), v); draw_row(fb, 40, menu_row == 2, "R", v);
+        fmt_int(raycast_pal_ch_get(pal_sel, 1), v); draw_row(fb, 48, menu_row == 3, "G", v);
+        fmt_int(raycast_pal_ch_get(pal_sel, 2), v); draw_row(fb, 56, menu_row == 4, "B", v);
+        fmt_int(raycast_pal_warmth_get(),       v); draw_row(fb, 64, menu_row == 5, "WARMTH", v);
+        fmt_int(raycast_pal_sat_get(),          v); draw_row(fb, 72, menu_row == 6, "SAT", v);
     } else if (menu_tab == TAB_CREDITS) {
-        /* CREDITS — read-only build stamp (no selection cursor). */
-        menu_puts_pad(TX(X + 8), 32, "BUILD " VERSION_BUILD_STR, 20);
-        menu_puts_pad(TX(X + 8), 40, "DATE  " VERSION_DATE_STR,  20);
-        menu_puts_pad(TX(X + 8), 48, "SHA   " VERSION_SHA_STR,   20);
+        /* CREDITS — "now playing": current level + its author, then the build
+         * stamp (read-only, no selection cursor). */
+        char mn[18]; cur_map_name(mn);
+        char line[22]; int q;
+        q = 0; line[q++]='M'; line[q++]='A'; line[q++]='P'; line[q++]=':'; line[q++]=' ';
+        for (int i = 0; mn[i] && q < 20; i++) line[q++] = mn[i];
+        line[q] = 0;
+        menu_puts_pad(TX(X + 8), 32, line, 20);
+        q = 0; line[q++]='B'; line[q++]='Y'; line[q++]=' ';
+        const char *au = cur_map_author();
+        for (int i = 0; au[i] && q < 20; i++) line[q++] = au[i];
+        line[q] = 0;
+        menu_puts_pad(TX(X + 8), 40, line, 20);
+        menu_puts_pad(TX(X + 8), 48, "BUILD " VERSION_BUILD_STR " " VERSION_SHA_STR, 20);
+        menu_puts_pad(TX(X + 8), 56, "DATE  " VERSION_DATE_STR, 20);
     } else { /* TAB_MAPS — scrolling list of the compiled-in custom maps */
         if (custom_pick_count == 0) {
             menu_puts_pad(TX(X + 8), 32, "  (NO MAPS)", 20);
-            menu_puts_pad(TX(X + 8), 40, "", 20);
-            menu_puts_pad(TX(X + 8), 48, "", 20);
+            for (int i = 1; i < MAPS_WINDOW; i++) menu_puts_pad(TX(X + 8), 32 + 8 * i, "", 20);
         } else {
             int sel = menu_row - 1;            /* selected map, or -1 on the tab row */
-            int off = 0;                       /* 3-row window scrolls with selection */
-            if (custom_pick_count > 3) {
+            int off = 0;                       /* window scrolls with selection */
+            if (custom_pick_count > MAPS_WINDOW) {
                 off = (sel > 0 ? sel : 0) - 1;
                 if (off < 0) off = 0;
-                if (off > custom_pick_count - 3) off = custom_pick_count - 3;
+                if (off > custom_pick_count - MAPS_WINDOW) off = custom_pick_count - MAPS_WINDOW;
             }
-            /* Always paint all 3 window rows (blank when past the end) so the
+            /* Always paint all window rows (blank when past the end) so the
              * list self-clears as it scrolls, no blank pass. */
-            for (int i = 0; i < 3; i++) {
+            for (int i = 0; i < MAPS_WINDOW; i++) {
                 int mi = off + i;
                 if (mi < custom_pick_count) {
                     char line[22]; int p = 0;
@@ -373,12 +616,21 @@ void menu_render(uint8_t *fb) {
         }
     }
 
-    /* AUDIO's VOICE row (y=56) exists only on that tab; blank it elsewhere
-     * so switching away doesn't leave the "VOICE" tile hanging. */
-    if (menu_tab != TAB_AUDIO)
-        menu_puts_pad(TX(X + 8), 56, "", 20);
+    /* Ghost-clear rows this tab doesn't PAINT (tile writes persist until
+     * overwritten). Use DRAWN rows, not selectable rows: CREDITS has 0 selectable
+     * but paints 4 display lines, and MAPS self-clears its whole window. */
+    int used;
+    if      (menu_tab == TAB_MAPS)    used = MAPS_WINDOW;         /* its loop blanks past-end rows */
+    else if (menu_tab == TAB_CREDITS) used = CREDITS_DRAWN_ROWS;  /* keep MAP/BY/BUILD/DATE */
+    else                              used = content_rows_for(menu_tab);
+    for (int r = used + 1; r <= TESTING_CONTENT_ROWS; r++)
+        menu_puts_pad(TX(X + 8), 32 + (r - 1) * 8, "", 20);
 
-    /* Hint row at y=64. */
-    menu_puts_pad(TX(X + 8), 64,
-                  (menu_tab == TAB_MAPS) ? "A=GO  START=CLOSE" : "START TO CLOSE", 20);
+    /* Hint row below all content (box is 160px, 13 rows). */
+    const char *hint = "START TO CLOSE";
+    if      (menu_tab == TAB_GAME)  hint = "A=SELECT START=CLOSE";
+    else if (menu_tab == TAB_MAPS)  hint = "A=GO  START=CLOSE";
+    else if (menu_tab == TAB_COLOR) hint = "A=RESET  START=CLOSE";
+    else if (menu_tab == TAB_TESTING) hint = "A=RUN  START=CLOSE";
+    menu_puts_pad(TX(X + 8), 160, hint, 20);
 }

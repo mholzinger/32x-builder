@@ -8,7 +8,12 @@
 # access to the repo. Anyone can already fork + PR (the repo is public; that's
 # what the editor's Submit button automates). So every name below must also be
 # a collaborator with write access.
+# maps/curated/** is the flagship ROM's map list: promotion into it is a
+# maintainer decision, so it is review-gated exactly like core. maps/community/**
+# stays open — that content ships only in backrooms-community.32x and in the
+# author's own build.
 maps/core/**        @mholzinger @SmokeMonsterPacks
+maps/curated/**     @mholzinger @SmokeMonsterPacks
 sh_src/*_tex.h      @mholzinger @SmokeMonsterPacks
 registry.json       @mholzinger @SmokeMonsterPacks
 tools/gen_maps.py   @mholzinger @SmokeMonsterPacks

@@ -17,7 +17,14 @@
  *   41     = ':'
  *   42     = '|'
  */
-static const uint8_t glyphs[43][8] = {
+/* 44, not 43. The '%' row below was being DISCARDED by the compiler ("excess
+ * elements in array initializer") while char_to_idx('%') returned 43 — one past
+ * the end — so drawing '%' read whatever .rodata followed the array. Nothing in
+ * the HUD or menus draws '%', so it never showed. The SMS mini-game's TEST
+ * PATTERN banner is built entirely from boot-font '%' tiles (sms/DESIGN.md),
+ * so the moment the SH-2 renders that picture with its own font, the banner is
+ * the first thing to hit it. */
+static const uint8_t glyphs[44][8] = {
     /* A */ {0x70,0x88,0x88,0xF8,0x88,0x88,0x88,0x00},
     /* B */ {0xF0,0x88,0x88,0xF0,0x88,0x88,0xF0,0x00},
     /* C */ {0x70,0x88,0x80,0x80,0x80,0x88,0x70,0x00},
@@ -78,6 +85,22 @@ static int char_to_idx(char c) {
     case '|': return 42;
     case '%': return 43;
     default:  return 36;   /* unknowns render as space */
+    }
+}
+
+void font_draw_rows(uint8_t *fb, int x, int y, const uint8_t *rows,
+                    uint8_t color) {
+    for (int row = 0; row < 8; row++) {
+        uint8_t bits = rows[row];
+        uint8_t *p = fb + (y + row) * SCREEN_W + x;
+        if (bits & 0x80) p[0] = color;
+        if (bits & 0x40) p[1] = color;
+        if (bits & 0x20) p[2] = color;
+        if (bits & 0x10) p[3] = color;
+        if (bits & 0x08) p[4] = color;
+        if (bits & 0x04) p[5] = color;
+        if (bits & 0x02) p[6] = color;
+        if (bits & 0x01) p[7] = color;
     }
 }
 

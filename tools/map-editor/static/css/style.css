@@ -28,6 +28,19 @@ button:hover { border-color: var(--accent); }
 button.primary { background: var(--accent); color: #15140f; border-color: var(--accent); font-weight: bold; }
 button.active { background: var(--accent); color: #15140f; border-color: var(--accent); }
 #status { color: var(--accent); margin-left: 8px; min-height: 1em; }
+.status-act { margin-left: 6px; padding: 2px 8px; font-size: 12px;
+  background: var(--accent); color: #15140f; border-color: var(--accent); font-weight: bold; }
+.status-act + .status-act { background: #2c2a1f; color: var(--ink); font-weight: normal; }
+
+/* GitHub sign-in (right of the file bar) */
+.gh-auth { display: inline-flex; align-items: center; gap: 6px; margin-left: 4px; }
+.gh-auth .gh-signin { border-color: var(--accent); color: var(--accent); }
+.gh-auth .gh-who { color: var(--ink-dim); }
+.gh-auth .gh-out { padding: 2px 6px; font-size: 11px; color: var(--ink-dim); }
+
+/* "Your copy" panel: the contributor's own fork */
+#fork-panel div { margin-bottom: 6px; line-height: 1.5; }
+#fork-panel a { color: var(--accent); }
 
 main { display: flex; height: calc(100vh - 70px); }
 #sidebar { width: 220px; padding: 10px; overflow-y: auto; border-right: 1px solid var(--line); }
@@ -62,6 +75,7 @@ main { display: flex; height: calc(100vh - 70px); }
 #budget .brow { display:flex; justify-content:space-between; padding:2px 4px;
   font-size:12px; color:var(--fg); }
 #budget .brow.bfull  { color:#e8c95a; }
+#budget .brow.bwarn  { color:#e8953a; }   /* over the ~15fps floor, under the cap */
 #budget .brow.bover  { color:#ff6b6b; font-weight:bold; }
 #budget .brow.bflash { animation: bflash 0.6s; }
 @keyframes bflash { 0%,100% { background:transparent; } 30% { background:#7a2b2b; } }

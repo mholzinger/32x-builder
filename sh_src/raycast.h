@@ -178,6 +178,10 @@ void raycast_place_exit_door(void);
 void raycast_place_exit_hole(void);   /* alternate exit: dark 1-cell ceiling hole */
 int  raycast_exit_hole_check(void);   /* 1 = standing centered under the hole */
 int  raycast_pvm_use(void);           /* A near a PVM: toggle its power; 1 = toggled */
+/* Attract-mode autopilot: synthesized joypad that walks the current map to
+ * its exit (hole, hinged door, or lobby void). Reset per map load. */
+uint16_t raycast_attract_pad(void);
+void     raycast_attract_reset(void);
 void raycast_exit_pullup(int t, int total);  /* climb-out camera, progress t/total */
 void raycast_crawl_corridor(int t, int total); /* interior duct set piece: draws
                                 * OVER the frame, three cells to the peek */

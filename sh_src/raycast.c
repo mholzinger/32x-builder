@@ -2801,6 +2801,247 @@ int raycast_door_portal_check(void) {
     return 0;
 }
 
+/* ── ATTRACT-MODE AUTOPILOT ──────────────────────────────────────────────
+ * Idle at the start list long enough and the game demos itself: a bot walks
+ * every level to its exit, forever, until a real button lands. The bot
+ * SYNTHESIZES A JOYPAD — it drives the same player_update / door / climb
+ * code a human does, so it can only ever go where a player could.
+ *
+ * Navigation is a distance-to-goal field over open cells, blocked exactly
+ * like movement collision (walls, partition edges, standing cutouts) and
+ * rebuilt once per map via raycast_attract_reset(). Each frame the bot
+ * steps downhill toward the next cell's center; on the goal cell it runs
+ * the exit's own endgame: face the hole and tap A, or open the hinged door
+ * and step into the leaf, or simply stand beside the lobby's black void
+ * (adjacency alone fires that portal). A watchdog backs out of any wedge
+ * and refields, so a mid-map surprise degrades to a shuffle, not a hang. */
+static const int att_dxs[4] = { 1, -1, 0, 0 }, att_dys[4] = { 0, 0, 1, -1 };
+static uint8_t att_dist[MAP_H][MAP_W];   /* steps to goal; 254 = unreached */
+static uint8_t att_field_ok = 0;
+static uint8_t att_goal_kind = 0;        /* 0 none, 1 hole, 2 door, 3 void */
+static fx_t    att_gx, att_gy;           /* endgame world point (hole/door) */
+static uint8_t att_tick = 0;
+static fx_t    att_px_prev, att_py_prev;
+static uint16_t att_still = 0;
+static uint8_t att_unstick = 0;
+
+void raycast_attract_reset(void) {
+    att_field_ok = 0; att_still = 0; att_unstick = 0;
+}
+
+/* Can the bot step from (cx,cy) to its k-neighbor? Cell-granular mirror of
+ * the movement collision: open destination, no partition edge on the
+ * crossing line, no standing cutout parked in the destination. */
+static int att_step_open(int cx, int cy, int k) {
+    int nx = cx + att_dxs[k], ny = cy + att_dys[k];
+    if (nx < 0 || nx >= MAP_W || ny < 0 || ny >= MAP_H) return 0;
+    if (world_map[ny][nx] != 0) return 0;
+    if (g_pedge_any) {
+        if (att_dxs[k]) {
+            int line = att_dxs[k] > 0 ? nx : cx;
+            if (pedge_w[cy][line] & CM_PEDGE_PRESENT) return 0;
+        } else {
+            int line = att_dys[k] > 0 ? ny : cy;
+            if (pedge_n[line][cx] & CM_PEDGE_PRESENT) return 0;
+        }
+    }
+    /* Low ceilings stopped being a gate when crawl_bump made the walk-in
+     * crawl automatic — the bot ducks and crawls ducts like anyone else.
+     * (Before that, a duct cell wedged the first headless soak forever:
+     * ducts demanded the A+B crouch the bot never gives.) */
+    for (int i = 0; i < num_standups; i++)
+        if (!standup_down[i] &&
+            FX_INT(standups[i].x) == nx && FX_INT(standups[i].y) == ny) return 0;
+    return 1;
+}
+
+/* Build the distance field: seed the goal cell(s) at 0, then relax with
+ * alternating forward/backward sweeps until stable. No BFS queue — the
+ * sweeps converge in a handful of passes on 32x32 and this runs once per
+ * map, so the 2KB the queue would cost stays unspent. */
+static void att_build_field(void) {
+    att_goal_kind = 0;
+    for (int y = 0; y < MAP_H; y++)
+        for (int x = 0; x < MAP_W; x++) att_dist[y][x] = 254;
+
+    if (g_exit_hole_cx >= 0) {                 /* climb-in hole */
+        att_goal_kind = 1;
+        att_gx = ((fx_t)g_exit_hole_ax << FX_SHIFT) + FX(0.5);
+        att_gy = ((fx_t)g_exit_hole_ay << FX_SHIFT) + FX(0.5);
+        att_dist[g_exit_hole_ay][g_exit_hole_ax] = 0;
+    } else if (g_exit_wall_cx >= 0) {          /* hinged EXIT door */
+        for (int d = 0; d < num_decals; d++) {
+            if (decals[d].kind != 1) continue;
+            att_goal_kind = 2;
+            att_gx = decals[d].x; att_gy = decals[d].y;
+            /* Approach cell: the open neighbor of the door's wall cell whose
+             * center is within arm's reach of the leaf. */
+            for (int k = 0; k < 4; k++) {
+                int ax = g_exit_wall_cx + att_dxs[k];
+                int ay = g_exit_wall_cy + att_dys[k];
+                if (ax < 0 || ax >= MAP_W || ay < 0 || ay >= MAP_H) continue;
+                if (world_map[ay][ax] != 0) continue;
+                fx_t ccx = ((fx_t)ax << FX_SHIFT) + FX(0.5);
+                fx_t ccy = ((fx_t)ay << FX_SHIFT) + FX(0.5);
+                if (FX_ABS(ccx - att_gx) < FX_ONE && FX_ABS(ccy - att_gy) < FX_ONE)
+                    att_dist[ay][ax] = 0;
+            }
+            break;
+        }
+    } else {                                   /* lobby: the black void */
+        for (int y = 0; y < MAP_H; y++)
+            for (int x = 0; x < MAP_W; x++) {
+                if (world_map[y][x] != 0) continue;
+                if ((x + 1 < MAP_W && world_map[y][x + 1] == 2) ||
+                    (x - 1 >= 0    && world_map[y][x - 1] == 2) ||
+                    (y + 1 < MAP_H && world_map[y + 1][x] == 2) ||
+                    (y - 1 >= 0    && world_map[y - 1][x] == 2)) {
+                    att_dist[y][x] = 0; att_goal_kind = 3;
+                }
+            }
+    }
+
+    for (int pass = 0; pass < 64 && att_goal_kind; pass++) {
+        int changed = 0;
+        for (int i = 0; i < MAP_W * MAP_H; i++) {
+            int c = (pass & 1) ? MAP_W * MAP_H - 1 - i : i;
+            int x = c % MAP_W, y = c / MAP_W;
+            if (world_map[y][x] != 0) continue;
+            uint8_t best = att_dist[y][x];
+            for (int k = 0; k < 4; k++) {
+                if (!att_step_open(x, y, k)) continue;
+                uint8_t d = att_dist[y + att_dys[k]][x + att_dxs[k]];
+                if (d < 254 && (uint8_t)(d + 1) < best) best = (uint8_t)(d + 1);
+            }
+            if (best < att_dist[y][x]) { att_dist[y][x] = best; changed = 1; }
+        }
+        if (!changed) break;
+    }
+    att_field_ok = 1;
+    att_px_prev = player.x; att_py_prev = player.y;
+}
+
+/* Angle (0..255, 0=+x, 64=+y) toward (dx,dy): coarse linear atan — the
+ * dominant axis anchors the quadrant, the minor/major ratio bends up to a
+ * half-quadrant toward the minor axis. Within ~6 units of true, plenty to
+ * hold a corridor line when it re-aims every frame. */
+static uint8_t att_angle_to(fx_t dx, fx_t dy) {
+    fx_t ax = FX_ABS(dx), ay = FX_ABS(dy);
+    int a, t;
+    if (ax >= ay) {
+        a = (dx >= 0) ? 0 : 128;
+        t = ax ? (int)(((int64_t)ay << 5) / ax) : 0;
+        a += (dx >= 0) ? ((dy >= 0) ? t : -t) : ((dy >= 0) ? -t : t);
+    } else {
+        a = (dy >= 0) ? 64 : 192;
+        t = (int)(((int64_t)ax << 5) / ay);
+        a += (dy >= 0) ? ((dx >= 0) ? -t : t) : ((dx >= 0) ? t : -t);
+    }
+    return (uint8_t)a;
+}
+
+/* Steer toward a world point: turn first, walk once roughly aimed.
+ * Returns 1 (pad untouched) when inside the tolerance box. */
+static int att_steer(fx_t tx, fx_t ty, fx_t tol, uint16_t *pad) {
+    fx_t dx = tx - player.x, dy = ty - player.y;
+    if (FX_ABS(dx) < tol && FX_ABS(dy) < tol) return 1;
+    int8_t diff = (int8_t)(att_angle_to(dx, dy) - player.angle);
+    if      (diff >  6) *pad |= SEGA_CTRL_RIGHT;
+    else if (diff < -6) *pad |= SEGA_CTRL_LEFT;
+    if (diff > -48 && diff < 48) *pad |= SEGA_CTRL_UP;
+    return 0;
+}
+
+/* Turn in place toward an exact heading; 1 when close enough. */
+static int att_face(uint8_t want, uint16_t *pad) {
+    int8_t diff = (int8_t)(want - player.angle);
+    if (diff >  2) { *pad |= SEGA_CTRL_RIGHT; return 0; }
+    if (diff < -2) { *pad |= SEGA_CTRL_LEFT;  return 0; }
+    return 1;
+}
+
+uint16_t raycast_attract_pad(void) {
+    uint16_t pad = 0;
+    att_tick++;
+    if (!att_field_ok) att_build_field();
+
+    /* Wedge watchdog: ~8s of rendered frames without real motion → back
+     * straight out for a beat, then refield (the world may have changed
+     * underfoot — an armed cutout, a re-shut door). */
+    {
+        fx_t mdx = player.x - att_px_prev, mdy = player.y - att_py_prev;
+        att_px_prev = player.x; att_py_prev = player.y;
+        if (FX_ABS(mdx) + FX_ABS(mdy) < FX(0.005)) att_still++;
+        else att_still = 0;
+        if (att_still > 120) { att_still = 0; att_unstick = 30; att_field_ok = 0; }
+        if (att_unstick) { att_unstick--; return SEGA_CTRL_DOWN; }
+    }
+
+    int cx = FX_INT(player.x), cy = FX_INT(player.y);
+    if ((unsigned)cx >= MAP_W || (unsigned)cy >= MAP_H || !att_goal_kind)
+        return 0;
+
+    if (att_dist[cy][cx] == 0) {
+        /* ── Endgames on the goal cell ── */
+        if (att_goal_kind == 1) {
+            /* Center up, face the carved wall, tap the interaction button.
+             * raycast_exit_hole_check() is the exact gate the game loop
+             * uses, so the A edges only fire when the climb would take. */
+            if (raycast_exit_hole_check()) {
+                if (att_tick & 2) pad |= SEGA_CTRL_A;
+                return pad;
+            }
+            if (att_steer(att_gx, att_gy, FX(0.10), &pad)) {
+                int hdx = g_exit_hole_cx - g_exit_hole_ax;
+                int hdy = g_exit_hole_cy - g_exit_hole_ay;
+                att_face((uint8_t)((hdx > 0) ? 0 : (hdx < 0) ? 128
+                                 : (hdy > 0) ? 64 : 192), &pad);
+            }
+            return pad;
+        }
+        if (att_goal_kind == 2) {
+            if (g_door_open >= DOOR_OPEN_MAX * 3 / 4) {
+                att_steer(att_gx, att_gy, FX(0.05), &pad); /* into the leaf */
+                return pad;
+            }
+            if (g_door_target == 0) {
+                /* Shut: get in arm's reach, then a fresh A swings it. The
+                 * taps stop the moment the target flips, so the same edge
+                 * can never slam it back shut. */
+                if (FX_ABS(att_gx - player.x) < FX(0.9) &&
+                    FX_ABS(att_gy - player.y) < FX(0.9)) {
+                    att_face(att_angle_to(att_gx - player.x,
+                                          att_gy - player.y), &pad);
+                    if (att_tick & 2) pad |= SEGA_CTRL_A;
+                } else
+                    att_steer(att_gx, att_gy, FX(0.6), &pad);
+                return pad;
+            }
+            att_face(att_angle_to(att_gx - player.x, att_gy - player.y), &pad);
+            return pad;                        /* mid-swing: watch it open */
+        }
+        return 0;   /* void goal: standing here already fires the portal */
+    }
+
+    /* Downhill: walk at the center of the best open neighbor. */
+    {
+        int bk = -1; uint8_t bd = att_dist[cy][cx];
+        for (int k = 0; k < 4; k++) {
+            if (!att_step_open(cx, cy, k)) continue;
+            uint8_t d = att_dist[cy + att_dys[k]][cx + att_dxs[k]];
+            if (d < bd) { bd = d; bk = k; }
+        }
+        if (bk < 0) {              /* boxed in (fresh cutout?) — refield */
+            if ((att_tick & 31) == 0) att_field_ok = 0;
+            return 0;
+        }
+        att_steer(((fx_t)(cx + att_dxs[bk]) << FX_SHIFT) + FX(0.5),
+                  ((fx_t)(cy + att_dys[bk]) << FX_SHIFT) + FX(0.5),
+                  FX(0.05), &pad);
+    }
+    return pad;
+}
+
 /* Load the tiny 8x8 lobby: the grid box (lobby_map) plus the free-standing
  * wallpaper PARTITION that IS the photo's divider. Spawn (X) sits bottom-
  * west facing north so the divider stands on your right; walk up the west
@@ -3045,9 +3286,12 @@ static int standup_collides(fx_t px, fx_t py) { return standup_blocker(px, py) >
 
 /* Raised when a move was refused ONLY because a bulkhead header wanted the
  * head lower. player_update consumes it as an automatic duck, so the player
- * walks through doorway soffits without ever pressing crouch. Duct slabs
- * never raise it — those keep the deliberate crawl. Primary CPU only. */
+ * walks through doorway soffits without ever pressing crouch. Primary CPU
+ * only. crawl_bump is the duct-slab twin: refusal drops you into the full
+ * crawl automatically — walking at a duct always proceeds, A+B is just the
+ * crouch you can still choose on your own (Mike, 2026-09-07). */
 static uint8_t duck_bump = 0;
+static uint8_t crawl_bump = 0;
 
 static int position_clear(fx_t px, fx_t py) {
     /* Check all 4 corners of the player's bounding box against wall
@@ -3100,11 +3344,12 @@ static int position_clear(fx_t px, fx_t py) {
     }
     if (standup_collides(px, py))   return 0;
     /* Low-ceiling cells hang below standing head height, so entering one costs
-     * head room — but HOW MUCH depends on the cell. A duct slab still demands
-     * the deliberate A+B crawl; a bulkhead header only wants a dipped head, so
-     * a refusal there raises duck_bump and player_update ducks for you on the
-     * next frame — walk into a doorway and you stoop through it instead of
-     * bouncing off. Per-cell via ceil_h[], so this covers every map. */
+     * head room — but HOW MUCH depends on the cell. Either way a refusal now
+     * drops the head FOR you: a bulkhead header raises duck_bump (dip and keep
+     * walking), a duct slab raises crawl_bump (ease into the full crawl and
+     * proceed at crawl pace). Walking at a low ceiling always goes through —
+     * A+B is the crouch you can still choose, never a toll gate. Per-cell via
+     * ceil_h[], so this covers every map. */
     if (g_lowceil_active) {
         int cx = FX_INT(px), cy = FX_INT(py);
         if ((unsigned)cx < MAP_W && (unsigned)cy < MAP_H) {
@@ -3113,7 +3358,7 @@ static int position_clear(fx_t px, fx_t py) {
                 int header = (ch >= BULKHEAD_CEIL_H);
                 int need = header ? BULKHEAD_PASS_EYE : CRAWL_PASS_EYE;
                 if ((int)SHARED_UC->eye_h >= need) {
-                    if (header) duck_bump = 1;
+                    if (header) duck_bump = 1; else crawl_bump = 1;
                     return 0;
                 }
             }
@@ -3639,6 +3884,12 @@ void player_update(uint16_t pad) {
         }
     }
     if (duck_bump) { auto_duck = 1; duck_bump = 0; }
+    /* Refused at a duct: drop into the crawl automatically and proceed —
+     * the same walk-in courtesy the bulkhead dip gives, one head lower.
+     * The refusal refires every frame the move is still blocked, so this
+     * holds the eye sinking until the slab clears it; once inside, the
+     * zone latch above owns the crouch. */
+    if (crawl_bump) { crouching = 1; crawl_bump = 0; }
     {
         int target = crouching ? CROUCH_EYE
                    : (auto_duck ? DUCK_EYE : STAND_EYE);

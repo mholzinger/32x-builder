@@ -935,6 +935,15 @@ static void capture_menu_pane(const uint8_t *fb) {
  * needs no rebuilds. 0 hinge-up, 3 fall-forward, 4 fly-through. */
 static uint8_t g_flip_style = 3;
 
+/* ATTRACT MODE (the MiSTer cabinet loop): untouched at the start list for
+ * ~ATTRACT_IDLE_FRAMES rendered frames, the game commits PROCEDURAL by
+ * itself and the autopilot (raycast_attract_pad) walks level after level to
+ * its exit, forever. Any real input ends the show — mid-lobby it simply
+ * hands over the controls, in-game it fades back to the start list, where
+ * the idle clock starts counting again. */
+static int g_attract = 0;
+#define ATTRACT_IDLE_FRAMES 450   /* rendered lobby frames, ~25s at ~18fps */
+
 static void menu_flip_out(int style, int NF) {
     const int D  = 220;            /* viewer distance, px */
     const int CX = SCREEN_W / 2;   /* pane centre x */
@@ -2335,6 +2344,7 @@ static void portal_to_procgen(void) {
     g_map_pregen = 0;
     player.x = FX(16.5); player.y = FX(28.5); player.angle = 192;
     raycast_init();                 /* rebuilds full-bright palette */
+    raycast_attract_reset();        /* autopilot: new map, new field */
     if (g_arrive_drop) {
         /* Already lit, already there: the crawl's window WAS this scene.
          * The fall plays at full brightness -- no black between the tunnel
@@ -2412,6 +2422,7 @@ static void portal_to_custom(int idx) {
     fade_step(0);
     raycast_load_custom(idx);
     raycast_init();
+    raycast_attract_reset();        /* autopilot: new map, new field */
     raycast_set_brightness(0);
     for (int lvl = 6; lvl < FADE_STEPS; lvl += 6) fade_step(lvl);
     fade_step(FADE_STEPS);
@@ -2516,8 +2527,10 @@ int m_main(void) {
      * REBUILT whenever a fold changes, and the unroll is animated by a damped
      * integer spring — rows slide out from under the header (clipped until
      * they emerge) and the rows below visibly bounce as the spring settles. */
-    enum { IT_MAP, IT_PROC, IT_SEP, IT_FOLD, IT_CTRL, IT_VIEW };
-    struct { uint8_t kind; uint8_t map; const char *label; } items[40];
+    enum { IT_MAP, IT_PROC, IT_SEP, IT_FOLD, IT_CTRL, IT_VIEW, IT_ATTR };
+    /* 44: the tier caps top out at 38 rows, and the fixed tail (gap +
+     * CONTROLS + ASSET VIEWER + ATTRACT MODE) adds four more. */
+    struct { uint8_t kind; uint8_t map; const char *label; } items[44];
     int n_items = 0;
     /* Tier blocks (see custom_maps.h): core | curated | community. The
      * community block is empty in the flagship ROM, so its group simply never
@@ -2572,11 +2585,23 @@ int m_main(void) {
     {
         uint16_t prev_pad = 0xFFFF;
         int committing = 0;       /* map/proc chosen -> capture + break this frame */
+        uint32_t idle = 0;        /* frames untouched -> attract mode */
         for (;;) {
             HwMdReadPad(0);
             uint16_t pad = MARS_SYS_COMM8;
             uint16_t pressed = (uint16_t)(pad & ~prev_pad);
             prev_pad = pad;
+
+            /* ATTRACT arm: a quiet start list for ~25s commits PROCEDURAL on
+             * its own and the autopilot takes it from Phase B. Any bit of
+             * input restarts the clock. */
+            if (pad & ~SEGA_CTRL_TYPE) idle = 0;
+            else if (++idle >= ATTRACT_IDLE_FRAMES && !committing) {
+                for (int i = 0; i < n_items; i++)
+                    if (items[i].kind == IT_PROC) { cur = i; break; }
+                g_attract = 1;
+                committing = 1;
+            }
 
             if (rebuild_items) {
                 rebuild_items = 0;
@@ -2647,6 +2672,8 @@ int m_main(void) {
                 items[n_items].label = "CONTROLS"; n_items++;
                 items[n_items].kind = IT_VIEW; items[n_items].map = 0;
                 items[n_items].label = "ASSET VIEWER"; n_items++;
+                items[n_items].kind = IT_ATTR; items[n_items].map = 0;
+                items[n_items].label = "ATTRACT MODE"; n_items++;
 
                 if (refocus_grp >= 0) {
                     for (int i = 0; i < n_items; i++)
@@ -2718,6 +2745,14 @@ int m_main(void) {
                     asset_viewer_screen();
                     prev_pad = 0xFFFF;       /* swallow the still-held button */
                     continue;
+                }
+                if (items[cur].kind == IT_ATTR) {
+                    /* The idle path, on demand: repoint at PROCEDURAL and
+                     * commit with the attract flag up — same flip, same
+                     * lobby walk-out, same any-button-ends-the-show. */
+                    for (int i = 0; i < n_items; i++)
+                        if (items[i].kind == IT_PROC) { cur = i; break; }
+                    g_attract = 1;
                 }
                 if (items[cur].kind != IT_FOLD) committing = 1;
             }
@@ -2855,8 +2890,9 @@ int m_main(void) {
     /* Phase A.5 — procedural weight tuning. Only when PROCEDURAL is chosen:
      * the player dials the generation mix (or leaves the balanced default)
      * before walking out. UP/DOWN pick a knob, LEFT/RIGHT adjust it, C resets
-     * to defaults, START locks it in. Drawn over the live lobby view. */
-    if (items[cur].kind == IT_PROC) {
+     * to defaults, START locks it in. Drawn over the live lobby view.
+     * Attract skips the tuning and demos the balanced defaults. */
+    if (items[cur].kind == IT_PROC && !g_attract) {
         static const char *const labels[6] = {
             "OPENNESS    ", "PARTITIONS  ", "CRAWLSPACES ",
             "OUTLETS     ", "SPOTTED     ", "SEE-OVER    " };
@@ -2918,11 +2954,20 @@ int m_main(void) {
 
     /* Phase B — menu dismissed, choice locked. Walk up to the black void
      * (world_map cell == 2, the dark exit doorway along the east wall) and
-     * step through it. */
+     * step through it. In attract the autopilot does the walking; a real
+     * press mid-lobby just hands the controls over (the commit stands). */
     {
+        if (g_attract) raycast_attract_reset();
+        uint16_t hand_prev = 0xFFFF;   /* swallow the press that launched the
+                                        * demo (the ATTRACT MODE confirm is
+                                        * still held here) — only a FRESH
+                                        * press hands the controls over */
         for (;;) {
             HwMdReadPad(0);
             uint16_t pad = MARS_SYS_COMM8;
+            if (g_attract && (pad & ~hand_prev & ~SEGA_CTRL_TYPE)) g_attract = 0;
+            hand_prev = pad;
+            if (g_attract) pad = raycast_attract_pad();
             metrics_mode_check(pad);
             /* MODE is a combo modifier: while held, UP/DOWN drive the automap
          * zoom, so they must not also walk the player. */
@@ -2958,6 +3003,11 @@ int m_main(void) {
     if (items[cur].kind == IT_PROC) {
         g_custom_current = -1;
         g_procgen_seed = (uint32_t)frame * 1000003u + (uint32_t)player.x;
+        /* Attract's zero-input path makes frame and player.x constants, so
+         * every power-on would demo the same first level. The free-running
+         * timer's low bits at this instant are the one thing the hardware
+         * still varies — fold them in. */
+        if (g_attract) g_procgen_seed ^= (uint32_t)prof_read_frt() << 8;
         procgen_run(g_procgen_seed);
         player.x = FX(16.5); player.y = FX(28.5); player.angle = 192;
     } else if (custom_pick_count > 0) {
@@ -2973,11 +3023,25 @@ int m_main(void) {
     for (int lvl = 6; lvl < FADE_STEPS; lvl += 6) fade_step(lvl);
     fade_step(FADE_STEPS);
 
+    raycast_attract_reset();       /* new map underfoot either way */
+
     for (;;) {
         /* Read the joypad up-front so the menu can both react to
          * START and tell player_update to skip movement when open. */
         HwMdReadPad(0);
         uint16_t pad = MARS_SYS_COMM8;
+
+        /* ATTRACT: any real input ends the show and fades back to the start
+         * list (this frame's press is swallowed — it meant "stop", not
+         * "open a menu"). Otherwise the autopilot IS the joypad. */
+        if (g_attract) {
+            if (pad & ~SEGA_CTRL_TYPE) {
+                g_attract = 0;
+                g_lobby_request = 1;
+                pad = 0;
+            } else
+                pad = raycast_attract_pad();
+        }
 
         menu_update(pad);
         raycast_glass_sample();   /* game-on-glass: drink the COMM broadcast */
@@ -3223,6 +3287,10 @@ int m_main(void) {
              * (Mike, 2026-08-12 — the moment ULTRA first started arming).
              * Quiet rooms still supersample; rooms with a live screen don't. */
             if (SHARED_UC->pvm_static_live)      gate |= 0x0800;
+            /* Attract: the bot pauses (door swings, turning in place) read
+             * as "standing still" — parking would freeze the show on one
+             * frame until a human walked over. The demo never rests. */
+            if (g_attract)                       gate |= 0x1000;
             g_ultra_gate = gate;
             int ultra_ok = (gate == 0);
             if (!ultra_ok) ultra_dwell = 0;
@@ -3317,6 +3385,8 @@ int m_main(void) {
      * loop back to the start list. */
     for (int lvl = FADE_STEPS; lvl >= 0; lvl -= 2) fade_step(lvl);
     raycast_exit_pullup(0, 1);        /* zero the pitch channel */
+    g_pullup = g_crawl = 0;           /* a mid-climb exit (attract cancel,
+                                       * menu) must not resume in the lobby */
     SHARED_UC->eye_h = 128;
     SHARED_UC->pitch_y = 0;
     g_custom_current = -1;

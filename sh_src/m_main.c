@@ -811,7 +811,87 @@ static void pos_draw(uint8_t *fb) {
         while (cond) { if (_thr) BUS_PAUSE16(); }            \
     } while (0)
 
+/* ── Pacing ring ─────────────────────────────────────────────────────────
+ * 4 bytes per flip, always on (a handful of stores — players pay nothing
+ * measurable): vblanks since the previous flip, the adaptive-res state, and
+ * the player's cell. The vblank delta IS the framerate the eye sees (fps =
+ * 60/vbl), so the ring is the ground truth for pacing work: a bucket
+ * histogram says how consistent the game feels, and a 3↔4 flap count says
+ * where it judders. Read from SDRAM dumps via the headless harness — the
+ * attract bot makes zero-input boots a deterministic gameplay workload. */
+/* 1024 records = 4KB: a 16KB ring overflowed the linker's `ram` region by
+ * 9.7KB (the stack-overlay savings live ABOVE _end, not in the region, and
+ * that space belongs to live tenants like the ULTRA twin stash). ~70-100s
+ * of trailing frames per dump; the deterministic attract timeline means
+ * dumps at staggered frame counts stitch into full coverage. */
+#define PACE_RING_N 1024
+struct pace_rec { uint8_t vbl, hr, cx, cy; };
+/* volatile: the only reader is OUTSIDE the program (headless SDRAM dumps),
+ * so without it LTO proves the stores dead and deletes the whole ring. */
+volatile struct pace_rec pace_ring[PACE_RING_N];
+volatile uint32_t pace_ring_i = 0;
+
+/* Pacing governor state — the target bucket and its evidence counters.
+ * See shared.h at pace_on for the design; policy knobs here. */
+static uint8_t pace_target   = 3;   /* hold in-game flips to this many vblanks */
+static uint8_t pace_fast_run = 0;   /* consecutive walking frames a bucket under */
+static uint8_t pace_over_run = 0;   /* consecutive walking frames over target */
+int g_pace_scope = 0;               /* 1 = in-level gameplay (game loop + walk-in);
+                                     * lobby list and sub-screens stay unpaced */
+#define PACE_MIN        2           /* 30fps cap — the engine's realistic best */
+#define PACE_MAX        5           /* slowest LOCK is 12fps; a room heavier than
+                                     * that shows raw overruns instead of a 10fps
+                                     * lock, and AUTO's res drop digs it out */
+#define PACE_DOWN_RUN  12           /* fast recovery — a stale-high lock IS judder's
+                                     * replacement cost (v3: 21% of frames locked
+                                     * at 12fps or below, triple the baseline) */
+#define PACE_UP_RUN     6           /* ~half a second of sustained overrun before
+                                     * locking slower; raw straddling a boundary
+                                     * (true ~3.5 vbl) should lock 4, not 5 */
+
 void swapBuffers(void) {
+    /* Frame pacing: hold EVERY in-level frame to pace_target vblanks so the
+     * eye gets one steady rate instead of a 3↔4 flap. First cut paced only
+     * walking frames — and the capture showed that just moves the flap to
+     * every stride pause (paced 4 ↔ unpaced 3). So the HOLD covers all
+     * gameplay frames; only the VOTES are walking-only, because standing
+     * frames render full-res under the stillness ratchet and their slow raw
+     * times would drag the target up for a scene that cannot judder.
+     *
+     * Edge arithmetic (v2 got this wrong and the capture showed 3-delta
+     * frames under a 4 target): swapBuffers waits for the tick and writes
+     * FBCTL DURING vblank, so the flip is immediate — displayed delta IS
+     * the tick number the wait exits on. A frame entering at raw ticks
+     * displays raw+1 unheld; holding until delta == target displays target.
+     * Votes: ready by tick target-2 (raw < target-1) could have displayed
+     * target-1, that's the step-down; raw >= target displays target+1+,
+     * that's the overrun. */
+    if (SHARED_UC->pace_on && g_pace_scope && !menu_is_active()) {
+        uint16_t raw = (uint16_t)((uint16_t)(MARS_SYS_COMM12 >> 16)
+                                - (uint16_t)(lastTick >> 16));
+        int vote = SHARED_UC->is_walking != 0;
+        if (raw >= pace_target) {            /* would display target+1+: overrun */
+            pace_fast_run = 0;
+            if (vote && ++pace_over_run >= PACE_UP_RUN && pace_target < PACE_MAX) {
+                pace_target++; pace_over_run = 0;
+            }
+        } else {
+            if (vote) {
+                pace_over_run = 0;
+                if (raw < (uint16_t)(pace_target - 1)) {
+                    if (++pace_fast_run >= PACE_DOWN_RUN && pace_target > PACE_MIN) {
+                        pace_target--; pace_fast_run = 0;
+                    }
+                } else pace_fast_run = 0;
+            }
+            /* The hold: burn the leftover vblanks. Sysreg-only spin, same
+             * bus-free contract as the tick wait below. */
+            SHARED_UC->primary_vwait = 1;
+            BUS_WAIT((uint16_t)((uint16_t)(MARS_SYS_COMM12 >> 16)
+                              - (uint16_t)(lastTick >> 16)) < pace_target);
+            SHARED_UC->primary_vwait = 0;
+        }
+    }
     /* Advertise both bus-free waits to the secondary's Speex decoder
      * (amb_audio_idle): each poll below reads only a sysreg, so the
      * ROM/SDRAM bus is genuinely idle inside them. The FS flip
@@ -831,6 +911,18 @@ void swapBuffers(void) {
     BUS_WAIT((MARS_VDP_FBCTL & MARS_VDP_FS) == currentFB);
     SHARED_UC->primary_vwait = 0;
     currentFB ^= 1;
+    {
+        /* The 68K's 16-bit tick occupies the TOP half of the 32-bit COMM12
+         * read (the low half is COMM14, the SMS status word — constant
+         * here). First capture recorded the low half: vbl=0 forever. */
+        uint16_t d = (uint16_t)((uint16_t)(MARS_SYS_COMM12 >> 16)
+                              - (uint16_t)(lastTick >> 16));
+        volatile struct pace_rec *r = &pace_ring[pace_ring_i++ & (PACE_RING_N - 1)];
+        r->vbl = d > 255 ? 255 : (uint8_t)d;
+        r->hr  = (uint8_t)((pace_target << 4) | (SHARED_UC->wall_halfres & 0xF));
+        r->cx  = (uint8_t)FX_INT(player.x);
+        r->cy  = (uint8_t)FX_INT(player.y);
+    }
     lastTick = MARS_SYS_COMM12;
 }
 
@@ -2958,6 +3050,7 @@ int m_main(void) {
      * press mid-lobby just hands the controls over (the commit stands). */
     {
         if (g_attract) raycast_attract_reset();
+        g_pace_scope = 1;              /* pacing covers the walk-in and the level */
         uint16_t hand_prev = 0xFFFF;   /* swallow the press that launched the
                                         * demo (the ATTRACT MODE confirm is
                                         * still held here) — only a FRESH
@@ -3387,6 +3480,7 @@ int m_main(void) {
     raycast_exit_pullup(0, 1);        /* zero the pitch channel */
     g_pullup = g_crawl = 0;           /* a mid-climb exit (attract cancel,
                                        * menu) must not resume in the lobby */
+    g_pace_scope = 0;                 /* lobby list is never paced */
     SHARED_UC->eye_h = 128;
     SHARED_UC->pitch_y = 0;
     g_custom_current = -1;

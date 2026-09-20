@@ -246,6 +246,17 @@ typedef struct {
      * blend the two into an effective 640-wide antialiased image. Any input
      * breaks the park and the normal loop simply overwrites the pair. */
     volatile uint8_t ultra_enable;
+    /* Frame-pacing governor (TESTING>PACE). The engine is vblank-locked, so
+     * fps is quantized to 60/N — and the judder players feel is frames
+     * FLAPPING between adjacent buckets (baseline capture: 23% of frame
+     * pairs changed bucket, 20↔15fps). The governor holds every WALKING
+     * frame to a target bucket B (swapBuffers waits out the remainder) and
+     * adapts B slowly from the raw pre-hold time: ~45 walking frames under
+     * B-1 step it down, 3 consecutive overruns step it up. Standing frames
+     * neither pace nor vote — a static scene can't judder, and counting its
+     * slow full-res frames (stillness ratchet) would drag B up. Menus and
+     * lobby are never paced for the same reason (is_walking is false). */
+    volatile uint8_t pace_on;
     /* Nonzero while an ULTRA pass renders: 1 = pass A (no jitter), 2 = pass
      * B (every pass on both CPUs shifts sampling half a column). m_main
      * checkerboard-merges the two into ONE static frame — differences are

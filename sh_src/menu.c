@@ -60,7 +60,7 @@ void    m_main_automap_zoom(int dir);
 #define AUDIO_CONTENT_ROWS    6   /* AMBIENCE, FOOTSTEPS, BUFFER, VOICE, HELLO, HUM */
 #define LIGHTING_CONTENT_ROWS 3   /* FLICKER, STROBES, SHIMMER */
 #define VISUALS_CONTENT_ROWS  6   /* WALLS, ADAPTIVE, METRICS, SHADOWS, SEAMS, DITHER */
-#define TESTING_CONTENT_ROWS 15   /* SERIAL, VERT, BULKHEAD, CARPETLOD, HOLEJAMB, AUTOQTR, UNLITF, ULTRA, SPIN, IDLE, 68K, SMS32X, SMSBOOT, SMSGAME, EPOCH */
+#define TESTING_CONTENT_ROWS 16   /* SERIAL, VERT, BULKHEAD, CARPETLOD, HOLEJAMB, AUTOQTR, UNLITF, ULTRA, SPIN, IDLE, 68K, SMS32X, SMSBOOT, SMSGAME, EPOCH, PACE */
 #define COLOR_CONTENT_ROWS    6   /* SURFACE, R, G, B, WARMTH, SAT */
 #define CREDITS_CONTENT_ROWS  0   /* read-only display, no selection cursor */
 #define CREDITS_DRAWN_ROWS    4   /* MAP / BY / BUILD / DATE lines it paints */
@@ -361,6 +361,7 @@ void menu_update(uint16_t pad) {
             menu_genesis_blank();
         }
         else if (menu_row == 15) SHARED_UC->sms_epoch_on ^= 1;  /* delta bcast */
+        else if (menu_row == 16) SHARED_UC->pace_on ^= 1;    /* bucket-lock pacing A/B */
     } else if (menu_tab == TAB_COLOR) {
         /* Live palette lab. Row 1 picks a surface; 2-4 nudge its R/G/B anchor;
          * 5-6 are the global WARMTH/SAT masters. Every change flags the palette
@@ -560,6 +561,7 @@ void menu_render(uint8_t *fb) {
         draw_row(fb, 136, menu_row == 14, "SMSGAME", "GO");
         draw_row(fb, 144, menu_row == 15, "EPOCH",
                  SHARED_UC->sms_epoch_on ? " ON" : "OFF");
+        draw_row(fb, 152, menu_row == 16, "PACE", SHARED_UC->pace_on ? " ON" : "OFF");
     } else if (menu_tab == TAB_COLOR) {
         char v[6];
         draw_row(fb, 32, menu_row == 1, "SURFACE", pal_surf_names[pal_sel]);

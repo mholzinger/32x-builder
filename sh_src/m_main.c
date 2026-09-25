@@ -50,6 +50,7 @@ static fx_t am_s_cur = 4 << 16;
 static int g_custom_current = -1;
 /* Seed of the procgen level currently loaded — its entire identity. The
  * automap footer derives the level's "name" from it (stable per level). */
+extern const volatile uint8_t diag_cfg[24];
 static uint32_t g_procgen_seed = 0;
 
 
@@ -313,7 +314,7 @@ static inline void prof_init(void) {
          * readable over SSH (deploy, launch, screenshot) with no pad input
          * at all. The HUD draw sits OUTSIDE the render brackets, so it
          * cannot perturb H or the pass counters it is there to read. */
-        extern const volatile uint8_t diag_cfg[16];
+        extern const volatile uint8_t diag_cfg[24];
         if (diag_cfg[10]) g_metrics_on = 1;
     }
 }
@@ -2477,6 +2478,7 @@ static void portal_to_procgen(void) {
     }
     if (g_next_seed_set) { g_procgen_seed = g_next_seed; g_next_seed_set = 0; }
     else g_procgen_seed = SHARED_UC->frame_count * 1000003u + (uint32_t)player.x;
+    if (diag_cfg[14]) g_procgen_seed = 0x1234567u;   /* benchmark: fixed map */
     if (!g_map_pregen) procgen_run(g_procgen_seed);   /* corridor pre-generated */
     g_map_pregen = 0;
     player.x = FX(16.5); player.y = FX(28.5); player.angle = 192;
@@ -3145,6 +3147,7 @@ int m_main(void) {
     if (items[cur].kind == IT_PROC) {
         g_custom_current = -1;
         g_procgen_seed = (uint32_t)frame * 1000003u + (uint32_t)player.x;
+        if (diag_cfg[14]) g_procgen_seed = 0x1234567u;   /* benchmark: fixed map */
         /* Attract's zero-input path makes frame and player.x constants, so
          * every power-on would demo the same first level. The free-running
          * timer's low bits at this instant are the one thing the hardware
@@ -3184,6 +3187,14 @@ int m_main(void) {
             } else
                 pad = raycast_attract_pad();
         }
+        /* diag_cfg[14]: benchmark. Pinning the RENDER pose was not enough --
+         * the autopilot kept walking the real player underneath it, so the
+         * level advanced and the scene differed between builds (wall cover
+         * drifted 9% -> 13% and H moved 33ms, which reads exactly like a
+         * regression). Freeze the world here, AFTER the menu has launched a
+         * level and the walk-in crawl has finished, so the benchmark is a
+         * real in-level scene that is identical in every build. */
+        if (diag_cfg[14] && g_crawl == 0) pad = 0;
 
         menu_update(pad);
         raycast_glass_sample();   /* game-on-glass: drink the COMM broadcast */

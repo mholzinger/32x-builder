@@ -378,6 +378,27 @@ typedef struct {
      * CMD_HALF ack, which left the tail phase unmeasured on this CPU (the
      * headless flip-trace found ~19ms of primary wait here, 2026-09-24). */
     volatile uint16_t secondary_tail_ticks;
+    /* DISPATCH LATENESS (secondary's own clock, so no cross-CPU FRT offset
+     * problem): FRT ticks between the poll that saw a command and the poll
+     * before it. That gap is the upper bound on how long the command sat
+     * unnoticed, because it could have landed the instant after the previous
+     * look. The idle loop services audio before re-reading COMM4, and
+     * amb_audio_idle may decode a whole 20ms Speex frame, so this is where a
+     * dispatch stall would hide — and the primary pays it at the barrier.
+     * _last is the most recent, _max the worst since boot. */
+    volatile uint16_t sec_dispatch_late;
+    volatile uint16_t sec_dispatch_late_max;
+    volatile uint16_t sec_dispatch_n;      /* dispatches seen */
+    volatile uint16_t sec_dispatch_n_late; /* ... of those, >1000 ticks (5.6ms) late */
+    /* Audio-service cost on the secondary, FRT ticks. Deltas above a sane
+     * bound are DISCARDED, not clamped: the 16-bit FRT wraps every ~364ms and
+     * one wrapped read poisons a max forever (it read 65282 = "365ms" before
+     * this filter). Sums are u32 with a count so the average is honest. */
+    volatile uint16_t sec_decode_max;      /* worst amb_audio_idle() visit */
+    volatile uint16_t sec_pump_max;        /* worst amb_pump() visit */
+    volatile uint32_t sec_decode_sum;
+    volatile uint16_t sec_decode_n;
+    volatile uint16_t sec_half_overhead; /* pumps + purge inside CMD_HALF */
 } shared_t;
 
 #define LIGHTING_FLICKER  0x01   /* per-panel random brightness rolls */

@@ -35,8 +35,8 @@
  *   [10] metrics HUD up from boot, so a run is readable over SSH with no pad.
  * volatile so each gate is a real ROM read, not a folded constant. Ships zeroed;
  * a patched ROM is a lab instrument and is never released. */
-const volatile uint8_t diag_cfg[16] = {'D','I','A','G','C','F','G','1',
-                                       0,0,0,0, 0,0,0,0};
+const volatile uint8_t diag_cfg[24] = {'D','I','A','G','C','F','G','1',
+                                       0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0};
 
 /* Player spawn — south end of the col-16 spine corridor in the
  * hand-tuned 32x32 Backrooms map. Walls flank tightly at cols 15/17
@@ -10519,6 +10519,11 @@ void raycast_render(void) {
         eff_hr = 0;
     } else {
         uint8_t mode = SHARED_UC->wall_res_mode;
+        /* diag_cfg[13]: force a WALLS mode for headless benchmarking, encoded
+         * as mode+1 so that FULL (mode 0) is actually reachable -- a plain
+         * value made 0 mean "no override" and silently benchmarked the
+         * default instead, which read as "half-res buys nothing". */
+        if (diag_cfg[13]) mode = (uint8_t)(diag_cfg[13] - 1);
         if      (mode == 0) eff_hr = 0;
         else if (mode == 1) eff_hr = 1;
         else if (mode == 3) eff_hr = 0;   /* SERIAL diagnostic: full res */
@@ -10609,6 +10614,13 @@ void raycast_render(void) {
             dissolve_out = dissolve_ctr;
         }
     }
+    /* diag_cfg[15]: ALSO halve the row axis whenever the column axis is
+     * halved, whatever picked the column resolution. The two axes are
+     * complementary and the engine has never combined them: on a pinned
+     * in-level scene, half-columns takes walls 29.9->17.5ms and leaves
+     * clear/carpet alone, while VERT takes clear 11.7->5.9 and carpet
+     * 11.3->5.6 and barely touches walls. */
+    if (diag_cfg[15] && eff_hr >= 1) vert = 1;
     SHARED_UC->wall_halfres = (uint8_t)eff_hr;
     SHARED_UC->wall_vert    = (uint8_t)vert;
     SHARED_UC->wall_lod     = (uint8_t)lod;
@@ -10637,6 +10649,18 @@ void raycast_render(void) {
     SHARED_UC->player.x     = player.x;
     SHARED_UC->player.y     = player.y;
     SHARED_UC->player.angle = player.angle;
+    /* diag_cfg[14]: BENCHMARK POSE. Attract walks diverge between binaries
+     * (the procgen seed mixes in the FRT), so cross-build delivery numbers
+     * are meaningless -- a "+22%" measured that way was two different levels.
+     * Pinning the camera here, at the one point both CPUs read from, makes H
+     * and every pass counter comparable across builds. 1 = standing,
+     * 2 = reports walking too, which arms the motion-gated resolution paths. */
+    if (diag_cfg[14]) {
+        SHARED_UC->player.x     = FX(16.5);
+        SHARED_UC->player.y     = FX(28.5);
+        SHARED_UC->player.angle = 192;
+        if (diag_cfg[14] == 2) { SHARED_UC->is_walking = 1; SHARED_UC->is_turning = 1; }
+    }
     SHARED_UC->is_walking   = is_walking;   /* gates carpet footsteps in pump */
     SHARED_UC->is_running   = is_running;   /* pump plays them faster when sprinting */
 
@@ -10793,7 +10817,7 @@ void raycast_render(void) {
      * settles where the whole barrier-to-barrier blocks match. */
     int sprite_split = raycast_sprite_split(split);
     if (sprite_split < 0) {
-        extern const volatile uint8_t diag_cfg[16];
+        extern const volatile uint8_t diag_cfg[24];
         static int tail_split = SCREEN_W / 2;
         if (ultra_twin) {
             sprite_split = split;                    /* twin reuses the partner frame */

@@ -7069,7 +7069,12 @@ RAMTEXT void raycast_draw_ceiling_grid(int col_start, int col_end) {
     fx_t prev_wyL_s = 0;
     int  has_prev   = 0;
 
-    for (int y = 0; y < horizon_y && y < SCREEN_H; y++) {
+    /* VERT: odd rows are never displayed (the line table maps every
+     * row-pair to the even one), so drawing them is pure waste. The
+     * clear, carpet and wall passes already skip them; this one did
+     * not. (ceiling grid) */
+    const int yst = SHARED_UC->wall_vert ? 2 : 1;
+    for (int y = 0; y < horizon_y && y < SCREEN_H; y += yst) {
         int p = horizon_y - y;
         /* rowDist always positive; DIVU is ~3× faster than software. */
         fx_t rowDist = (fx_t)divu_u32((uint32_t)((fx_t)focal_const << FX_SHIFT),
@@ -7291,7 +7296,12 @@ RAMTEXT static void raycast_draw_low_ceiling(int col_start, int col_end, int sla
         wd[c] = w16;
     }
 
-    for (int y = 0; y < horizon_y && y < SCREEN_H; y++) {
+    /* VERT: odd rows are never displayed (the line table maps every
+     * row-pair to the even one), so drawing them is pure waste. The
+     * clear, carpet and wall passes already skip them; this one did
+     * not. (low-ceiling slab) */
+    const int yst = SHARED_UC->wall_vert ? 2 : 1;
+    for (int y = 0; y < horizon_y && y < SCREEN_H; y += yst) {
         int prow = horizon_y - y;
         if (prow <= 0) continue;
         fx_t rowDist = (fx_t)divu_u32((uint32_t)((fx_t)focal << FX_SHIFT),

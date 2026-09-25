@@ -904,7 +904,12 @@ void swapBuffers(void) {
      * Votes: ready by tick target-2 (raw < target-1) could have displayed
      * target-1, that's the step-down; raw >= target displays target+1+,
      * that's the overrun. */
-    if (SHARED_UC->pace_on && g_pace_scope && !menu_is_active()) {
+    /* diag_cfg[18]: bypass the pacing governor for benchmarking. The hold
+     * pins every in-level frame to pace_target vblanks, so a render that got
+     * 24% faster still delivers at exactly the same rate until the governor
+     * steps down (PACE_DOWN_RUN frames later). Measuring a render change
+     * through the governor reads as "no effect". */
+    if (SHARED_UC->pace_on && g_pace_scope && !menu_is_active() && !diag_cfg[18]) {
         uint16_t raw = (uint16_t)((uint16_t)(MARS_SYS_COMM12 >> 16)
                                 - (uint16_t)(lastTick >> 16));
         int vote = SHARED_UC->is_walking != 0;

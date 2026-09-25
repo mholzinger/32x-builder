@@ -10487,6 +10487,19 @@ RAMTEXT void raycast_clear_half(int col_start, int col_end) {
 
 void raycast_render(void) {
     uint16_t prof_start = prof_frt_read();
+    /* diag_cfg[14]==2: the benchmark freezes input, so the stillness ratchet
+     * would correctly ratchet to FULL and the motion-gated resolution paths
+     * would never arm. Claim motion HERE, before the resolution decision
+     * reads it -- asserting it later (at the pose publish) was too late and
+     * made the shipping AUTO path measure as if it never engaged. */
+    if (diag_cfg[14] == 2) {
+        /* is_walking is a file static derived from real player movement, and
+         * the benchmark freezes input, so it reads 0 and the stillness
+         * ratchet pins FULL. Set the static itself, not just the shared
+         * mirror, or the AUTO path measures as though it never engaged. */
+        is_walking = 1;
+        SHARED_UC->is_walking = 1; SHARED_UC->is_turning = 1;
+    }
     /* Re-asserted by draw_panel_face if this frame paints live tube noise;
      * the ULTRA park reads it after the render to decide whether parking
      * would freeze something that is supposed to move. */
@@ -10624,13 +10637,24 @@ void raycast_render(void) {
             dissolve_out = dissolve_ctr;
         }
     }
-    /* diag_cfg[15]: ALSO halve the row axis whenever the column axis is
-     * halved, whatever picked the column resolution. The two axes are
-     * complementary and the engine has never combined them: on a pinned
-     * in-level scene, half-columns takes walls 29.9->17.5ms and leaves
-     * clear/carpet alone, while VERT takes clear 11.7->5.9 and carpet
-     * 11.3->5.6 and barely touches walls. */
-    if (diag_cfg[15] && eff_hr >= 1) vert = 1;
+    /* HALF RESOLUTION MEANS HALF ON BOTH AXES. The two axes are
+     * complementary and were never combined until 2026-09-25: halving
+     * COLUMNS cuts the wall pass (54.0 -> 31.7ms on a pinned scene) and
+     * cannot touch clear/carpet/ceiling, which are bound by ROWS; halving
+     * rows cuts those three (clear 11.7 -> 5.9, carpet 22.2 -> 11.3) and
+     * barely moves walls. Together, on the identical scene, the ungoverned
+     * frame went 81.4ms -> 64.3ms, 12.3 -> 15.6 fps, crossing from the
+     * 5-vblank delivery bucket into the 4-vblank one. MiSTer: F:10 -> F:12.
+     *
+     * A computed sample now covers a 2x2 block. That is the SAME sample
+     * count as the QUARTER-columns mode dropped by the 2026-08-06 A/B
+     * (80x224 == 160x112), but square instead of a 4x1 smear, and worth far
+     * more: quarter-columns measured 47.0ms against half-columns' 46.9ms,
+     * no gain at all, because past 160 columns what remains is per-column
+     * setup plus the row-bound passes no column reduction ever reaches.
+     *
+     * diag_cfg[15] disables it, for A/B against the old behaviour. */
+    if (eff_hr >= 1 && !diag_cfg[15]) vert = 1;
     SHARED_UC->wall_halfres = (uint8_t)eff_hr;
     SHARED_UC->wall_vert    = (uint8_t)vert;
     SHARED_UC->wall_lod     = (uint8_t)lod;
@@ -10669,7 +10693,7 @@ void raycast_render(void) {
         SHARED_UC->player.x     = FX(16.5);
         SHARED_UC->player.y     = FX(28.5);
         SHARED_UC->player.angle = 192;
-        if (diag_cfg[14] == 2) { SHARED_UC->is_walking = 1; SHARED_UC->is_turning = 1; }
+
     }
     SHARED_UC->is_walking   = is_walking;   /* gates carpet footsteps in pump */
     SHARED_UC->is_running   = is_running;   /* pump plays them faster when sprinting */

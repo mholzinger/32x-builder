@@ -3,6 +3,10 @@
 - The renderer was spending frames on detail that motion hides, and only on one axis. Halving both axes while moving costs a fraction of what it buys.
 - The moving-half, standing-full snap had quietly stopped happening in July. It is back.
 
+## Fixes
+
+- The frame clock had stopped ticking in a level, which froze every animation keyed to it: the CRT static on the monitors, the monitor bloom when one powers on, the menu selection blink, the fluorescent light flicker and the distant-wall strobe. They run again.
+
 ## Speed
 
 - While you are moving, the renderer now halves both axes instead of only columns: one computed sample covers a 2x2 block. Roughly 20 to 25 percent faster in motion, and on lighter scenes that is enough to cross from 12 fps into 15.

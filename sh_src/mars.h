@@ -104,7 +104,13 @@ typedef volatile signed long int vint32;
 
 #define SH2_CCTL_CP         0x10
 #define SH2_CCTL_TW         0x08
+#define SH2_CCTL_OD         0x04   /* DATA replacement disable (SH7604_pkg.sv:96-100) */
+#define SH2_CCTL_ID         0x02   /* INSTRUCTION replacement disable */
 #define SH2_CCTL_CE         0x01
+
+/* Cache control register — per-CPU on-chip, R/W. OD/ID stop read-misses
+ * from ALLOCATING lines; resident lines still hit (CACHE.sv:499). */
+#define SH2_CCR             (*(volatile uint8_t *)0xFFFFFE92)
 
 #define SH2_FRT_TIER        (*(volatile uint8_t *)0xFFFFFE10)
 #define SH2_FRT_FTCSR       (*(volatile uint8_t *)0xFFFFFE11)

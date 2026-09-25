@@ -373,6 +373,11 @@ typedef struct {
      * parallel. Written by the primary before it raises CMD_TAIL; the secondary
      * reads it for raycast_draw_sprites (the tail/slab pass still uses split_col). */
     volatile uint16_t sprite_split;
+    /* CMD_TAIL span on the secondary (slab+bulkheads+sprites for its half),
+     * same FRT prescale as secondary_render_ticks — that field stops at the
+     * CMD_HALF ack, which left the tail phase unmeasured on this CPU (the
+     * headless flip-trace found ~19ms of primary wait here, 2026-09-24). */
+    volatile uint16_t secondary_tail_ticks;
 } shared_t;
 
 #define LIGHTING_FLICKER  0x01   /* per-panel random brightness rolls */

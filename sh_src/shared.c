@@ -14,10 +14,17 @@ shared_t shared = {
     .step_volume = 140,
     .lighting_flags = LIGHTING_FLICKER | LIGHTING_STROBE | LIGHTING_SHIMMER,
     .wall_halfres = 1,    /* effective flag (primary recomputes each frame) */
-    .wall_res_mode = 6,   /* default AUTO/LOD, now floored at HALF: quarter is nerfed
-                           * out of both AUTO and LOD (2026-08-06 A/B — it tied half
-                           * on fps while looking worse). Moving/heavy = half, the
-                           * stillness ratchet still lifts to full when you stop. */
+    .wall_res_mode = 2,   /* default AUTO/SCALE. Moving/heavy = the WHOLE frame at
+                           * half, and the stillness ratchet lifts it to full ~2
+                           * frames after you stop — the motion smoothness Mike
+                           * asked for back (2026-09-24). LOD (6) had been the
+                           * default since e113a86 (2026-07-24) and has NO
+                           * frame-time response at all: eff_hr is pinned to 0 and
+                           * only the near band pixel-doubles while walking, so the
+                           * moving-half/standing-full snap was silently gone. The
+                           * old comment here still described SCALE, which is why
+                           * nobody caught it. Quarter stays nerfed out of both
+                           * (2026-08-06 A/B — tied half on fps, looked worse). */
     .wall_vert = 0,       /* vertical half-res off until proven (opt-in VERT mode) */
     .wall_seam_smooth = 1,/* SMOOTH silhouette by default (auto-quarter needs it); HARD is the A/B */
     .wall_dissolve = 0,   /* transient; driven by the AUTO half→full ramp */

@@ -19,6 +19,25 @@
  * mars.ld. No behavior change — pure instruction-fetch speedup. */
 #define RAMTEXT __attribute__((section(".ramtext")))
 
+/* Diagnostic config block. Lives in ROM .rodata behind a findable magic so a
+ * measurement run is ONE binary plus a one-byte patch — no recompile, no code
+ * layout shift, which is the only way an SH-2 A/B is trustworthy (layout noise
+ * alone moves numbers 5-10%). This is what made the 2026-09-24 hardware
+ * session possible; see devdoc/SH2-CONTENTION-AND-FRAME-ACCOUNTING.md.
+ *   [8]  contention probe: the secondary skips its half and holds the bus one
+ *        way for a fixed window — 1 = park (no bus), 2 = FB word stores,
+ *        3 = SDRAM line fills. Attributes cross-CPU contention to a port.
+ *   [9]  pin the column split at 160. REQUIRED for any per-pass A/B: the
+ *        adaptive balancer reacts to the partner's time, so anything that
+ *        changes what the secondary does silently changes the primary's
+ *        workload (it manufactured a textbook fake 44% result before this
+ *        byte existed).
+ *   [10] metrics HUD up from boot, so a run is readable over SSH with no pad.
+ * volatile so each gate is a real ROM read, not a folded constant. Ships zeroed;
+ * a patched ROM is a lab instrument and is never released. */
+const volatile uint8_t diag_cfg[16] = {'D','I','A','G','C','F','G','1',
+                                       0,0,0,0, 0,0,0,0};
+
 /* Player spawn — south end of the col-16 spine corridor in the
  * hand-tuned 32x32 Backrooms map. Walls flank tightly at cols 15/17
  * for the iconic "infinite hallway" first frame. The corridor opens
@@ -6961,7 +6980,7 @@ RAMTEXT int raycast_sprite_split(int wall_split) {
         fx_t lat = FX_MUL(inv_det, FX_MUL(dirY, ddx) - FX_MUL(dirX, ddy));
         best_cx = (SCREEN_W >> 1) + (int)(((int32_t)(SCREEN_W >> 1) * FX_MUL(lat, inv_d)) >> FX_SHIFT);
     }
-    if (best_cx < 0) return wall_split;
+    if (best_cx < 0) return -1;   /* no screen-filler: caller picks the split */
     if (best_cx < 16) best_cx = 16; else if (best_cx > SCREEN_W - 16) best_cx = SCREEN_W - 16;
     return best_cx & ~3;
 }
@@ -7103,7 +7122,11 @@ RAMTEXT void raycast_draw_ceiling_grid(int col_start, int col_end) {
                 }
             }
         } else if (has_prev && FX_INT(wxL_s) != FX_INT(prev_wxL_s)) {
-            for (int col = col_start; col < col_end; col++) row_p[col] = grid_c;
+            /* Rung row: flat full-width fill — word stores halve the uncached
+             * FB transactions (col_start/end are 4-aligned via the splits). */
+            uint16_t gw = WDUP(grid_c);
+            for (int col = col_start; col < col_end; col += 2)
+                *(uint16_t *)(row_p + col) = gw;
         }
 
         /* World-Y grid lines: same near-cardinal fix as X — band on small |dY|
@@ -7122,7 +7145,9 @@ RAMTEXT void raycast_draw_ceiling_grid(int col_start, int col_end) {
                 }
             }
         } else if (has_prev && FX_INT(wyL_s) != FX_INT(prev_wyL_s)) {
-            for (int col = col_start; col < col_end; col++) row_p[col] = grid_c;
+            uint16_t gw = WDUP(grid_c);   /* see the X-rung fill above */
+            for (int col = col_start; col < col_end; col += 2)
+                *(uint16_t *)(row_p + col) = gw;
         }
 
         /* DARK ROOM ceiling. The base ceiling colour comes from the CLEAR pass
@@ -7983,7 +8008,12 @@ RAMTEXT void raycast_draw_carpet(int col_start, int col_end) {
      * means fog-skipped far rows skip two at a time. */
     #define CARPET_VLOD_SHADE 4
     const int vstep = SHARED_UC->wall_vert ? 2 : 1;
-    const int vlod  = SHARED_UC->carpet_vlod;
+    /* Cfg byte [13]: when the heavy-frame half-res response is active
+     * (wall_halfres set by AUTO or the LOD-mode response), pull the
+     * CARPETLOD row-halving in with it — the carpet's cost is per-ROW
+     * setup (DIVU + muls), which column half-res cannot touch. */
+    const int vlod  = SHARED_UC->carpet_vlod
+                   || (diag_cfg[13] && SHARED_UC->wall_halfres);
     int cov_lo, cov_hi;
     covered_rows(col_start, col_end, &cov_lo, &cov_hi);
     int cystep = vstep;
@@ -10344,6 +10374,7 @@ RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
  * spent spinning on the secondary-done sync after that. */
 volatile uint16_t prof_primary_idle_ticks = 0;
 volatile uint16_t prof_primary_half_ticks = 0;
+volatile uint16_t prof_render_span = 0;   /* whole raycast_render, entry to exit */
 /* Per-pass FRT breakdown of the primary's half (clear/ceiling/carpet/walls). */
 volatile uint16_t prof_pass_clear = 0, prof_pass_ceil = 0,
                   prof_pass_carpet = 0, prof_pass_walls = 0;
@@ -10643,9 +10674,19 @@ void raycast_render(void) {
         int sum = h + s;
         if (sum > 500) {                                 /* valid FRT reading */
             int shift = ((h - s) * SCREEN_W) / (sum << 1);  /* full balancing step */
-            shift >>= 1;                                 /* damp to avoid oscillation */
-            if      (shift >  16) shift =  16;
-            else if (shift < -16) shift = -16;
+            /* Barrier-lag experiment (cfg byte [11]): the damped +/-16 nudge
+             * tracks a walking scene too slowly — the accounting harness
+             * measured the primary idling up to 14ms at this barrier in
+             * motion while converged frames idle ~0. Above ~12.5% imbalance
+             * take the FULL balancing step (clamp 64); the damped crawl
+             * remains the small-signal behavior, so stability at equilibrium
+             * is unchanged. */
+            int lim = 16;
+            { int d = h - s; if (d < 0) d = -d;
+              if (d * 8 > sum) lim = 64;                 /* >12.5% out: full step */
+              else shift >>= 1; }                        /* near balance: damp */
+            if      (shift >  lim) shift =  lim;
+            else if (shift < -lim) shift = -lim;
             split -= shift;                              /* h>s: primary overloaded -> shrink */
             /* Clamp was [64, 256] — but the pinned-split matrix measured a
              * ~7x per-column cost spread across the screen at counter poses
@@ -10658,6 +10699,11 @@ void raycast_render(void) {
             else if (split > SCREEN_W - 16) split = SCREEN_W - 16;
             split &= ~3;                                 /* clear pass writes 4-px words */
         }
+        /* Measurement byte [17]: pin the split so a probe run draws exactly
+         * the same columns whatever the secondary is doing — the adaptive
+         * controller otherwise rebalances against the probe's synthetic
+         * time and silently changes the primary's workload. */
+        if (diag_cfg[9]) split = SCREEN_W / 2;
         SHARED_UC->split_col = (uint16_t)split;          /* secondary reads this */
         prof_split_col = (uint16_t)split;
     }
@@ -10736,7 +10782,43 @@ void raycast_render(void) {
      * standup is shared, not dumped on one cpu (write BEFORE raising CMD_TAIL,
      * like split_col, so the secondary reads a settled value). The tail/slab
      * pass below still uses the wall split. */
+    /* Tail split. The geometric pick shares one screen-filling standup
+     * between the CPUs and still wins when it fires. Otherwise the split
+     * used to inherit the WALL split — which balances wall cost, not the
+     * tail's lights+standups (measured 26ms primary vs 6ms secondary at
+     * attract-walk, 2026-09-24). Uses the same feedback
+     * controller as the wall split above: equalize last frame's primary
+     * tail brackets against secondary_tail_ticks. Both sides' slab shares
+     * ride the wall split and sit in both totals, so the controller
+     * settles where the whole barrier-to-barrier blocks match. */
     int sprite_split = raycast_sprite_split(split);
+    if (sprite_split < 0) {
+        extern const volatile uint8_t diag_cfg[16];
+        static int tail_split = SCREEN_W / 2;
+        if (ultra_twin) {
+            sprite_split = split;                    /* twin reuses the partner frame */
+        } else {
+            int p = (int)prof_pass_slab + (int)prof_pass_lights
+                  + (int)prof_pass_sprite;           /* last frame, primary  */
+            int s = (int)SHARED_UC->secondary_tail_ticks;
+            int sum = p + s;
+            if (sum > 200) {                         /* valid FRT reading */
+                int shift = ((p - s) * SCREEN_W) / (sum << 1);
+                int lim = 16;                        /* same gain law as the
+                                                      * wall controller above */
+                { int d2 = p - s; if (d2 < 0) d2 = -d2;
+                  if (d2 * 8 > sum) lim = 64;
+                  else shift >>= 1; }
+                if      (shift >  lim) shift =  lim;
+                else if (shift < -lim) shift = -lim;
+                tail_split -= shift;
+                if      (tail_split < 16)            tail_split = 16;
+                else if (tail_split > SCREEN_W - 16) tail_split = SCREEN_W - 16;
+                tail_split &= ~3;
+            }
+            sprite_split = tail_split;
+        }
+    }
     SHARED_UC->sprite_split = (uint16_t)sprite_split;
 
     uint16_t ps = prof_frt_read();
@@ -10788,4 +10870,8 @@ void raycast_render(void) {
         if (src >= SCREEN_H) src = SCREEN_H - 1;
         line_table[i] = (uint16_t)(src * 160 + 0x100);
     }
+    /* Whole-function span for the frame-accounting harness: everything
+     * raycast_render does, bracketed passes and the unbracketed seams
+     * (prologue, sprite_split scan, barriers, line table) alike. */
+    prof_render_span = (uint16_t)(prof_frt_read() - prof_start);
 }

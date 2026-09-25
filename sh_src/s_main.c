@@ -90,6 +90,51 @@ void s_main(void) {
              * with primary's [0, split_col), so no mid-frame sync. */
             int split = (int)SHARED_UC->split_col;
             uint16_t t0 = secondary_frt_read();
+            {
+                /* CONTENTION PROBE (diag_cfg[8], diagnostic, never ships set).
+                 * The cross-CPU tax measured on MiSTer (21% of parallel
+                 * render, SERIAL A/B) has no attribution: FB port, SDRAM
+                 * line fills, or both. So instead of rendering this half,
+                 * hold the bus ONE known way for a fixed window while the
+                 * primary renders — its per-pass brackets then read "my
+                 * work under load type N", and differencing the types names
+                 * the port. 1 = park (FRT only, no bus at all), 2 = FB word
+                 * stores, 3 = SDRAM line fills. The secondary's half goes
+                 * stale and audio stalls for the duration: diagnostic only,
+                 * read the numbers, never judge the picture. */
+                extern const volatile uint8_t diag_cfg[16];
+                uint8_t probe = diag_cfg[8];
+                if (probe) {
+                    const uint16_t WINDOW = 12000;   /* ~67ms at Phi/128 */
+                    if (probe == 2) {
+                        volatile uint16_t *fbw = (volatile uint16_t *)
+                            ((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
+                        while ((uint16_t)(secondary_frt_read() - t0) < WINDOW) {
+                            for (int y = 0; y < SCREEN_H; y++) {
+                                volatile uint16_t *p =
+                                    fbw + ((y * SCREEN_W + split) >> 1);
+                                for (int x = split; x < SCREEN_W; x += 2)
+                                    *p++ = 0x0101;
+                            }
+                        }
+                    } else if (probe == 3) {
+                        /* 16-byte stride over 64KB of SDRAM = one line fill
+                         * per read, far past the 4KB cache. Reads only. */
+                        volatile const uint32_t *sd =
+                            (volatile const uint32_t *)0x06000000;
+                        uint32_t sink = 0;
+                        while ((uint16_t)(secondary_frt_read() - t0) < WINDOW) {
+                            for (int i = 0; i < 16384; i += 4) sink += sd[i];
+                        }
+                        SHARED_UC->secondary_tail_ticks = (uint16_t)sink;
+                    } else {
+                        while ((uint16_t)(secondary_frt_read() - t0) < WINDOW) { }
+                    }
+                    SHARED_UC->secondary_render_ticks =
+                        (uint16_t)(secondary_frt_read() - t0);
+                    break;
+                }
+            }
             /* amb_pump() checkpoints between passes: a 64 ms audio buffer
              * can drain past its half-way point inside ONE dense render
              * chunk, so waiting for the idle loop risked replaying stale
@@ -113,6 +158,7 @@ void s_main(void) {
              * committed for all columns; we touch only [split, SCREEN_W), disjoint
              * from the primary's [0, split). Purge the crawlspace geometry first
              * so we don't draw stale caps from a previous level. */
+            uint16_t tail_t0 = secondary_frt_read();
             int split = (int)SHARED_UC->split_col;
             amb_pump();   /* audio checkpoint — see CMD_HALF */
             raycast_purge_lowceil_cache();
@@ -125,6 +171,8 @@ void s_main(void) {
              * on one cpu — disjoint [sprite_split, W) from the primary's half. */
             int sprite_split = (int)SHARED_UC->sprite_split;
             raycast_draw_sprites(sprite_split, SCREEN_W);
+            SHARED_UC->secondary_tail_ticks =
+                (uint16_t)(secondary_frt_read() - tail_t0);
             break;
         }
         case MARS_CMD_BOX: {

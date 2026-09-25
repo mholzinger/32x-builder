@@ -74,7 +74,7 @@ static int      menu_row    = 0;   /* 0 = tab row, 1..N = content row */
 static uint16_t menu_prev_pad = 0;
 static int      pal_sel     = 2;   /* COLOR tab: selected surface (0=WALL..3=LIGHT); default CEIL */
 static const char *const pal_surf_names[4] = { " WALL", "FLOOR", " CEIL", "LIGHT" };
-static int      auto_lod    = 1;   /* AUTO adaptive style: 0 = SCALE, 1 = LOD (default) */
+static int      auto_lod    = 0;   /* AUTO adaptive style: 0 = SCALE (default), 1 = LOD */
 
 /* Friendly WALLS resolution category: 0=FULL 1=HALF 2=LOW 3=AUTO. wall_res_mode
  * stays the render driver (0 FULL, 1 HALF, 4 LOW/quarter, 2 AUTO-scale, 6 AUTO-

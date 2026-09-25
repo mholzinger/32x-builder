@@ -273,8 +273,24 @@ extern volatile uint16_t prof_primary_half_ticks;  /* written by raycast_render 
  *   ID = prof_primary_idle_ticks, the primary spinning on the secondary barrier
  * Sampled one frame BEHIND what's on screen (prof_sample_and_draw runs inside
  * the HU bracket), which is fine for a steady-state read. */
-static uint16_t prof_post_hud = 0;
-static uint16_t prof_post_swap = 0;
+/* Globalized 2026-09-24 (were statics): dumpable via .lst for the headless
+ * harness, still fed by the same in-loop brackets. */
+volatile uint16_t prof_post_hud = 0;
+volatile uint16_t prof_post_swap = 0;
+/* Full frame accounting, unconditional in EVERY loop that flips:
+ *   prof_frame_total = swapBuffers-entry to swapBuffers-entry (the true
+ *                      frame period, no HUD needed; wraps above 364ms)
+ *   prof_swap_span   = inside swapBuffers (tick wait + shimmer + flip)
+ *   prof_frame_logic = swap-return -> render-call (game-loop only)
+ *   prof_loop_id     = which loop flipped last: 1 in-level game loop,
+ *                      2 start-list, 3 lobby-behind, 0 anything else
+ * total - logic - H(render) - tail - post_hud - swap_span = the unnamed
+ * remainder this instrument exists to shrink to zero. */
+volatile uint16_t prof_frame_total = 0, prof_swap_span = 0;
+volatile uint16_t prof_frame_logic = 0;
+volatile uint8_t  prof_loop_id = 0;
+static uint16_t prof_swap_prev = 0;
+static uint16_t prof_logic_t0 = 0;
 extern volatile uint16_t prof_primary_idle_ticks;  /* written by raycast_render */
 
 static inline uint16_t prof_read_frt(void) {
@@ -293,6 +309,22 @@ static inline void prof_init(void) {
                           * now; ~5.6us/tick is ample for pass-level metrics. */
     SH2_FRT_FTCSR = 0;     /* clear OVF/OCF; free-running */
     prof_prev_frt = prof_read_frt();
+    {   /* diag_cfg[10]: metrics HUD up from boot, so a measurement run is
+         * readable over SSH (deploy, launch, screenshot) with no pad input
+         * at all. The HUD draw sits OUTSIDE the render brackets, so it
+         * cannot perturb H or the pass counters it is there to read. */
+        extern const volatile uint8_t diag_cfg[16];
+        if (diag_cfg[10]) g_metrics_on = 1;
+    }
+}
+
+/* Universal render mark: every frame loop calls this right before
+ * raycast_render — logic = time since the last swapBuffers finished,
+ * whichever loop is running. prof_logic_t0 is set at swapBuffers exit. */
+static inline void prof_mark_render(uint8_t id) {
+    uint16_t n = prof_read_frt();
+    prof_frame_logic = (uint16_t)(n - prof_logic_t0);
+    prof_loop_id = id;
 }
 
 static void prof_sample_and_draw(uint8_t *fb) {
@@ -850,6 +882,11 @@ int g_pace_scope = 0;               /* 1 = in-level gameplay (game loop + walk-i
                                      * (true ~3.5 vbl) should lock 4, not 5 */
 
 void swapBuffers(void) {
+    /* Frame accounting: entry-to-entry is the true frame period whichever
+     * loop is flipping — see the prof_frame_total block at the top. */
+    uint16_t prof_t0 = prof_read_frt();
+    prof_frame_total = (uint16_t)(prof_t0 - prof_swap_prev);
+    prof_swap_prev = prof_t0;
     /* Frame pacing: hold EVERY in-level frame to pace_target vblanks so the
      * eye gets one steady rate instead of a 3↔4 flap. First cut paced only
      * walking frames — and the capture showed that just moves the flap to
@@ -924,6 +961,11 @@ void swapBuffers(void) {
         r->cy  = (uint8_t)FX_INT(player.y);
     }
     lastTick = MARS_SYS_COMM12;
+    {
+        uint16_t pe = prof_read_frt();
+        prof_swap_span = (uint16_t)(pe - prof_t0);
+        prof_logic_t0 = pe;
+    }
 }
 
 /* One brightness-fade step with its own vblank flip (bypasses raycast_shimmer,
@@ -931,6 +973,7 @@ void swapBuffers(void) {
  * through and the door portal. */
 static void fade_step(int lvl) {
     SHARED_UC->frame_count++;
+    prof_mark_render(4);
     raycast_render();
     BUS_WAIT(lastTick == MARS_SYS_COMM12);
     raycast_set_brightness(lvl);
@@ -1043,6 +1086,7 @@ static void menu_flip_out(int style, int NF) {
     const int HY  = PANE_Y + PANE_H;             /* bottom hinge (fall-forward) */
     for (int f = 1; f <= NF; f++) {
         SHARED_UC->frame_count++;
+        prof_mark_render(3);                            /* pane-transform loop */
         raycast_render();                            /* live lobby behind */
         uint8_t *fb = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
 
@@ -1140,6 +1184,7 @@ static void show_controls_screen(void) {
         prev = pad;
         if ((pressed & BTNS) && !(pad & SEGA_CTRL_MODE)) break;
         SHARED_UC->frame_count++;
+        prof_mark_render(5);
         raycast_render();
         uint8_t *fb = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
         font_draw_string(fb, (SCREEN_W - 13 * 8) / 2, 32, "BACKROOMS 32X", 49);
@@ -2594,6 +2639,7 @@ int m_main(void) {
         e += ((128 - e) >> 2) + 2; if (e > 128) e = 128;
         SHARED_UC->eye_h = (uint8_t)e;
         SHARED_UC->frame_count++;
+        prof_mark_render(6);
         raycast_render();
         swapBuffers();
     }
@@ -2859,6 +2905,7 @@ int m_main(void) {
             frame++;
 
             SHARED_UC->frame_count++;
+            prof_mark_render(7);
             raycast_render();                    /* stationary lobby view */
             uint8_t *fb_text = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
             /* Smoked-glass panel first, then the text over it. Fixed bounds
@@ -3010,6 +3057,7 @@ int m_main(void) {
             frame++;
 
             SHARED_UC->frame_count++;
+            prof_mark_render(2);                          /* start-list loop */
             raycast_render();                          /* live lobby behind */
             uint8_t *fb_text = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
             font_draw_string(fb_text, (SCREEN_W - 15 * 8) / 2, 36,
@@ -3075,6 +3123,7 @@ int m_main(void) {
                 (pcy + 1 < MAP_H && world_map[pcy + 1][pcx] == 2) ||
                 (pcy - 1 >= 0    && world_map[pcy - 1][pcx] == 2)) break;
             SHARED_UC->frame_count++;
+            prof_mark_render(8);
             raycast_render();
             uint8_t *fb_text = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
             if (g_metrics_on) { prof_sample_and_draw(fb_text); pos_draw(fb_text); }
@@ -3305,6 +3354,7 @@ int m_main(void) {
         /* Tick the shared frame counter before render so both CPUs
          * read the same value when computing the distant-wall strobe. */
         SHARED_UC->frame_count++;
+        prof_mark_render(1);
         raycast_render();
         /* Corridor set piece paints over the whole frame (the render above
          * still ran: it keeps both CPUs' pipeline and the audio pump fed). */
@@ -3321,7 +3371,8 @@ int m_main(void) {
         if (g_padtest_on) pad_test_draw(fb_text, pad);
         { uint16_t n = prof_read_frt(); prof_post_hud = (uint16_t)(n - t_post); t_post = n; }
         swapBuffers();
-        { uint16_t n = prof_read_frt(); prof_post_swap = (uint16_t)(n - t_post); }
+        { uint16_t n = prof_read_frt(); prof_post_swap = (uint16_t)(n - t_post);
+          prof_logic_t0 = n; }
 
         /* ── ULTRA REST PAIR (TESTING>ULTRA) ────────────────────────────────
          * The stillness ratchet already spends stationary frames on full res;
@@ -3402,6 +3453,7 @@ int m_main(void) {
                      * park holds one motionless frame; nothing can shimmer. */
                     g_ultra_parks++;
                     SHARED_UC->ultra_twin = 1;   /* pass A: frozen state, no jitter */
+                    prof_mark_render(9);
                     raycast_render();
                     uint8_t *fbu = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
                     /* Stash A above _end — the hero-overlay region plus the
@@ -3417,6 +3469,7 @@ int m_main(void) {
                     for (int i = 0; i < (SCREEN_W * SCREEN_H) / 4; i++)
                         ua_dst[i] = ua_src[i];
                     SHARED_UC->ultra_twin = 2;   /* pass B: frozen + half-column jitter */
+                    prof_mark_render(10);
                     raycast_render();
                     SHARED_UC->ultra_twin = 0;
                     /* Merge A into B, word-granular (a byte store of 0 would

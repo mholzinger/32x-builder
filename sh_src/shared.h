@@ -414,7 +414,22 @@ extern uint8_t g_metrics_on;
 
 /* Cache-through pointer to the shared struct. Use on BOTH CPUs for
  * every read and write of any shared field. */
-#define SHARED_UC ((shared_t *)((uintptr_t)&shared | 0x20000000))
+/* The uncached (cache-through) view of the shared block.
+ *
+ * The pointer is laundered through an empty asm so the compiler cannot fold
+ * it to a constant it then spills. It used to be a plain cast, and GCC
+ * spilled the folded constant into a stack slot that it ALSO used for an
+ * unrelated local -- so from the in-level game loop SHARED_UC read back as
+ * 0xFFFFFFFF and every write through it (frame_count among them) went into
+ * the void. That froze the frame clock, and with it the CRT static, the
+ * bloom timing, the menu blink, the light flicker and the wall strobe.
+ * Recomputing the address here costs an OR and defeats the spill. */
+static inline shared_t *shared_uc_ptr(void) {
+    uintptr_t b_ = (uintptr_t)&shared;
+    __asm__ __volatile__("" : "+r"(b_));
+    return (shared_t *)(b_ | 0x20000000);
+}
+#define SHARED_UC (shared_uc_ptr())
 
 #define SECONDARY_HEARTBEAT (SHARED_UC->secondary_heartbeat)
 

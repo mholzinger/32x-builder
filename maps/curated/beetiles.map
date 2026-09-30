@@ -86,6 +86,8 @@ chair  14.5,8.5 face=N
 chair  16.5,8.5 face=N
 chair  18.5,8.5 face=N
 door   31.5,31 face=N
+pvm    27.5,4.5 face=N
+desk   10.5,7.5 face=N
 
 [dark]
 17,17 -> 17,17

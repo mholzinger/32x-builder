@@ -580,7 +580,10 @@ window.RC = (function () {
                 : dec.face === 'W' ? 1 : -1;
     const dirX = Math.cos(pa), dirY = Math.sin(pa);
     const planeX = -dirY * 0.66, planeY = dirX * 0.66;
-    const eh = eyeH, B2 = B, P = A().palette, sl = SL();
+    /* B2 from the assets export — the `B` alias other draws use is local to
+     * their own functions; naming it here was a ReferenceError that killed
+     * the whole viewer the moment an exit hole entered the frame. */
+    const eh = eyeH, B2 = A().bases, P = A().palette, sl = SL();
     const wallIdx = s => P[B2.WALL_BASE + Math.max(0, Math.min(sl - 1, s))] || [0, 0, 0];
     for (let col = 0; col < W; col++) {
       const cam = 2 * col / W - 1;

@@ -246,6 +246,17 @@ typedef struct {
      * blend the two into an effective 640-wide antialiased image. Any input
      * breaks the park and the normal loop simply overwrites the pair. */
     volatile uint8_t ultra_enable;
+    /* Frame-pacing governor (TESTING>PACE). The engine is vblank-locked, so
+     * fps is quantized to 60/N — and the judder players feel is frames
+     * FLAPPING between adjacent buckets (baseline capture: 23% of frame
+     * pairs changed bucket, 20↔15fps). The governor holds every WALKING
+     * frame to a target bucket B (swapBuffers waits out the remainder) and
+     * adapts B slowly from the raw pre-hold time: ~45 walking frames under
+     * B-1 step it down, 3 consecutive overruns step it up. Standing frames
+     * neither pace nor vote — a static scene can't judder, and counting its
+     * slow full-res frames (stillness ratchet) would drag B up. Menus and
+     * lobby are never paced for the same reason (is_walking is false). */
+    volatile uint8_t pace_on;
     /* Nonzero while an ULTRA pass renders: 1 = pass A (no jitter), 2 = pass
      * B (every pass on both CPUs shifts sampling half a column). m_main
      * checkerboard-merges the two into ONE static frame — differences are
@@ -362,6 +373,32 @@ typedef struct {
      * parallel. Written by the primary before it raises CMD_TAIL; the secondary
      * reads it for raycast_draw_sprites (the tail/slab pass still uses split_col). */
     volatile uint16_t sprite_split;
+    /* CMD_TAIL span on the secondary (slab+bulkheads+sprites for its half),
+     * same FRT prescale as secondary_render_ticks — that field stops at the
+     * CMD_HALF ack, which left the tail phase unmeasured on this CPU (the
+     * headless flip-trace found ~19ms of primary wait here, 2026-09-24). */
+    volatile uint16_t secondary_tail_ticks;
+    /* DISPATCH LATENESS (secondary's own clock, so no cross-CPU FRT offset
+     * problem): FRT ticks between the poll that saw a command and the poll
+     * before it. That gap is the upper bound on how long the command sat
+     * unnoticed, because it could have landed the instant after the previous
+     * look. The idle loop services audio before re-reading COMM4, and
+     * amb_audio_idle may decode a whole 20ms Speex frame, so this is where a
+     * dispatch stall would hide — and the primary pays it at the barrier.
+     * _last is the most recent, _max the worst since boot. */
+    volatile uint16_t sec_dispatch_late;
+    volatile uint16_t sec_dispatch_late_max;
+    volatile uint16_t sec_dispatch_n;      /* dispatches seen */
+    volatile uint16_t sec_dispatch_n_late; /* ... of those, >1000 ticks (5.6ms) late */
+    /* Audio-service cost on the secondary, FRT ticks. Deltas above a sane
+     * bound are DISCARDED, not clamped: the 16-bit FRT wraps every ~364ms and
+     * one wrapped read poisons a max forever (it read 65282 = "365ms" before
+     * this filter). Sums are u32 with a count so the average is honest. */
+    volatile uint16_t sec_decode_max;      /* worst amb_audio_idle() visit */
+    volatile uint16_t sec_pump_max;        /* worst amb_pump() visit */
+    volatile uint32_t sec_decode_sum;
+    volatile uint16_t sec_decode_n;
+    volatile uint16_t sec_half_overhead; /* pumps + purge inside CMD_HALF */
 } shared_t;
 
 #define LIGHTING_FLICKER  0x01   /* per-panel random brightness rolls */
@@ -377,7 +414,22 @@ extern uint8_t g_metrics_on;
 
 /* Cache-through pointer to the shared struct. Use on BOTH CPUs for
  * every read and write of any shared field. */
-#define SHARED_UC ((shared_t *)((uintptr_t)&shared | 0x20000000))
+/* The uncached (cache-through) view of the shared block.
+ *
+ * The pointer is laundered through an empty asm so the compiler cannot fold
+ * it to a constant it then spills. It used to be a plain cast, and GCC
+ * spilled the folded constant into a stack slot that it ALSO used for an
+ * unrelated local -- so from the in-level game loop SHARED_UC read back as
+ * 0xFFFFFFFF and every write through it (frame_count among them) went into
+ * the void. That froze the frame clock, and with it the CRT static, the
+ * bloom timing, the menu blink, the light flicker and the wall strobe.
+ * Recomputing the address here costs an OR and defeats the spill. */
+static inline shared_t *shared_uc_ptr(void) {
+    uintptr_t b_ = (uintptr_t)&shared;
+    __asm__ __volatile__("" : "+r"(b_));
+    return (shared_t *)(b_ | 0x20000000);
+}
+#define SHARED_UC (shared_uc_ptr())
 
 #define SECONDARY_HEARTBEAT (SHARED_UC->secondary_heartbeat)
 

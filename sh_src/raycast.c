@@ -19,6 +19,25 @@
  * mars.ld. No behavior change — pure instruction-fetch speedup. */
 #define RAMTEXT __attribute__((section(".ramtext")))
 
+/* Diagnostic config block. Lives in ROM .rodata behind a findable magic so a
+ * measurement run is ONE binary plus a one-byte patch — no recompile, no code
+ * layout shift, which is the only way an SH-2 A/B is trustworthy (layout noise
+ * alone moves numbers 5-10%). This is what made the 2026-09-24 hardware
+ * session possible; see devdoc/SH2-CONTENTION-AND-FRAME-ACCOUNTING.md.
+ *   [8]  contention probe: the secondary skips its half and holds the bus one
+ *        way for a fixed window — 1 = park (no bus), 2 = FB word stores,
+ *        3 = SDRAM line fills. Attributes cross-CPU contention to a port.
+ *   [9]  pin the column split at 160. REQUIRED for any per-pass A/B: the
+ *        adaptive balancer reacts to the partner's time, so anything that
+ *        changes what the secondary does silently changes the primary's
+ *        workload (it manufactured a textbook fake 44% result before this
+ *        byte existed).
+ *   [10] metrics HUD up from boot, so a run is readable over SSH with no pad.
+ * volatile so each gate is a real ROM read, not a folded constant. Ships zeroed;
+ * a patched ROM is a lab instrument and is never released. */
+const volatile uint8_t diag_cfg[24] = {'D','I','A','G','C','F','G','1',
+                                       0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0};
+
 /* Player spawn — south end of the col-16 spine corridor in the
  * hand-tuned 32x32 Backrooms map. Walls flank tightly at cols 15/17
  * for the iconic "infinite hallway" first frame. The corridor opens
@@ -2801,6 +2820,247 @@ int raycast_door_portal_check(void) {
     return 0;
 }
 
+/* ── ATTRACT-MODE AUTOPILOT ──────────────────────────────────────────────
+ * Idle at the start list long enough and the game demos itself: a bot walks
+ * every level to its exit, forever, until a real button lands. The bot
+ * SYNTHESIZES A JOYPAD — it drives the same player_update / door / climb
+ * code a human does, so it can only ever go where a player could.
+ *
+ * Navigation is a distance-to-goal field over open cells, blocked exactly
+ * like movement collision (walls, partition edges, standing cutouts) and
+ * rebuilt once per map via raycast_attract_reset(). Each frame the bot
+ * steps downhill toward the next cell's center; on the goal cell it runs
+ * the exit's own endgame: face the hole and tap A, or open the hinged door
+ * and step into the leaf, or simply stand beside the lobby's black void
+ * (adjacency alone fires that portal). A watchdog backs out of any wedge
+ * and refields, so a mid-map surprise degrades to a shuffle, not a hang. */
+static const int att_dxs[4] = { 1, -1, 0, 0 }, att_dys[4] = { 0, 0, 1, -1 };
+static uint8_t att_dist[MAP_H][MAP_W];   /* steps to goal; 254 = unreached */
+static uint8_t att_field_ok = 0;
+static uint8_t att_goal_kind = 0;        /* 0 none, 1 hole, 2 door, 3 void */
+static fx_t    att_gx, att_gy;           /* endgame world point (hole/door) */
+static uint8_t att_tick = 0;
+static fx_t    att_px_prev, att_py_prev;
+static uint16_t att_still = 0;
+static uint8_t att_unstick = 0;
+
+void raycast_attract_reset(void) {
+    att_field_ok = 0; att_still = 0; att_unstick = 0;
+}
+
+/* Can the bot step from (cx,cy) to its k-neighbor? Cell-granular mirror of
+ * the movement collision: open destination, no partition edge on the
+ * crossing line, no standing cutout parked in the destination. */
+static int att_step_open(int cx, int cy, int k) {
+    int nx = cx + att_dxs[k], ny = cy + att_dys[k];
+    if (nx < 0 || nx >= MAP_W || ny < 0 || ny >= MAP_H) return 0;
+    if (world_map[ny][nx] != 0) return 0;
+    if (g_pedge_any) {
+        if (att_dxs[k]) {
+            int line = att_dxs[k] > 0 ? nx : cx;
+            if (pedge_w[cy][line] & CM_PEDGE_PRESENT) return 0;
+        } else {
+            int line = att_dys[k] > 0 ? ny : cy;
+            if (pedge_n[line][cx] & CM_PEDGE_PRESENT) return 0;
+        }
+    }
+    /* Low ceilings stopped being a gate when crawl_bump made the walk-in
+     * crawl automatic — the bot ducks and crawls ducts like anyone else.
+     * (Before that, a duct cell wedged the first headless soak forever:
+     * ducts demanded the A+B crouch the bot never gives.) */
+    for (int i = 0; i < num_standups; i++)
+        if (!standup_down[i] &&
+            FX_INT(standups[i].x) == nx && FX_INT(standups[i].y) == ny) return 0;
+    return 1;
+}
+
+/* Build the distance field: seed the goal cell(s) at 0, then relax with
+ * alternating forward/backward sweeps until stable. No BFS queue — the
+ * sweeps converge in a handful of passes on 32x32 and this runs once per
+ * map, so the 2KB the queue would cost stays unspent. */
+static void att_build_field(void) {
+    att_goal_kind = 0;
+    for (int y = 0; y < MAP_H; y++)
+        for (int x = 0; x < MAP_W; x++) att_dist[y][x] = 254;
+
+    if (g_exit_hole_cx >= 0) {                 /* climb-in hole */
+        att_goal_kind = 1;
+        att_gx = ((fx_t)g_exit_hole_ax << FX_SHIFT) + FX(0.5);
+        att_gy = ((fx_t)g_exit_hole_ay << FX_SHIFT) + FX(0.5);
+        att_dist[g_exit_hole_ay][g_exit_hole_ax] = 0;
+    } else if (g_exit_wall_cx >= 0) {          /* hinged EXIT door */
+        for (int d = 0; d < num_decals; d++) {
+            if (decals[d].kind != 1) continue;
+            att_goal_kind = 2;
+            att_gx = decals[d].x; att_gy = decals[d].y;
+            /* Approach cell: the open neighbor of the door's wall cell whose
+             * center is within arm's reach of the leaf. */
+            for (int k = 0; k < 4; k++) {
+                int ax = g_exit_wall_cx + att_dxs[k];
+                int ay = g_exit_wall_cy + att_dys[k];
+                if (ax < 0 || ax >= MAP_W || ay < 0 || ay >= MAP_H) continue;
+                if (world_map[ay][ax] != 0) continue;
+                fx_t ccx = ((fx_t)ax << FX_SHIFT) + FX(0.5);
+                fx_t ccy = ((fx_t)ay << FX_SHIFT) + FX(0.5);
+                if (FX_ABS(ccx - att_gx) < FX_ONE && FX_ABS(ccy - att_gy) < FX_ONE)
+                    att_dist[ay][ax] = 0;
+            }
+            break;
+        }
+    } else {                                   /* lobby: the black void */
+        for (int y = 0; y < MAP_H; y++)
+            for (int x = 0; x < MAP_W; x++) {
+                if (world_map[y][x] != 0) continue;
+                if ((x + 1 < MAP_W && world_map[y][x + 1] == 2) ||
+                    (x - 1 >= 0    && world_map[y][x - 1] == 2) ||
+                    (y + 1 < MAP_H && world_map[y + 1][x] == 2) ||
+                    (y - 1 >= 0    && world_map[y - 1][x] == 2)) {
+                    att_dist[y][x] = 0; att_goal_kind = 3;
+                }
+            }
+    }
+
+    for (int pass = 0; pass < 64 && att_goal_kind; pass++) {
+        int changed = 0;
+        for (int i = 0; i < MAP_W * MAP_H; i++) {
+            int c = (pass & 1) ? MAP_W * MAP_H - 1 - i : i;
+            int x = c % MAP_W, y = c / MAP_W;
+            if (world_map[y][x] != 0) continue;
+            uint8_t best = att_dist[y][x];
+            for (int k = 0; k < 4; k++) {
+                if (!att_step_open(x, y, k)) continue;
+                uint8_t d = att_dist[y + att_dys[k]][x + att_dxs[k]];
+                if (d < 254 && (uint8_t)(d + 1) < best) best = (uint8_t)(d + 1);
+            }
+            if (best < att_dist[y][x]) { att_dist[y][x] = best; changed = 1; }
+        }
+        if (!changed) break;
+    }
+    att_field_ok = 1;
+    att_px_prev = player.x; att_py_prev = player.y;
+}
+
+/* Angle (0..255, 0=+x, 64=+y) toward (dx,dy): coarse linear atan — the
+ * dominant axis anchors the quadrant, the minor/major ratio bends up to a
+ * half-quadrant toward the minor axis. Within ~6 units of true, plenty to
+ * hold a corridor line when it re-aims every frame. */
+static uint8_t att_angle_to(fx_t dx, fx_t dy) {
+    fx_t ax = FX_ABS(dx), ay = FX_ABS(dy);
+    int a, t;
+    if (ax >= ay) {
+        a = (dx >= 0) ? 0 : 128;
+        t = ax ? (int)(((int64_t)ay << 5) / ax) : 0;
+        a += (dx >= 0) ? ((dy >= 0) ? t : -t) : ((dy >= 0) ? -t : t);
+    } else {
+        a = (dy >= 0) ? 64 : 192;
+        t = (int)(((int64_t)ax << 5) / ay);
+        a += (dy >= 0) ? ((dx >= 0) ? -t : t) : ((dx >= 0) ? t : -t);
+    }
+    return (uint8_t)a;
+}
+
+/* Steer toward a world point: turn first, walk once roughly aimed.
+ * Returns 1 (pad untouched) when inside the tolerance box. */
+static int att_steer(fx_t tx, fx_t ty, fx_t tol, uint16_t *pad) {
+    fx_t dx = tx - player.x, dy = ty - player.y;
+    if (FX_ABS(dx) < tol && FX_ABS(dy) < tol) return 1;
+    int8_t diff = (int8_t)(att_angle_to(dx, dy) - player.angle);
+    if      (diff >  6) *pad |= SEGA_CTRL_RIGHT;
+    else if (diff < -6) *pad |= SEGA_CTRL_LEFT;
+    if (diff > -48 && diff < 48) *pad |= SEGA_CTRL_UP;
+    return 0;
+}
+
+/* Turn in place toward an exact heading; 1 when close enough. */
+static int att_face(uint8_t want, uint16_t *pad) {
+    int8_t diff = (int8_t)(want - player.angle);
+    if (diff >  2) { *pad |= SEGA_CTRL_RIGHT; return 0; }
+    if (diff < -2) { *pad |= SEGA_CTRL_LEFT;  return 0; }
+    return 1;
+}
+
+uint16_t raycast_attract_pad(void) {
+    uint16_t pad = 0;
+    att_tick++;
+    if (!att_field_ok) att_build_field();
+
+    /* Wedge watchdog: ~8s of rendered frames without real motion → back
+     * straight out for a beat, then refield (the world may have changed
+     * underfoot — an armed cutout, a re-shut door). */
+    {
+        fx_t mdx = player.x - att_px_prev, mdy = player.y - att_py_prev;
+        att_px_prev = player.x; att_py_prev = player.y;
+        if (FX_ABS(mdx) + FX_ABS(mdy) < FX(0.005)) att_still++;
+        else att_still = 0;
+        if (att_still > 120) { att_still = 0; att_unstick = 30; att_field_ok = 0; }
+        if (att_unstick) { att_unstick--; return SEGA_CTRL_DOWN; }
+    }
+
+    int cx = FX_INT(player.x), cy = FX_INT(player.y);
+    if ((unsigned)cx >= MAP_W || (unsigned)cy >= MAP_H || !att_goal_kind)
+        return 0;
+
+    if (att_dist[cy][cx] == 0) {
+        /* ── Endgames on the goal cell ── */
+        if (att_goal_kind == 1) {
+            /* Center up, face the carved wall, tap the interaction button.
+             * raycast_exit_hole_check() is the exact gate the game loop
+             * uses, so the A edges only fire when the climb would take. */
+            if (raycast_exit_hole_check()) {
+                if (att_tick & 2) pad |= SEGA_CTRL_A;
+                return pad;
+            }
+            if (att_steer(att_gx, att_gy, FX(0.10), &pad)) {
+                int hdx = g_exit_hole_cx - g_exit_hole_ax;
+                int hdy = g_exit_hole_cy - g_exit_hole_ay;
+                att_face((uint8_t)((hdx > 0) ? 0 : (hdx < 0) ? 128
+                                 : (hdy > 0) ? 64 : 192), &pad);
+            }
+            return pad;
+        }
+        if (att_goal_kind == 2) {
+            if (g_door_open >= DOOR_OPEN_MAX * 3 / 4) {
+                att_steer(att_gx, att_gy, FX(0.05), &pad); /* into the leaf */
+                return pad;
+            }
+            if (g_door_target == 0) {
+                /* Shut: get in arm's reach, then a fresh A swings it. The
+                 * taps stop the moment the target flips, so the same edge
+                 * can never slam it back shut. */
+                if (FX_ABS(att_gx - player.x) < FX(0.9) &&
+                    FX_ABS(att_gy - player.y) < FX(0.9)) {
+                    att_face(att_angle_to(att_gx - player.x,
+                                          att_gy - player.y), &pad);
+                    if (att_tick & 2) pad |= SEGA_CTRL_A;
+                } else
+                    att_steer(att_gx, att_gy, FX(0.6), &pad);
+                return pad;
+            }
+            att_face(att_angle_to(att_gx - player.x, att_gy - player.y), &pad);
+            return pad;                        /* mid-swing: watch it open */
+        }
+        return 0;   /* void goal: standing here already fires the portal */
+    }
+
+    /* Downhill: walk at the center of the best open neighbor. */
+    {
+        int bk = -1; uint8_t bd = att_dist[cy][cx];
+        for (int k = 0; k < 4; k++) {
+            if (!att_step_open(cx, cy, k)) continue;
+            uint8_t d = att_dist[cy + att_dys[k]][cx + att_dxs[k]];
+            if (d < bd) { bd = d; bk = k; }
+        }
+        if (bk < 0) {              /* boxed in (fresh cutout?) — refield */
+            if ((att_tick & 31) == 0) att_field_ok = 0;
+            return 0;
+        }
+        att_steer(((fx_t)(cx + att_dxs[bk]) << FX_SHIFT) + FX(0.5),
+                  ((fx_t)(cy + att_dys[bk]) << FX_SHIFT) + FX(0.5),
+                  FX(0.05), &pad);
+    }
+    return pad;
+}
+
 /* Load the tiny 8x8 lobby: the grid box (lobby_map) plus the free-standing
  * wallpaper PARTITION that IS the photo's divider. Spawn (X) sits bottom-
  * west facing north so the divider stands on your right; walk up the west
@@ -3045,9 +3305,12 @@ static int standup_collides(fx_t px, fx_t py) { return standup_blocker(px, py) >
 
 /* Raised when a move was refused ONLY because a bulkhead header wanted the
  * head lower. player_update consumes it as an automatic duck, so the player
- * walks through doorway soffits without ever pressing crouch. Duct slabs
- * never raise it — those keep the deliberate crawl. Primary CPU only. */
+ * walks through doorway soffits without ever pressing crouch. Primary CPU
+ * only. crawl_bump is the duct-slab twin: refusal drops you into the full
+ * crawl automatically — walking at a duct always proceeds, A+B is just the
+ * crouch you can still choose on your own (Mike, 2026-09-07). */
 static uint8_t duck_bump = 0;
+static uint8_t crawl_bump = 0;
 
 static int position_clear(fx_t px, fx_t py) {
     /* Check all 4 corners of the player's bounding box against wall
@@ -3100,11 +3363,12 @@ static int position_clear(fx_t px, fx_t py) {
     }
     if (standup_collides(px, py))   return 0;
     /* Low-ceiling cells hang below standing head height, so entering one costs
-     * head room — but HOW MUCH depends on the cell. A duct slab still demands
-     * the deliberate A+B crawl; a bulkhead header only wants a dipped head, so
-     * a refusal there raises duck_bump and player_update ducks for you on the
-     * next frame — walk into a doorway and you stoop through it instead of
-     * bouncing off. Per-cell via ceil_h[], so this covers every map. */
+     * head room — but HOW MUCH depends on the cell. Either way a refusal now
+     * drops the head FOR you: a bulkhead header raises duck_bump (dip and keep
+     * walking), a duct slab raises crawl_bump (ease into the full crawl and
+     * proceed at crawl pace). Walking at a low ceiling always goes through —
+     * A+B is the crouch you can still choose, never a toll gate. Per-cell via
+     * ceil_h[], so this covers every map. */
     if (g_lowceil_active) {
         int cx = FX_INT(px), cy = FX_INT(py);
         if ((unsigned)cx < MAP_W && (unsigned)cy < MAP_H) {
@@ -3113,7 +3377,7 @@ static int position_clear(fx_t px, fx_t py) {
                 int header = (ch >= BULKHEAD_CEIL_H);
                 int need = header ? BULKHEAD_PASS_EYE : CRAWL_PASS_EYE;
                 if ((int)SHARED_UC->eye_h >= need) {
-                    if (header) duck_bump = 1;
+                    if (header) duck_bump = 1; else crawl_bump = 1;
                     return 0;
                 }
             }
@@ -3639,6 +3903,12 @@ void player_update(uint16_t pad) {
         }
     }
     if (duck_bump) { auto_duck = 1; duck_bump = 0; }
+    /* Refused at a duct: drop into the crawl automatically and proceed —
+     * the same walk-in courtesy the bulkhead dip gives, one head lower.
+     * The refusal refires every frame the move is still blocked, so this
+     * holds the eye sinking until the slab clears it; once inside, the
+     * zone latch above owns the crouch. */
+    if (crawl_bump) { crouching = 1; crawl_bump = 0; }
     {
         int target = crouching ? CROUCH_EYE
                    : (auto_duck ? DUCK_EYE : STAND_EYE);
@@ -6710,7 +6980,7 @@ RAMTEXT int raycast_sprite_split(int wall_split) {
         fx_t lat = FX_MUL(inv_det, FX_MUL(dirY, ddx) - FX_MUL(dirX, ddy));
         best_cx = (SCREEN_W >> 1) + (int)(((int32_t)(SCREEN_W >> 1) * FX_MUL(lat, inv_d)) >> FX_SHIFT);
     }
-    if (best_cx < 0) return wall_split;
+    if (best_cx < 0) return -1;   /* no screen-filler: caller picks the split */
     if (best_cx < 16) best_cx = 16; else if (best_cx > SCREEN_W - 16) best_cx = SCREEN_W - 16;
     return best_cx & ~3;
 }
@@ -6799,7 +7069,12 @@ RAMTEXT void raycast_draw_ceiling_grid(int col_start, int col_end) {
     fx_t prev_wyL_s = 0;
     int  has_prev   = 0;
 
-    for (int y = 0; y < horizon_y && y < SCREEN_H; y++) {
+    /* VERT: odd rows are never displayed (the line table maps every
+     * row-pair to the even one), so drawing them is pure waste. The
+     * clear, carpet and wall passes already skip them; this one did
+     * not. (ceiling grid) */
+    const int yst = SHARED_UC->wall_vert ? 2 : 1;
+    for (int y = 0; y < horizon_y && y < SCREEN_H; y += yst) {
         int p = horizon_y - y;
         /* rowDist always positive; DIVU is ~3× faster than software. */
         fx_t rowDist = (fx_t)divu_u32((uint32_t)((fx_t)focal_const << FX_SHIFT),
@@ -6852,7 +7127,11 @@ RAMTEXT void raycast_draw_ceiling_grid(int col_start, int col_end) {
                 }
             }
         } else if (has_prev && FX_INT(wxL_s) != FX_INT(prev_wxL_s)) {
-            for (int col = col_start; col < col_end; col++) row_p[col] = grid_c;
+            /* Rung row: flat full-width fill — word stores halve the uncached
+             * FB transactions (col_start/end are 4-aligned via the splits). */
+            uint16_t gw = WDUP(grid_c);
+            for (int col = col_start; col < col_end; col += 2)
+                *(uint16_t *)(row_p + col) = gw;
         }
 
         /* World-Y grid lines: same near-cardinal fix as X — band on small |dY|
@@ -6871,7 +7150,9 @@ RAMTEXT void raycast_draw_ceiling_grid(int col_start, int col_end) {
                 }
             }
         } else if (has_prev && FX_INT(wyL_s) != FX_INT(prev_wyL_s)) {
-            for (int col = col_start; col < col_end; col++) row_p[col] = grid_c;
+            uint16_t gw = WDUP(grid_c);   /* see the X-rung fill above */
+            for (int col = col_start; col < col_end; col += 2)
+                *(uint16_t *)(row_p + col) = gw;
         }
 
         /* DARK ROOM ceiling. The base ceiling colour comes from the CLEAR pass
@@ -7015,7 +7296,12 @@ RAMTEXT static void raycast_draw_low_ceiling(int col_start, int col_end, int sla
         wd[c] = w16;
     }
 
-    for (int y = 0; y < horizon_y && y < SCREEN_H; y++) {
+    /* VERT: odd rows are never displayed (the line table maps every
+     * row-pair to the even one), so drawing them is pure waste. The
+     * clear, carpet and wall passes already skip them; this one did
+     * not. (low-ceiling slab) */
+    const int yst = SHARED_UC->wall_vert ? 2 : 1;
+    for (int y = 0; y < horizon_y && y < SCREEN_H; y += yst) {
         int prow = horizon_y - y;
         if (prow <= 0) continue;
         fx_t rowDist = (fx_t)divu_u32((uint32_t)((fx_t)focal << FX_SHIFT),
@@ -7732,7 +8018,12 @@ RAMTEXT void raycast_draw_carpet(int col_start, int col_end) {
      * means fog-skipped far rows skip two at a time. */
     #define CARPET_VLOD_SHADE 4
     const int vstep = SHARED_UC->wall_vert ? 2 : 1;
-    const int vlod  = SHARED_UC->carpet_vlod;
+    /* Cfg byte [13]: when the heavy-frame half-res response is active
+     * (wall_halfres set by AUTO or the LOD-mode response), pull the
+     * CARPETLOD row-halving in with it — the carpet's cost is per-ROW
+     * setup (DIVU + muls), which column half-res cannot touch. */
+    const int vlod  = SHARED_UC->carpet_vlod
+                   || (diag_cfg[13] && SHARED_UC->wall_halfres);
     int cov_lo, cov_hi;
     covered_rows(col_start, col_end, &cov_lo, &cov_hi);
     int cystep = vstep;
@@ -10093,6 +10384,7 @@ RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
  * spent spinning on the secondary-done sync after that. */
 volatile uint16_t prof_primary_idle_ticks = 0;
 volatile uint16_t prof_primary_half_ticks = 0;
+volatile uint16_t prof_render_span = 0;   /* whole raycast_render, entry to exit */
 /* Per-pass FRT breakdown of the primary's half (clear/ceiling/carpet/walls). */
 volatile uint16_t prof_pass_clear = 0, prof_pass_ceil = 0,
                   prof_pass_carpet = 0, prof_pass_walls = 0;
@@ -10195,6 +10487,19 @@ RAMTEXT void raycast_clear_half(int col_start, int col_end) {
 
 void raycast_render(void) {
     uint16_t prof_start = prof_frt_read();
+    /* diag_cfg[14]==2: the benchmark freezes input, so the stillness ratchet
+     * would correctly ratchet to FULL and the motion-gated resolution paths
+     * would never arm. Claim motion HERE, before the resolution decision
+     * reads it -- asserting it later (at the pose publish) was too late and
+     * made the shipping AUTO path measure as if it never engaged. */
+    if (diag_cfg[14] == 2) {
+        /* is_walking is a file static derived from real player movement, and
+         * the benchmark freezes input, so it reads 0 and the stillness
+         * ratchet pins FULL. Set the static itself, not just the shared
+         * mirror, or the AUTO path measures as though it never engaged. */
+        is_walking = 1;
+        SHARED_UC->is_walking = 1; SHARED_UC->is_turning = 1;
+    }
     /* Re-asserted by draw_panel_face if this frame paints live tube noise;
      * the ULTRA park reads it after the render to decide whether parking
      * would freeze something that is supposed to move. */
@@ -10237,6 +10542,11 @@ void raycast_render(void) {
         eff_hr = 0;
     } else {
         uint8_t mode = SHARED_UC->wall_res_mode;
+        /* diag_cfg[13]: force a WALLS mode for headless benchmarking, encoded
+         * as mode+1 so that FULL (mode 0) is actually reachable -- a plain
+         * value made 0 mean "no override" and silently benchmarked the
+         * default instead, which read as "half-res buys nothing". */
+        if (diag_cfg[13]) mode = (uint8_t)(diag_cfg[13] - 1);
         if      (mode == 0) eff_hr = 0;
         else if (mode == 1) eff_hr = 1;
         else if (mode == 3) eff_hr = 0;   /* SERIAL diagnostic: full res */
@@ -10327,6 +10637,24 @@ void raycast_render(void) {
             dissolve_out = dissolve_ctr;
         }
     }
+    /* HALF RESOLUTION MEANS HALF ON BOTH AXES. The two axes are
+     * complementary and were never combined until 2026-09-25: halving
+     * COLUMNS cuts the wall pass (54.0 -> 31.7ms on a pinned scene) and
+     * cannot touch clear/carpet/ceiling, which are bound by ROWS; halving
+     * rows cuts those three (clear 11.7 -> 5.9, carpet 22.2 -> 11.3) and
+     * barely moves walls. Together, on the identical scene, the ungoverned
+     * frame went 81.4ms -> 64.3ms, 12.3 -> 15.6 fps, crossing from the
+     * 5-vblank delivery bucket into the 4-vblank one. MiSTer: F:10 -> F:12.
+     *
+     * A computed sample now covers a 2x2 block. That is the SAME sample
+     * count as the QUARTER-columns mode dropped by the 2026-08-06 A/B
+     * (80x224 == 160x112), but square instead of a 4x1 smear, and worth far
+     * more: quarter-columns measured 47.0ms against half-columns' 46.9ms,
+     * no gain at all, because past 160 columns what remains is per-column
+     * setup plus the row-bound passes no column reduction ever reaches.
+     *
+     * diag_cfg[15] disables it, for A/B against the old behaviour. */
+    if (eff_hr >= 1 && !diag_cfg[15]) vert = 1;
     SHARED_UC->wall_halfres = (uint8_t)eff_hr;
     SHARED_UC->wall_vert    = (uint8_t)vert;
     SHARED_UC->wall_lod     = (uint8_t)lod;
@@ -10355,6 +10683,18 @@ void raycast_render(void) {
     SHARED_UC->player.x     = player.x;
     SHARED_UC->player.y     = player.y;
     SHARED_UC->player.angle = player.angle;
+    /* diag_cfg[14]: BENCHMARK POSE. Attract walks diverge between binaries
+     * (the procgen seed mixes in the FRT), so cross-build delivery numbers
+     * are meaningless -- a "+22%" measured that way was two different levels.
+     * Pinning the camera here, at the one point both CPUs read from, makes H
+     * and every pass counter comparable across builds. 1 = standing,
+     * 2 = reports walking too, which arms the motion-gated resolution paths. */
+    if (diag_cfg[14]) {
+        SHARED_UC->player.x     = FX(16.5);
+        SHARED_UC->player.y     = FX(28.5);
+        SHARED_UC->player.angle = 192;
+
+    }
     SHARED_UC->is_walking   = is_walking;   /* gates carpet footsteps in pump */
     SHARED_UC->is_running   = is_running;   /* pump plays them faster when sprinting */
 
@@ -10392,9 +10732,19 @@ void raycast_render(void) {
         int sum = h + s;
         if (sum > 500) {                                 /* valid FRT reading */
             int shift = ((h - s) * SCREEN_W) / (sum << 1);  /* full balancing step */
-            shift >>= 1;                                 /* damp to avoid oscillation */
-            if      (shift >  16) shift =  16;
-            else if (shift < -16) shift = -16;
+            /* Barrier-lag experiment (cfg byte [11]): the damped +/-16 nudge
+             * tracks a walking scene too slowly — the accounting harness
+             * measured the primary idling up to 14ms at this barrier in
+             * motion while converged frames idle ~0. Above ~12.5% imbalance
+             * take the FULL balancing step (clamp 64); the damped crawl
+             * remains the small-signal behavior, so stability at equilibrium
+             * is unchanged. */
+            int lim = 16;
+            { int d = h - s; if (d < 0) d = -d;
+              if (d * 8 > sum) lim = 64;                 /* >12.5% out: full step */
+              else shift >>= 1; }                        /* near balance: damp */
+            if      (shift >  lim) shift =  lim;
+            else if (shift < -lim) shift = -lim;
             split -= shift;                              /* h>s: primary overloaded -> shrink */
             /* Clamp was [64, 256] — but the pinned-split matrix measured a
              * ~7x per-column cost spread across the screen at counter poses
@@ -10407,6 +10757,11 @@ void raycast_render(void) {
             else if (split > SCREEN_W - 16) split = SCREEN_W - 16;
             split &= ~3;                                 /* clear pass writes 4-px words */
         }
+        /* Measurement byte [17]: pin the split so a probe run draws exactly
+         * the same columns whatever the secondary is doing — the adaptive
+         * controller otherwise rebalances against the probe's synthetic
+         * time and silently changes the primary's workload. */
+        if (diag_cfg[9]) split = SCREEN_W / 2;
         SHARED_UC->split_col = (uint16_t)split;          /* secondary reads this */
         prof_split_col = (uint16_t)split;
     }
@@ -10485,7 +10840,43 @@ void raycast_render(void) {
      * standup is shared, not dumped on one cpu (write BEFORE raising CMD_TAIL,
      * like split_col, so the secondary reads a settled value). The tail/slab
      * pass below still uses the wall split. */
+    /* Tail split. The geometric pick shares one screen-filling standup
+     * between the CPUs and still wins when it fires. Otherwise the split
+     * used to inherit the WALL split — which balances wall cost, not the
+     * tail's lights+standups (measured 26ms primary vs 6ms secondary at
+     * attract-walk, 2026-09-24). Uses the same feedback
+     * controller as the wall split above: equalize last frame's primary
+     * tail brackets against secondary_tail_ticks. Both sides' slab shares
+     * ride the wall split and sit in both totals, so the controller
+     * settles where the whole barrier-to-barrier blocks match. */
     int sprite_split = raycast_sprite_split(split);
+    if (sprite_split < 0) {
+        extern const volatile uint8_t diag_cfg[24];
+        static int tail_split = SCREEN_W / 2;
+        if (ultra_twin) {
+            sprite_split = split;                    /* twin reuses the partner frame */
+        } else {
+            int p = (int)prof_pass_slab + (int)prof_pass_lights
+                  + (int)prof_pass_sprite;           /* last frame, primary  */
+            int s = (int)SHARED_UC->secondary_tail_ticks;
+            int sum = p + s;
+            if (sum > 200) {                         /* valid FRT reading */
+                int shift = ((p - s) * SCREEN_W) / (sum << 1);
+                int lim = 16;                        /* same gain law as the
+                                                      * wall controller above */
+                { int d2 = p - s; if (d2 < 0) d2 = -d2;
+                  if (d2 * 8 > sum) lim = 64;
+                  else shift >>= 1; }
+                if      (shift >  lim) shift =  lim;
+                else if (shift < -lim) shift = -lim;
+                tail_split -= shift;
+                if      (tail_split < 16)            tail_split = 16;
+                else if (tail_split > SCREEN_W - 16) tail_split = SCREEN_W - 16;
+                tail_split &= ~3;
+            }
+            sprite_split = tail_split;
+        }
+    }
     SHARED_UC->sprite_split = (uint16_t)sprite_split;
 
     uint16_t ps = prof_frt_read();
@@ -10537,4 +10928,8 @@ void raycast_render(void) {
         if (src >= SCREEN_H) src = SCREEN_H - 1;
         line_table[i] = (uint16_t)(src * 160 + 0x100);
     }
+    /* Whole-function span for the frame-accounting harness: everything
+     * raycast_render does, bracketed passes and the unbracketed seams
+     * (prologue, sprite_split scan, barriers, line table) alike. */
+    prof_render_span = (uint16_t)(prof_frt_read() - prof_start);
 }

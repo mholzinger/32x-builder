@@ -44,14 +44,57 @@ void s_main(void) {
          * loop between polls drops the rate to ~30K/sec while keeping
          * latency below one frame. */
         uint16_t cmd = MARS_SYS_COMM4;
+        {   /* see sec_dispatch_late in shared.h. ONLY a gap between two idle
+             * polls is a lateness sample: if the previous iteration executed a
+             * command, the gap contains that render and means nothing. */
+            static uint16_t prev_poll = 0;
+            static int prev_was_idle = 0;
+            uint16_t now = secondary_frt_read();
+            if (cmd != MARS_CMD_NONE && prev_was_idle) {
+                uint16_t gap = (uint16_t)(now - prev_poll);
+                SHARED_UC->sec_dispatch_late = gap;
+                if (gap > SHARED_UC->sec_dispatch_late_max)
+                    SHARED_UC->sec_dispatch_late_max = gap;
+                SHARED_UC->sec_dispatch_n++;
+                if (gap > 1000) SHARED_UC->sec_dispatch_n_late++;
+            }
+            prev_poll = now;
+            prev_was_idle = (cmd == MARS_CMD_NONE);
+        }
         if (cmd == MARS_CMD_NONE) {
             /* Service audio first — keep the PWM ping-pong fed.
              * amb_pump() is cheap (~150 μs when a fill is needed,
              * instant return otherwise). amb_audio_idle() decodes at
              * most ONE 20 ms Speex frame per visit and belongs ONLY
              * here — in the vblank slack, never at render checkpoints. */
-            amb_pump();
-            amb_audio_idle();
+            {   uint16_t t0 = secondary_frt_read();
+                amb_pump();
+                uint16_t t1 = secondary_frt_read();
+                uint16_t dp = (uint16_t)(t1 - t0);
+                if (dp < 10000 && dp > SHARED_UC->sec_pump_max)
+                    SHARED_UC->sec_pump_max = dp;
+                /* Fallback only: the safe slot above handles the normal case,
+                 * so this exists for stretches with no TAIL dispatch at all
+                 * (menus, fades, the intro). Rate-limited so it cannot become
+                 * the common path again. diag_cfg[11] disables it for
+                 * attribution runs; audio starves with that set. */
+                extern const volatile uint8_t diag_cfg[24];
+                static uint16_t last_dec = 0;
+                uint16_t nowd = secondary_frt_read();
+                if (!diag_cfg[11]) {
+                    if (!diag_cfg[12]) amb_audio_idle();          /* legacy path */
+                    else if ((uint16_t)(nowd - last_dec) > 6000) { /* starvation only */
+                        last_dec = nowd; amb_audio_idle();
+                    }
+                }
+                uint16_t t2 = secondary_frt_read();
+                uint16_t dd = (uint16_t)(t2 - t1);
+                if (dd < 10000) {
+                    if (dd > SHARED_UC->sec_decode_max) SHARED_UC->sec_decode_max = dd;
+                    SHARED_UC->sec_decode_sum += dd;
+                    SHARED_UC->sec_decode_n++;
+                }
+            }
             /* Throttle bumped 64→256 because primary got faster after
              * the DIVU/sine LUT optimizations, shifting the bus-
              * contention balance enough that controller-input stalls
@@ -90,19 +133,83 @@ void s_main(void) {
              * with primary's [0, split_col), so no mid-frame sync. */
             int split = (int)SHARED_UC->split_col;
             uint16_t t0 = secondary_frt_read();
+            {
+                /* CONTENTION PROBE (diag_cfg[8], diagnostic, never ships set).
+                 * The cross-CPU tax measured on MiSTer (21% of parallel
+                 * render, SERIAL A/B) has no attribution: FB port, SDRAM
+                 * line fills, or both. So instead of rendering this half,
+                 * hold the bus ONE known way for a fixed window while the
+                 * primary renders — its per-pass brackets then read "my
+                 * work under load type N", and differencing the types names
+                 * the port. 1 = park (FRT only, no bus at all), 2 = FB word
+                 * stores, 3 = SDRAM line fills. The secondary's half goes
+                 * stale and audio stalls for the duration: diagnostic only,
+                 * read the numbers, never judge the picture. */
+                extern const volatile uint8_t diag_cfg[24];
+                uint8_t probe = diag_cfg[8];
+                if (probe) {
+                    const uint16_t WINDOW = 12000;   /* ~67ms at Phi/128 */
+                    if (probe == 2) {
+                        volatile uint16_t *fbw = (volatile uint16_t *)
+                            ((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
+                        while ((uint16_t)(secondary_frt_read() - t0) < WINDOW) {
+                            for (int y = 0; y < SCREEN_H; y++) {
+                                volatile uint16_t *p =
+                                    fbw + ((y * SCREEN_W + split) >> 1);
+                                for (int x = split; x < SCREEN_W; x += 2)
+                                    *p++ = 0x0101;
+                            }
+                        }
+                    } else if (probe == 3) {
+                        /* 16-byte stride over 64KB of SDRAM = one line fill
+                         * per read, far past the 4KB cache. Reads only. */
+                        volatile const uint32_t *sd =
+                            (volatile const uint32_t *)0x06000000;
+                        uint32_t sink = 0;
+                        while ((uint16_t)(secondary_frt_read() - t0) < WINDOW) {
+                            for (int i = 0; i < 16384; i += 4) sink += sd[i];
+                        }
+                        SHARED_UC->secondary_tail_ticks = (uint16_t)sink;
+                    } else {
+                        while ((uint16_t)(secondary_frt_read() - t0) < WINDOW) { }
+                    }
+                    SHARED_UC->secondary_render_ticks =
+                        (uint16_t)(secondary_frt_read() - t0);
+                    break;
+                }
+            }
             /* amb_pump() checkpoints between passes: a 64 ms audio buffer
              * can drain past its half-way point inside ONE dense render
              * chunk, so waiting for the idle loop risked replaying stale
              * samples (the PWM chop). Between passes the pump's worst
              * stall is a single pass (~10-30 ms). Costs nothing when no
              * buffer is flagged; ~0.6 ms at most once per 64 ms when one is. */
-            raycast_clear_half(split, SCREEN_W);
-            amb_pump();
-            raycast_draw_ceiling_grid(split, SCREEN_W);
-            amb_pump();
-            raycast_draw_carpet(split, SCREEN_W);
-            amb_pump();
-            raycast_purge_cell_light();        /* fresh cell_light on map change */
+            {   /* The secondary's half carries fixed overhead the primary
+                 * never pays: three amb_pump() checkpoints and a cache purge.
+                 * They do not shrink when render work shrinks, so as the
+                 * resolution levers cut the render they come to dominate S --
+                 * and the frame is bounded by max(H,S). diag_cfg[16] skips
+                 * the pumps, [17] the purge, to price them. Measurement only:
+                 * audio chops with [16] and the map ghosts with [17]. */
+                extern const volatile uint8_t diag_cfg[24];
+                uint16_t ov0 = secondary_frt_read(), ovsum = 0;
+                raycast_clear_half(split, SCREEN_W);
+                ov0 = secondary_frt_read();
+                if (!diag_cfg[16]) amb_pump();
+                ovsum += (uint16_t)(secondary_frt_read() - ov0);
+                raycast_draw_ceiling_grid(split, SCREEN_W);
+                ov0 = secondary_frt_read();
+                if (!diag_cfg[16]) amb_pump();
+                ovsum += (uint16_t)(secondary_frt_read() - ov0);
+                raycast_draw_carpet(split, SCREEN_W);
+                ov0 = secondary_frt_read();
+                if (!diag_cfg[16]) amb_pump();
+                ovsum += (uint16_t)(secondary_frt_read() - ov0);
+                ov0 = secondary_frt_read();
+                if (!diag_cfg[17]) raycast_purge_cell_light();
+                ovsum += (uint16_t)(secondary_frt_read() - ov0);
+                SHARED_UC->sec_half_overhead = ovsum;
+            }
             raycast_draw_walls(split, SCREEN_W);
             SHARED_UC->secondary_render_ticks = (uint16_t)(secondary_frt_read() - t0);
             break;
@@ -113,6 +220,7 @@ void s_main(void) {
              * committed for all columns; we touch only [split, SCREEN_W), disjoint
              * from the primary's [0, split). Purge the crawlspace geometry first
              * so we don't draw stale caps from a previous level. */
+            uint16_t tail_t0 = secondary_frt_read();
             int split = (int)SHARED_UC->split_col;
             amb_pump();   /* audio checkpoint — see CMD_HALF */
             raycast_purge_lowceil_cache();
@@ -125,6 +233,8 @@ void s_main(void) {
              * on one cpu — disjoint [sprite_split, W) from the primary's half. */
             int sprite_split = (int)SHARED_UC->sprite_split;
             raycast_draw_sprites(sprite_split, SCREEN_W);
+            SHARED_UC->secondary_tail_ticks =
+                (uint16_t)(secondary_frt_read() - tail_t0);
             break;
         }
         case MARS_CMD_BOX: {
@@ -139,5 +249,19 @@ void s_main(void) {
         }
         SECONDARY_HEARTBEAT++;
         MARS_SYS_COMM4 = MARS_CMD_NONE;   /* ACK */
+        /* DISPATCH-SAFE AUDIO SLOT. A Speex decode costs up to 12.7ms and the
+         * idle loop used to start one at any moment, including just before the
+         * primary raised the next command -- measured: 14% of dispatches
+         * arrived >5.6ms late, worst 15.8ms, and the primary pays that at the
+         * barrier. Worse, the split controller reads the late finish as "the
+         * secondary is slow" and shifts columns away from it, so the stall
+         * also biases the load balance.
+         * Right here is the safest instant in the whole frame: the TAIL ack is
+         * the longest gap before the next dispatch (the primary still has its
+         * own tail, the flip and the next frame's logic to do). Decoding here
+         * needs no prediction of when the next command lands. */
+        {   extern const volatile uint8_t diag_cfg[24];
+            if (diag_cfg[12] && cmd == MARS_CMD_TAIL) amb_audio_idle();
+        }
     }
 }

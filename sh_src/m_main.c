@@ -50,6 +50,7 @@ static fx_t am_s_cur = 4 << 16;
 static int g_custom_current = -1;
 /* Seed of the procgen level currently loaded — its entire identity. The
  * automap footer derives the level's "name" from it (stable per level). */
+extern const volatile uint8_t diag_cfg[24];
 static uint32_t g_procgen_seed = 0;
 
 
@@ -273,8 +274,24 @@ extern volatile uint16_t prof_primary_half_ticks;  /* written by raycast_render 
  *   ID = prof_primary_idle_ticks, the primary spinning on the secondary barrier
  * Sampled one frame BEHIND what's on screen (prof_sample_and_draw runs inside
  * the HU bracket), which is fine for a steady-state read. */
-static uint16_t prof_post_hud = 0;
-static uint16_t prof_post_swap = 0;
+/* Globalized 2026-09-24 (were statics): dumpable via .lst for the headless
+ * harness, still fed by the same in-loop brackets. */
+volatile uint16_t prof_post_hud = 0;
+volatile uint16_t prof_post_swap = 0;
+/* Full frame accounting, unconditional in EVERY loop that flips:
+ *   prof_frame_total = swapBuffers-entry to swapBuffers-entry (the true
+ *                      frame period, no HUD needed; wraps above 364ms)
+ *   prof_swap_span   = inside swapBuffers (tick wait + shimmer + flip)
+ *   prof_frame_logic = swap-return -> render-call (game-loop only)
+ *   prof_loop_id     = which loop flipped last: 1 in-level game loop,
+ *                      2 start-list, 3 lobby-behind, 0 anything else
+ * total - logic - H(render) - tail - post_hud - swap_span = the unnamed
+ * remainder this instrument exists to shrink to zero. */
+volatile uint16_t prof_frame_total = 0, prof_swap_span = 0;
+volatile uint16_t prof_frame_logic = 0;
+volatile uint8_t  prof_loop_id = 0;
+static uint16_t prof_swap_prev = 0;
+static uint16_t prof_logic_t0 = 0;
 extern volatile uint16_t prof_primary_idle_ticks;  /* written by raycast_render */
 
 static inline uint16_t prof_read_frt(void) {
@@ -293,6 +310,22 @@ static inline void prof_init(void) {
                           * now; ~5.6us/tick is ample for pass-level metrics. */
     SH2_FRT_FTCSR = 0;     /* clear OVF/OCF; free-running */
     prof_prev_frt = prof_read_frt();
+    {   /* diag_cfg[10]: metrics HUD up from boot, so a measurement run is
+         * readable over SSH (deploy, launch, screenshot) with no pad input
+         * at all. The HUD draw sits OUTSIDE the render brackets, so it
+         * cannot perturb H or the pass counters it is there to read. */
+        extern const volatile uint8_t diag_cfg[24];
+        if (diag_cfg[10]) g_metrics_on = 1;
+    }
+}
+
+/* Universal render mark: every frame loop calls this right before
+ * raycast_render — logic = time since the last swapBuffers finished,
+ * whichever loop is running. prof_logic_t0 is set at swapBuffers exit. */
+static inline void prof_mark_render(uint8_t id) {
+    uint16_t n = prof_read_frt();
+    prof_frame_logic = (uint16_t)(n - prof_logic_t0);
+    prof_loop_id = id;
 }
 
 static void prof_sample_and_draw(uint8_t *fb) {
@@ -811,7 +844,97 @@ static void pos_draw(uint8_t *fb) {
         while (cond) { if (_thr) BUS_PAUSE16(); }            \
     } while (0)
 
+/* ── Pacing ring ─────────────────────────────────────────────────────────
+ * 4 bytes per flip, always on (a handful of stores — players pay nothing
+ * measurable): vblanks since the previous flip, the adaptive-res state, and
+ * the player's cell. The vblank delta IS the framerate the eye sees (fps =
+ * 60/vbl), so the ring is the ground truth for pacing work: a bucket
+ * histogram says how consistent the game feels, and a 3↔4 flap count says
+ * where it judders. Read from SDRAM dumps via the headless harness — the
+ * attract bot makes zero-input boots a deterministic gameplay workload. */
+/* 1024 records = 4KB: a 16KB ring overflowed the linker's `ram` region by
+ * 9.7KB (the stack-overlay savings live ABOVE _end, not in the region, and
+ * that space belongs to live tenants like the ULTRA twin stash). ~70-100s
+ * of trailing frames per dump; the deterministic attract timeline means
+ * dumps at staggered frame counts stitch into full coverage. */
+#define PACE_RING_N 1024
+struct pace_rec { uint8_t vbl, hr, cx, cy; };
+/* volatile: the only reader is OUTSIDE the program (headless SDRAM dumps),
+ * so without it LTO proves the stores dead and deletes the whole ring. */
+volatile struct pace_rec pace_ring[PACE_RING_N];
+volatile uint32_t pace_ring_i = 0;
+
+/* Pacing governor state — the target bucket and its evidence counters.
+ * See shared.h at pace_on for the design; policy knobs here. */
+static uint8_t pace_target   = 3;   /* hold in-game flips to this many vblanks */
+static uint8_t pace_fast_run = 0;   /* consecutive walking frames a bucket under */
+static uint8_t pace_over_run = 0;   /* consecutive walking frames over target */
+int g_pace_scope = 0;               /* 1 = in-level gameplay (game loop + walk-in);
+                                     * lobby list and sub-screens stay unpaced */
+#define PACE_MIN        2           /* 30fps cap — the engine's realistic best */
+#define PACE_MAX        5           /* slowest LOCK is 12fps; a room heavier than
+                                     * that shows raw overruns instead of a 10fps
+                                     * lock, and AUTO's res drop digs it out */
+#define PACE_DOWN_RUN  12           /* fast recovery — a stale-high lock IS judder's
+                                     * replacement cost (v3: 21% of frames locked
+                                     * at 12fps or below, triple the baseline) */
+#define PACE_UP_RUN     6           /* ~half a second of sustained overrun before
+                                     * locking slower; raw straddling a boundary
+                                     * (true ~3.5 vbl) should lock 4, not 5 */
+
 void swapBuffers(void) {
+    /* Frame accounting: entry-to-entry is the true frame period whichever
+     * loop is flipping — see the prof_frame_total block at the top. */
+    uint16_t prof_t0 = prof_read_frt();
+    prof_frame_total = (uint16_t)(prof_t0 - prof_swap_prev);
+    prof_swap_prev = prof_t0;
+    /* Frame pacing: hold EVERY in-level frame to pace_target vblanks so the
+     * eye gets one steady rate instead of a 3↔4 flap. First cut paced only
+     * walking frames — and the capture showed that just moves the flap to
+     * every stride pause (paced 4 ↔ unpaced 3). So the HOLD covers all
+     * gameplay frames; only the VOTES are walking-only, because standing
+     * frames render full-res under the stillness ratchet and their slow raw
+     * times would drag the target up for a scene that cannot judder.
+     *
+     * Edge arithmetic (v2 got this wrong and the capture showed 3-delta
+     * frames under a 4 target): swapBuffers waits for the tick and writes
+     * FBCTL DURING vblank, so the flip is immediate — displayed delta IS
+     * the tick number the wait exits on. A frame entering at raw ticks
+     * displays raw+1 unheld; holding until delta == target displays target.
+     * Votes: ready by tick target-2 (raw < target-1) could have displayed
+     * target-1, that's the step-down; raw >= target displays target+1+,
+     * that's the overrun. */
+    /* diag_cfg[18]: bypass the pacing governor for benchmarking. The hold
+     * pins every in-level frame to pace_target vblanks, so a render that got
+     * 24% faster still delivers at exactly the same rate until the governor
+     * steps down (PACE_DOWN_RUN frames later). Measuring a render change
+     * through the governor reads as "no effect". */
+    if (SHARED_UC->pace_on && g_pace_scope && !menu_is_active() && !diag_cfg[18]) {
+        uint16_t raw = (uint16_t)((uint16_t)(MARS_SYS_COMM12 >> 16)
+                                - (uint16_t)(lastTick >> 16));
+        int vote = SHARED_UC->is_walking != 0;
+        if (raw >= pace_target) {            /* would display target+1+: overrun */
+            pace_fast_run = 0;
+            if (vote && ++pace_over_run >= PACE_UP_RUN && pace_target < PACE_MAX) {
+                pace_target++; pace_over_run = 0;
+            }
+        } else {
+            if (vote) {
+                pace_over_run = 0;
+                if (raw < (uint16_t)(pace_target - 1)) {
+                    if (++pace_fast_run >= PACE_DOWN_RUN && pace_target > PACE_MIN) {
+                        pace_target--; pace_fast_run = 0;
+                    }
+                } else pace_fast_run = 0;
+            }
+            /* The hold: burn the leftover vblanks. Sysreg-only spin, same
+             * bus-free contract as the tick wait below. */
+            SHARED_UC->primary_vwait = 1;
+            BUS_WAIT((uint16_t)((uint16_t)(MARS_SYS_COMM12 >> 16)
+                              - (uint16_t)(lastTick >> 16)) < pace_target);
+            SHARED_UC->primary_vwait = 0;
+        }
+    }
     /* Advertise both bus-free waits to the secondary's Speex decoder
      * (amb_audio_idle): each poll below reads only a sysreg, so the
      * ROM/SDRAM bus is genuinely idle inside them. The FS flip
@@ -831,7 +954,24 @@ void swapBuffers(void) {
     BUS_WAIT((MARS_VDP_FBCTL & MARS_VDP_FS) == currentFB);
     SHARED_UC->primary_vwait = 0;
     currentFB ^= 1;
+    {
+        /* The 68K's 16-bit tick occupies the TOP half of the 32-bit COMM12
+         * read (the low half is COMM14, the SMS status word — constant
+         * here). First capture recorded the low half: vbl=0 forever. */
+        uint16_t d = (uint16_t)((uint16_t)(MARS_SYS_COMM12 >> 16)
+                              - (uint16_t)(lastTick >> 16));
+        volatile struct pace_rec *r = &pace_ring[pace_ring_i++ & (PACE_RING_N - 1)];
+        r->vbl = d > 255 ? 255 : (uint8_t)d;
+        r->hr  = (uint8_t)((pace_target << 4) | (SHARED_UC->wall_halfres & 0xF));
+        r->cx  = (uint8_t)FX_INT(player.x);
+        r->cy  = (uint8_t)FX_INT(player.y);
+    }
     lastTick = MARS_SYS_COMM12;
+    {
+        uint16_t pe = prof_read_frt();
+        prof_swap_span = (uint16_t)(pe - prof_t0);
+        prof_logic_t0 = pe;
+    }
 }
 
 /* One brightness-fade step with its own vblank flip (bypasses raycast_shimmer,
@@ -839,6 +979,7 @@ void swapBuffers(void) {
  * through and the door portal. */
 static void fade_step(int lvl) {
     SHARED_UC->frame_count++;
+    prof_mark_render(4);
     raycast_render();
     BUS_WAIT(lastTick == MARS_SYS_COMM12);
     raycast_set_brightness(lvl);
@@ -935,6 +1076,15 @@ static void capture_menu_pane(const uint8_t *fb) {
  * needs no rebuilds. 0 hinge-up, 3 fall-forward, 4 fly-through. */
 static uint8_t g_flip_style = 3;
 
+/* ATTRACT MODE (the MiSTer cabinet loop): untouched at the start list for
+ * ~ATTRACT_IDLE_FRAMES rendered frames, the game commits PROCEDURAL by
+ * itself and the autopilot (raycast_attract_pad) walks level after level to
+ * its exit, forever. Any real input ends the show — mid-lobby it simply
+ * hands over the controls, in-game it fades back to the start list, where
+ * the idle clock starts counting again. */
+static int g_attract = 0;
+#define ATTRACT_IDLE_FRAMES 450   /* rendered lobby frames, ~25s at ~18fps */
+
 static void menu_flip_out(int style, int NF) {
     const int D  = 220;            /* viewer distance, px */
     const int CX = SCREEN_W / 2;   /* pane centre x */
@@ -942,6 +1092,7 @@ static void menu_flip_out(int style, int NF) {
     const int HY  = PANE_Y + PANE_H;             /* bottom hinge (fall-forward) */
     for (int f = 1; f <= NF; f++) {
         SHARED_UC->frame_count++;
+        prof_mark_render(3);                            /* pane-transform loop */
         raycast_render();                            /* live lobby behind */
         uint8_t *fb = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
 
@@ -1039,6 +1190,7 @@ static void show_controls_screen(void) {
         prev = pad;
         if ((pressed & BTNS) && !(pad & SEGA_CTRL_MODE)) break;
         SHARED_UC->frame_count++;
+        prof_mark_render(5);
         raycast_render();
         uint8_t *fb = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
         font_draw_string(fb, (SCREEN_W - 13 * 8) / 2, 32, "BACKROOMS 32X", 49);
@@ -2331,10 +2483,12 @@ static void portal_to_procgen(void) {
     }
     if (g_next_seed_set) { g_procgen_seed = g_next_seed; g_next_seed_set = 0; }
     else g_procgen_seed = SHARED_UC->frame_count * 1000003u + (uint32_t)player.x;
+    if (diag_cfg[14]) g_procgen_seed = 0x1234567u;   /* benchmark: fixed map */
     if (!g_map_pregen) procgen_run(g_procgen_seed);   /* corridor pre-generated */
     g_map_pregen = 0;
     player.x = FX(16.5); player.y = FX(28.5); player.angle = 192;
     raycast_init();                 /* rebuilds full-bright palette */
+    raycast_attract_reset();        /* autopilot: new map, new field */
     if (g_arrive_drop) {
         /* Already lit, already there: the crawl's window WAS this scene.
          * The fall plays at full brightness -- no black between the tunnel
@@ -2412,6 +2566,7 @@ static void portal_to_custom(int idx) {
     fade_step(0);
     raycast_load_custom(idx);
     raycast_init();
+    raycast_attract_reset();        /* autopilot: new map, new field */
     raycast_set_brightness(0);
     for (int lvl = 6; lvl < FADE_STEPS; lvl += 6) fade_step(lvl);
     fade_step(FADE_STEPS);
@@ -2491,6 +2646,7 @@ int m_main(void) {
         e += ((128 - e) >> 2) + 2; if (e > 128) e = 128;
         SHARED_UC->eye_h = (uint8_t)e;
         SHARED_UC->frame_count++;
+        prof_mark_render(6);
         raycast_render();
         swapBuffers();
     }
@@ -2516,8 +2672,10 @@ int m_main(void) {
      * REBUILT whenever a fold changes, and the unroll is animated by a damped
      * integer spring — rows slide out from under the header (clipped until
      * they emerge) and the rows below visibly bounce as the spring settles. */
-    enum { IT_MAP, IT_PROC, IT_SEP, IT_FOLD, IT_CTRL, IT_VIEW };
-    struct { uint8_t kind; uint8_t map; const char *label; } items[40];
+    enum { IT_MAP, IT_PROC, IT_SEP, IT_FOLD, IT_CTRL, IT_VIEW, IT_ATTR };
+    /* 44: the tier caps top out at 38 rows, and the fixed tail (gap +
+     * CONTROLS + ASSET VIEWER + ATTRACT MODE) adds four more. */
+    struct { uint8_t kind; uint8_t map; const char *label; } items[44];
     int n_items = 0;
     /* Tier blocks (see custom_maps.h): core | curated | community. The
      * community block is empty in the flagship ROM, so its group simply never
@@ -2572,11 +2730,23 @@ int m_main(void) {
     {
         uint16_t prev_pad = 0xFFFF;
         int committing = 0;       /* map/proc chosen -> capture + break this frame */
+        uint32_t idle = 0;        /* frames untouched -> attract mode */
         for (;;) {
             HwMdReadPad(0);
             uint16_t pad = MARS_SYS_COMM8;
             uint16_t pressed = (uint16_t)(pad & ~prev_pad);
             prev_pad = pad;
+
+            /* ATTRACT arm: a quiet start list for ~25s commits PROCEDURAL on
+             * its own and the autopilot takes it from Phase B. Any bit of
+             * input restarts the clock. */
+            if (pad & ~SEGA_CTRL_TYPE) idle = 0;
+            else if (++idle >= ATTRACT_IDLE_FRAMES && !committing) {
+                for (int i = 0; i < n_items; i++)
+                    if (items[i].kind == IT_PROC) { cur = i; break; }
+                g_attract = 1;
+                committing = 1;
+            }
 
             if (rebuild_items) {
                 rebuild_items = 0;
@@ -2647,6 +2817,8 @@ int m_main(void) {
                 items[n_items].label = "CONTROLS"; n_items++;
                 items[n_items].kind = IT_VIEW; items[n_items].map = 0;
                 items[n_items].label = "ASSET VIEWER"; n_items++;
+                items[n_items].kind = IT_ATTR; items[n_items].map = 0;
+                items[n_items].label = "ATTRACT MODE"; n_items++;
 
                 if (refocus_grp >= 0) {
                     for (int i = 0; i < n_items; i++)
@@ -2719,6 +2891,14 @@ int m_main(void) {
                     prev_pad = 0xFFFF;       /* swallow the still-held button */
                     continue;
                 }
+                if (items[cur].kind == IT_ATTR) {
+                    /* The idle path, on demand: repoint at PROCEDURAL and
+                     * commit with the attract flag up — same flip, same
+                     * lobby walk-out, same any-button-ends-the-show. */
+                    for (int i = 0; i < n_items; i++)
+                        if (items[i].kind == IT_PROC) { cur = i; break; }
+                    g_attract = 1;
+                }
                 if (items[cur].kind != IT_FOLD) committing = 1;
             }
             /* MODE+A: cycle the exit transform and preview it slowed,
@@ -2732,6 +2912,7 @@ int m_main(void) {
             frame++;
 
             SHARED_UC->frame_count++;
+            prof_mark_render(7);
             raycast_render();                    /* stationary lobby view */
             uint8_t *fb_text = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
             /* Smoked-glass panel first, then the text over it. Fixed bounds
@@ -2855,8 +3036,9 @@ int m_main(void) {
     /* Phase A.5 — procedural weight tuning. Only when PROCEDURAL is chosen:
      * the player dials the generation mix (or leaves the balanced default)
      * before walking out. UP/DOWN pick a knob, LEFT/RIGHT adjust it, C resets
-     * to defaults, START locks it in. Drawn over the live lobby view. */
-    if (items[cur].kind == IT_PROC) {
+     * to defaults, START locks it in. Drawn over the live lobby view.
+     * Attract skips the tuning and demos the balanced defaults. */
+    if (items[cur].kind == IT_PROC && !g_attract) {
         static const char *const labels[6] = {
             "OPENNESS    ", "PARTITIONS  ", "CRAWLSPACES ",
             "OUTLETS     ", "SPOTTED     ", "SEE-OVER    " };
@@ -2882,6 +3064,7 @@ int m_main(void) {
             frame++;
 
             SHARED_UC->frame_count++;
+            prof_mark_render(2);                          /* start-list loop */
             raycast_render();                          /* live lobby behind */
             uint8_t *fb_text = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
             font_draw_string(fb_text, (SCREEN_W - 15 * 8) / 2, 36,
@@ -2918,11 +3101,21 @@ int m_main(void) {
 
     /* Phase B — menu dismissed, choice locked. Walk up to the black void
      * (world_map cell == 2, the dark exit doorway along the east wall) and
-     * step through it. */
+     * step through it. In attract the autopilot does the walking; a real
+     * press mid-lobby just hands the controls over (the commit stands). */
     {
+        if (g_attract) raycast_attract_reset();
+        g_pace_scope = 1;              /* pacing covers the walk-in and the level */
+        uint16_t hand_prev = 0xFFFF;   /* swallow the press that launched the
+                                        * demo (the ATTRACT MODE confirm is
+                                        * still held here) — only a FRESH
+                                        * press hands the controls over */
         for (;;) {
             HwMdReadPad(0);
             uint16_t pad = MARS_SYS_COMM8;
+            if (g_attract && (pad & ~hand_prev & ~SEGA_CTRL_TYPE)) g_attract = 0;
+            hand_prev = pad;
+            if (g_attract) pad = raycast_attract_pad();
             metrics_mode_check(pad);
             /* MODE is a combo modifier: while held, UP/DOWN drive the automap
          * zoom, so they must not also walk the player. */
@@ -2937,6 +3130,7 @@ int m_main(void) {
                 (pcy + 1 < MAP_H && world_map[pcy + 1][pcx] == 2) ||
                 (pcy - 1 >= 0    && world_map[pcy - 1][pcx] == 2)) break;
             SHARED_UC->frame_count++;
+            prof_mark_render(8);
             raycast_render();
             uint8_t *fb_text = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
             if (g_metrics_on) { prof_sample_and_draw(fb_text); pos_draw(fb_text); }
@@ -2958,6 +3152,12 @@ int m_main(void) {
     if (items[cur].kind == IT_PROC) {
         g_custom_current = -1;
         g_procgen_seed = (uint32_t)frame * 1000003u + (uint32_t)player.x;
+        if (diag_cfg[14]) g_procgen_seed = 0x1234567u;   /* benchmark: fixed map */
+        /* Attract's zero-input path makes frame and player.x constants, so
+         * every power-on would demo the same first level. The free-running
+         * timer's low bits at this instant are the one thing the hardware
+         * still varies — fold them in. */
+        if (g_attract) g_procgen_seed ^= (uint32_t)prof_read_frt() << 8;
         procgen_run(g_procgen_seed);
         player.x = FX(16.5); player.y = FX(28.5); player.angle = 192;
     } else if (custom_pick_count > 0) {
@@ -2973,11 +3173,33 @@ int m_main(void) {
     for (int lvl = 6; lvl < FADE_STEPS; lvl += 6) fade_step(lvl);
     fade_step(FADE_STEPS);
 
+    raycast_attract_reset();       /* new map underfoot either way */
+
     for (;;) {
         /* Read the joypad up-front so the menu can both react to
          * START and tell player_update to skip movement when open. */
         HwMdReadPad(0);
         uint16_t pad = MARS_SYS_COMM8;
+
+        /* ATTRACT: any real input ends the show and fades back to the start
+         * list (this frame's press is swallowed — it meant "stop", not
+         * "open a menu"). Otherwise the autopilot IS the joypad. */
+        if (g_attract) {
+            if (pad & ~SEGA_CTRL_TYPE) {
+                g_attract = 0;
+                g_lobby_request = 1;
+                pad = 0;
+            } else
+                pad = raycast_attract_pad();
+        }
+        /* diag_cfg[14]: benchmark. Pinning the RENDER pose was not enough --
+         * the autopilot kept walking the real player underneath it, so the
+         * level advanced and the scene differed between builds (wall cover
+         * drifted 9% -> 13% and H moved 33ms, which reads exactly like a
+         * regression). Freeze the world here, AFTER the menu has launched a
+         * level and the walk-in crawl has finished, so the benchmark is a
+         * real in-level scene that is identical in every build. */
+        if (diag_cfg[14] && g_crawl == 0) pad = 0;
 
         menu_update(pad);
         raycast_glass_sample();   /* game-on-glass: drink the COMM broadcast */
@@ -3148,6 +3370,7 @@ int m_main(void) {
         /* Tick the shared frame counter before render so both CPUs
          * read the same value when computing the distant-wall strobe. */
         SHARED_UC->frame_count++;
+        prof_mark_render(1);
         raycast_render();
         /* Corridor set piece paints over the whole frame (the render above
          * still ran: it keeps both CPUs' pipeline and the audio pump fed). */
@@ -3164,7 +3387,8 @@ int m_main(void) {
         if (g_padtest_on) pad_test_draw(fb_text, pad);
         { uint16_t n = prof_read_frt(); prof_post_hud = (uint16_t)(n - t_post); t_post = n; }
         swapBuffers();
-        { uint16_t n = prof_read_frt(); prof_post_swap = (uint16_t)(n - t_post); }
+        { uint16_t n = prof_read_frt(); prof_post_swap = (uint16_t)(n - t_post);
+          prof_logic_t0 = n; }
 
         /* ── ULTRA REST PAIR (TESTING>ULTRA) ────────────────────────────────
          * The stillness ratchet already spends stationary frames on full res;
@@ -3223,6 +3447,10 @@ int m_main(void) {
              * (Mike, 2026-08-12 — the moment ULTRA first started arming).
              * Quiet rooms still supersample; rooms with a live screen don't. */
             if (SHARED_UC->pvm_static_live)      gate |= 0x0800;
+            /* Attract: the bot pauses (door swings, turning in place) read
+             * as "standing still" — parking would freeze the show on one
+             * frame until a human walked over. The demo never rests. */
+            if (g_attract)                       gate |= 0x1000;
             g_ultra_gate = gate;
             int ultra_ok = (gate == 0);
             if (!ultra_ok) ultra_dwell = 0;
@@ -3241,6 +3469,7 @@ int m_main(void) {
                      * park holds one motionless frame; nothing can shimmer. */
                     g_ultra_parks++;
                     SHARED_UC->ultra_twin = 1;   /* pass A: frozen state, no jitter */
+                    prof_mark_render(9);
                     raycast_render();
                     uint8_t *fbu = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
                     /* Stash A above _end — the hero-overlay region plus the
@@ -3256,6 +3485,7 @@ int m_main(void) {
                     for (int i = 0; i < (SCREEN_W * SCREEN_H) / 4; i++)
                         ua_dst[i] = ua_src[i];
                     SHARED_UC->ultra_twin = 2;   /* pass B: frozen + half-column jitter */
+                    prof_mark_render(10);
                     raycast_render();
                     SHARED_UC->ultra_twin = 0;
                     /* Merge A into B, word-granular (a byte store of 0 would
@@ -3317,6 +3547,9 @@ int m_main(void) {
      * loop back to the start list. */
     for (int lvl = FADE_STEPS; lvl >= 0; lvl -= 2) fade_step(lvl);
     raycast_exit_pullup(0, 1);        /* zero the pitch channel */
+    g_pullup = g_crawl = 0;           /* a mid-climb exit (attract cancel,
+                                       * menu) must not resume in the lobby */
+    g_pace_scope = 0;                 /* lobby list is never paced */
     SHARED_UC->eye_h = 128;
     SHARED_UC->pitch_y = 0;
     g_custom_current = -1;

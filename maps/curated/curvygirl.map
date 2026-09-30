@@ -1,7 +1,7 @@
 # curvy girl.map
 name: CURVY GIRL
 size: 32x32
-spawn: 7.5, 16.5 facing=S
+spawn: 5.5, 31.5 facing=N
 role: curated
 author: SmokeMonsterPacks
 next: SUBFLOOR 988,793
@@ -97,7 +97,6 @@ neanderthal 29.5,30.5 face=N
 neanderthal 31.5,30.5 face=N
 
 [dark]
-0,19 -> 10,31
 5,7 -> 5,7
 6,6 -> 6,6
 7,5 -> 7,5
@@ -125,7 +124,6 @@ neanderthal 31.5,30.5 face=N
 30,6 -> 31,7
 31,5 -> 31,5
 16,1 -> 17,1
-7,1 -> 17,16
 7,16 -> 7,16
 28,12 -> 31,14
 31,15 -> 31,16

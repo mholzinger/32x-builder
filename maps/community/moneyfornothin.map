@@ -1,0 +1,63 @@
+# money for nothin.map
+name: MONEY FOR NOTHIN
+size: 8x8
+spawn: 6.5, 7.5 facing=N
+role: community
+
+[grid]
+........
+........
+........
+........
+........
+........
+........
+........
+
+[partitions]
+0,3 -> 2,3  style=chevron height=full crawl=no
+3,3 -> 3,0  style=chevron height=full crawl=no
+1,0 -> 0,0  style=chevron height=full crawl=no
+5,8 -> 5,2  style=spotted height=half crawl=no
+0,4 -> 3,4  style=spotted height=low crawl=no
+3,5 -> 0,5  style=spotted height=low crawl=no
+0,6 -> 3,6  style=spotted height=low crawl=no
+3,7 -> 0,7  style=spotted height=low crawl=no
+
+[decals]
+pvm    0.5,0.5 face=N
+exit_hole 0.5,0 face=N
+chair  2.5,2.5 face=N
+pvm    5.5,6.5 face=N
+outlet 3,2.5 face=W
+outlet 1.5,8 face=S
+torn3  8,7.5 face=E
+torn3  8,6.5 face=E
+torn3  8,5.5 face=E
+torn3  8,4.5 face=E
+torn3  8,3.5 face=E
+torn3  8,2.5 face=E
+torn3  8,1.5 face=E
+torn3  8,0.5 face=E
+outlet 5.5,0 face=N
+outlet 0,5.5 face=W
+outlet 1.5,0 face=N
+
+[lights]
+6,6
+5,6
+6,4
+5,4
+6,2
+5,2
+5,0
+6,0
+7,6
+7,4
+7,2
+7,0
+
+[options]
+place_outlets: 0
+place_exit_door: 0
+lobby_ceiling: 0

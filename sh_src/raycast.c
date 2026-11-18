@@ -3,6 +3,10 @@
 #include "shared.h"
 #include "menu.h"
 #include "sh2_asm.h"
+#include "diag_cfg.h"
+#include "furniture_lab.h"
+#include "furniture_mac_config.h"
+#include <sh2zam/divu_experimental.h>
 #include "sin_table.h"
 #include "wall_tex.h"
 #include "wall_tex_hi.h"
@@ -19,24 +23,13 @@
  * mars.ld. No behavior change — pure instruction-fetch speedup. */
 #define RAMTEXT __attribute__((section(".ramtext")))
 
-/* Diagnostic config block. Lives in ROM .rodata behind a findable magic so a
- * measurement run is ONE binary plus a one-byte patch — no recompile, no code
- * layout shift, which is the only way an SH-2 A/B is trustworthy (layout noise
- * alone moves numbers 5-10%). This is what made the 2026-09-24 hardware
- * session possible; see devdoc/SH2-CONTENTION-AND-FRAME-ACCOUNTING.md.
- *   [8]  contention probe: the secondary skips its half and holds the bus one
- *        way for a fixed window — 1 = park (no bus), 2 = FB word stores,
- *        3 = SDRAM line fills. Attributes cross-CPU contention to a port.
- *   [9]  pin the column split at 160. REQUIRED for any per-pass A/B: the
- *        adaptive balancer reacts to the partner's time, so anything that
- *        changes what the secondary does silently changes the primary's
- *        workload (it manufactured a textbook fake 44% result before this
- *        byte existed).
- *   [10] metrics HUD up from boot, so a run is readable over SSH with no pad.
- * volatile so each gate is a real ROM read, not a folded constant. Ships zeroed;
- * a patched ROM is a lab instrument and is never released. */
-const volatile uint8_t diag_cfg[24] = {'D','I','A','G','C','F','G','1',
-                                       0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0};
+/* THE definition of the diagnostic config block. Every flag's meaning, the
+ * magic-offset trap and the non-zero shipping defaults are documented once in
+ * diag_cfg.h; this is only the storage. Keep the initializer DIAG_CFG_SIZE
+ * bytes wide: bytes 0-7 are the magic, 8..31 the flags. */
+const volatile uint8_t diag_cfg[DIAG_CFG_SIZE] = {'D','I','A','G','C','F','G','1',
+                                       0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,
+                                       0,0,0,0, 1,0,1,0};
 
 /* Player spawn — south end of the col-16 spine corridor in the
  * hand-tuned 32x32 Backrooms map. Walls flank tightly at cols 15/17
@@ -316,6 +309,9 @@ uint8_t world_map[MAP_H][MAP_W];
 /* WALLS=LOD depth bands (perpDist). Below NEAR = full res, NEAR..FAR = half,
  * beyond FAR = quarter + dither. Tunable — where the three zones fall. */
 #define LOD_T_NEAR        FX(2)
+/* Balanced protects contact-distance surfaces, with only a 25% horizontal
+ * sampling reduction elsewhere. Full-height rows and door signs stay native. */
+#define BALANCED_NEAR    FX(1)
 #define LOD_T_FAR         FX(4)
 /* B-fix: a see-over partition THIS close overrides the LOD near-band drop and
  * forces the quad back to full horizontal res. The near-band drop (lod_near_cs)
@@ -385,10 +381,86 @@ static uint8_t bg_distv[SCREEN_W];   /* depth >> 12 (1/16 cell, range 16 cells):
 static int16_t seam_top[SCREEN_W];
 static int16_t seam_bot[SCREEN_W];
 #define SEAM_VALID(c) (seam_top[c] >= 0)
+
+/* SUB-BLOCK SEAM DITHER — where a silhouette edge lands on the visible grid.
+ *
+ * `num`/`den` is the interpolated edge in rows, carried at 1/den precision.
+ * `gstep` is the row grid the display can actually show: 1 normally, 2 under
+ * VERT, where the line table reads each row-pair from a single even row.
+ *
+ * At gstep 1 this is the old truncation and nothing changes. At gstep 2 the
+ * edge can only land on an even row, so the staircase SEAMS=SMOOTH exists to
+ * kill comes straight back at 2px — a 1px correction is unrepresentable. But
+ * we KNOW the edge to a fraction of a row, so spend that precision sideways
+ * instead of throwing it away: an ordered per-column threshold pushes a
+ * fraction of the columns one block further, and along a seam run that stipple
+ * has exactly the density of the sub-block position. The eye integrates it
+ * back into an edge lying between the two rows — a full-resolution seam faked
+ * on a grid that cannot hold one, which is what the pass did before VERT
+ * halved the rows out from under it.
+ *
+ * diag_cfg[DIAG_NO_SEAM_DITHER] disables the dither (edge rounds to the nearest block), for A/B. */
+static inline int seam_grid_edge(int num, int den, int gstep, int x) {
+    static const uint8_t bayer4[4] = { 0, 2, 1, 3 };
+    if (num < 0) num = 0;
+    if (gstep == 1) return num / den;
+    int q   = den * gstep;                 /* one visible block, in num units */
+    int blk = num / q;
+    int rem = num - blk * q;               /* 0..q-1, position inside the block */
+    /* Phase index: NOT x&3. At cstep 2 only odd columns are interpolated, so
+     * x&3 would only ever reach two of the four phases — and both sit above
+     * the midpoint, which biases every edge downward instead of dithering it.
+     * (x>>1)+x cycles all four across consecutive interpolated columns at
+     * cstep 2 and stays well spread at cstep 4. */
+    int thr = diag_cfg[DIAG_NO_SEAM_DITHER] ? (q >> 1)
+                           : ((int)bayer4[((x >> 1) + x) & 3] * q + (q >> 1)) >> 2;
+    return (blk + (rem > thr)) * gstep;
+}
 /* Set by the wall pass to its own seam_rec each frame. The seam arrays are ONLY
  * written (and only reset to -1) when seam_rec is on, so with SEAMS=HARD and no
  * dither/LOD they hold whatever the last recording frame left behind, forever.
  * The covered-row skip below must not trust stale seams, hence this flag. */
+/* FRAMED VIEWPORT (diag_cfg[DIAG_VIEWPORT_OVERRIDE]). Doom 32X Resurrection renders a 320x140
+ * world window inside a taller screen; we render the full 320x224, which is
+ * most of why it outruns us at equal pixel cost per sample. This crops the
+ * world to a rect and paints the surround black -- the SAME projection, just
+ * less of it visible, exactly how Doom's smaller screen sizes work (not a
+ * squeeze, which would change every projection term).
+ * 288x156 inside a 320x224 screen = 37% fewer pixels, matching their ratio,
+ * with a deliberate frame on all four sides rather than a bare letterbox. */
+int g_vp_x0 = 0, g_vp_x1 = SCREEN_W, g_vp_y0 = 0, g_vp_y1 = SCREEN_H;
+#define VP_INSET_X 16
+#define VP_INSET_Y 34
+static inline void vp_apply(void) {
+    /* menu choice, with diag_cfg[DIAG_VIEWPORT_OVERRIDE] as a benchmark override */
+    int mode = diag_cfg[DIAG_VIEWPORT_OVERRIDE] ? (diag_cfg[DIAG_VIEWPORT_OVERRIDE] == 2 ? 1 : 2) : SHARED_UC->vp_mode;
+    if (mode == 1) {                  /* WIDE: crop rows only, full width */
+        g_vp_x0 = 0;           g_vp_x1 = SCREEN_W;
+        g_vp_y0 = VP_INSET_Y;  g_vp_y1 = SCREEN_H - VP_INSET_Y;
+    } else if (mode == 2) {           /* FRAMED: black on all four sides */
+        g_vp_x0 = VP_INSET_X;  g_vp_x1 = SCREEN_W - VP_INSET_X;
+        g_vp_y0 = VP_INSET_Y;  g_vp_y1 = SCREEN_H - VP_INSET_Y;
+    } else {
+        g_vp_x0 = 0; g_vp_x1 = SCREEN_W; g_vp_y0 = 0; g_vp_y1 = SCREEN_H;
+    }
+}
+
+/* Does the VDP own the clear this frame? See raycast_clear_fill().
+ *
+ * Only in FULL. WIDE and FRAMED need three spans per row (black | gradient |
+ * black) and the fill engine emits one constant word per run, so those modes
+ * would need three fills per row instead of one — more register round-trips
+ * than the CPU clear it replaces, on top of a pass the CPU must then re-enter
+ * anyway for the surround. They keep the CPU clear.
+ *
+ * Read from the raw inputs rather than g_vp_*, because the secondary calls
+ * raycast_clear_half() without having run vp_apply() itself.
+ *
+ * diag_cfg[DIAG_AUTOFILL_OFF] DISABLES this (it gated it ON while the pass was unproven). */
+static inline int clear_on_vdp(void) {
+    return !diag_cfg[DIAG_AUTOFILL_OFF] && !SHARED_UC->vp_mode && !diag_cfg[DIAG_VIEWPORT_OVERRIDE];
+}
+
 static int g_seam_rec_on = 0;
 
 /* COVERED-ROW SKIP. Ceiling paints [0,horizon) and carpet paints [horizon,
@@ -758,8 +830,19 @@ uint8_t pedge_cell[MAP_H][MAP_W];
 uint8_t prun_lo_w[MAP_H][MAP_W + 1], prun_hi_w[MAP_H][MAP_W + 1];
 uint8_t prun_lo_n[MAP_H + 1][MAP_W], prun_hi_n[MAP_H + 1][MAP_W];
 void pedge_build_cells(void);
-volatile uint16_t prof_dda_steps = 0;   /* primary half: DDA steps walked/frame */
+volatile uint16_t prof_dda_steps = 0;
+volatile uint16_t prof_wall_dda_ticks = 0;  /* ray walk inside the wall pass */
+volatile uint16_t prof_wall_lut_ticks = 0;  /* per-column shade-LUT build */
+volatile uint16_t prof_wall_emit_ticks = 0; /* per-column pixel emit */   /* primary half: DDA steps walked/frame */
 volatile uint16_t prof_dda_fat   = 0;   /* primary half: steps in the slab-gate path */
+/* SEAMS=SMOOTH work, per frame, primary half. _blk counts blocks reaching the
+ * interpolation; _skip counts those the flat/depth-jump tests reject; _px is
+ * fringe pixels actually written. Without these, "the seam pass is running"
+ * and "the seam pass is doing anything" are indistinguishable from a
+ * screenshot — a scene of flat distant walls rejects nearly every block. */
+volatile uint16_t prof_seam_blk  = 0;
+volatile uint16_t prof_seam_skip = 0;
+volatile uint16_t prof_seam_px   = 0;
 /* Partition-campaign counters (primary half, per frame) — where do the wall
  * pass's ticks actually go? Kept vs promoted vs overlay columns + the
  * run-extent walk, which re-scans the whole run per contact per column. */
@@ -2134,6 +2217,9 @@ static void stage_textures_to_sdram(void) {
 
 static void raycast_capture_exit_view(void);   /* exit telegraph (below) */
 void raycast_init(void) {
+#if FURNITURE_MAC_EXPERIMENT
+    fl_prepare_pose_meshes();
+#endif
     stage_textures_to_sdram();
     build_palette();
     build_shading_tables();
@@ -4926,6 +5012,11 @@ static void draw_panel_face(uint8_t *fb, int col_start, int col_end,
             fc->sx[3],fc->sy[3], TW, TH);
 }
 
+#if FURNITURE_MAC_EXPERIMENT
+__attribute__((used)) const char furniture_mac_feature[8] = {'F','U','R','N','M','A','C','1'};
+#endif
+volatile uint16_t prof_furniture_vertices; /* primary-only diagnostic count */
+
 static void draw_chair_3d(int i, int col_start, int col_end,
         fx_t px, fx_t py, fx_t dirX, fx_t dirY, fx_t planeX, fx_t planeY,
         fx_t inv_det, int horizon_y, uint8_t *fb,
@@ -4949,6 +5040,20 @@ static void draw_chair_3d(int i, int col_start, int col_end,
      * The old 0.25 dropped the FRONT faces while the player was still
      * legally outside the hitbox: 'visually clips through the chair'. */
     const fx_t NEARC = FX(0.08);
+#if FURNITURE_MAC_EXPERIMENT
+    /* Diagnostic 29=3: immutable scaled ROM mesh + prepared MAC, corrected
+     * back to the engine's separate product floors. Both CPUs own their
+     * output and plan; the only shared metadata is immutable after init. */
+    sh2z_vec3_t posed[FL_MAX];
+    int pose_cached = 0;
+    if (diag_cfg[DIAG_FURNITURE_RECIP] == 3) {
+        unsigned model = mboxes == chair_boxes ? 0 : mboxes == desk_boxes ? 1
+                       : mboxes == pvm_boxes ? 2 : mboxes == desk_pvm_boxes ? 3 : 4;
+        pose_cached = fl_pose_exact(posed, model, world_h, fc, fs, cx-px, cy-py);
+    }
+
+
+#endif
 
     /* Screen coords are 16-bit: the near-clip (depth >= FX(0.2)) bounds every
      * projected corner to well under +/-1000, so int16 is lossless and takes
@@ -4964,21 +5069,30 @@ static void draw_chair_3d(int i, int col_start, int col_end,
     boxmodel_order(mboxes, mnboxes, px - cx, py - cy, fc, fs, world_h,
                    SHARED_UC->eye_h, border);
 
+    if (col_start == 0 && diag_cfg[DIAG_GAMEPLAY_BENCH]) prof_furniture_vertices += mnboxes * 8;
     for (int bo = 0; bo < mnboxes; bo++) {
         int b = border[bo];
         const cbox_t *bx = &mboxes[b];
         int csx[8], csy[8], cclip[8];
         fx_t cdep[8];
         for (int v = 0; v < 8; v++) {
-            int16_t cvx, cvy, cvz;                     /* 8.8 model */
-            cbox_corner(bx, v, &cvx, &cvy, &cvz);      /* wedge-aware */
-            int32_t mx = cvx, my = cvy, mz = cvz;
-            fx_t wx = (fx_t)((mx * world_h) >> 8);            /* model -> world fx */
-            fx_t wy = (fx_t)((my * world_h) >> 8);            /* height above floor */
-            fx_t wz = (fx_t)((mz * world_h) >> 8);
-            fx_t rx = FX_MUL(wx, fc) + FX_MUL(wz, fs);        /* rotate by facing */
-            fx_t rz = -FX_MUL(wx, fs) + FX_MUL(wz, fc);
-            fx_t ddx = (cx + rx) - px, ddy = (cy + rz) - py;
+            fx_t wy, ddx, ddy;
+#if FURNITURE_MAC_EXPERIMENT
+            if (pose_cached) {
+                wy = posed[b*8+v].y; ddx = posed[b*8+v].x; ddy = posed[b*8+v].z;
+            } else
+#endif
+            {
+                int16_t cvx, cvy, cvz;
+                cbox_corner(bx, v, &cvx, &cvy, &cvz);
+                int32_t mx = cvx, my = cvy, mz = cvz;
+                fx_t wx = (fx_t)((mx * world_h) >> 8);
+                wy = (fx_t)((my * world_h) >> 8);
+                fx_t wz = (fx_t)((mz * world_h) >> 8);
+                fx_t rx = FX_MUL(wx, fc) + FX_MUL(wz, fs);
+                fx_t rz = -FX_MUL(wx, fs) + FX_MUL(wz, fc);
+                ddx = (cx + rx) - px; ddy = (cy + rz) - py;
+            }
             fx_t depth = FX_MUL(inv_det, -FX_MUL(planeY, ddx) + FX_MUL(planeX, ddy));
             cdep[v] = depth;
             cclip[v] = depth < NEARC;
@@ -4986,8 +5100,21 @@ static void draw_chair_3d(int i, int col_start, int col_end,
             /* One reciprocal, then multiplies: screenX, floor row, and the
              * height offset all divide by depth — three HW divides per vertex
              * (56 verts x 2 CPUs) was the chair's dominant cost. */
-            fx_t inv_d = fx_div_hw(FX_ONE, depth);            /* 1/depth, 16.16 */
-            fx_t lat = FX_MUL(inv_det, FX_MUL(dirY, ddx) - FX_MUL(dirX, ddy));
+            fx_t inv_d, lat;
+            unsigned div_mode = diag_cfg[DIAG_FURNITURE_RECIP];
+            if (div_mode == 2) {
+                /* Exclusive per-CPU divider use: only fixed-point multiplies
+                 * between start/finish. Both depths have passed NEARC, so
+                 * the quotient fits. Existing ISRs do not use DIVU. */
+                sh2z_divu_t pending;
+                sh2z_divu_start16(&pending, FX_ONE, depth);
+                lat = FX_MUL(inv_det, FX_MUL(dirY, ddx) - FX_MUL(dirX, ddy));
+                inv_d = sh2z_divu_finish(&pending, 0);
+            } else {
+                inv_d = div_mode == 1 ? sh2z_divu_div16(FX_ONE, depth, 0)
+                                      : fx_div_hw(FX_ONE, depth);
+                lat = FX_MUL(inv_det, FX_MUL(dirY, ddx) - FX_MUL(dirX, ddy));
+            }
             csx[v] = (SCREEN_W >> 1)
                    + (int)(((int32_t)(SCREEN_W >> 1) * FX_MUL(lat, inv_d)) >> FX_SHIFT);
             int floor_y = horizon_y + (int)(((int64_t)focal * inv_d) >> FX_SHIFT);
@@ -5041,8 +5168,18 @@ static void draw_chair_3d(int i, int col_start, int col_end,
                 fx_t dxc = (cx + rxc) - px, dyc = (cy + rzc) - py;
                 fx_t dc = FX_MUL(inv_det, -FX_MUL(planeY, dxc) + FX_MUL(planeX, dyc));
                 if (dc >= NEARC) {
-                    fx_t idc = fx_div_hw(FX_ONE, dc);
-                    fx_t latc = FX_MUL(inv_det, FX_MUL(dirY, dxc) - FX_MUL(dirX, dyc));
+                    fx_t idc, latc;
+                    unsigned div_mode = diag_cfg[DIAG_FURNITURE_RECIP];
+                    if (div_mode == 2) {
+                        sh2z_divu_t pending;
+                        sh2z_divu_start16(&pending, FX_ONE, dc);
+                        latc = FX_MUL(inv_det, FX_MUL(dirY, dxc) - FX_MUL(dirX, dyc));
+                        idc = sh2z_divu_finish(&pending, 0);
+                    } else {
+                        idc = div_mode == 1 ? sh2z_divu_div16(FX_ONE, dc, 0)
+                                           : fx_div_hw(FX_ONE, dc);
+                        latc = FX_MUL(inv_det, FX_MUL(dirY, dxc) - FX_MUL(dirX, dyc));
+                    }
                     faces[nf].ccx = (int16_t)((SCREEN_W >> 1)
                         + (int)(((int32_t)(SCREEN_W >> 1) * FX_MUL(latc, idc)) >> FX_SHIFT));
                     int fyc = horizon_y + (int)(((int64_t)focal * idc) >> FX_SHIFT);
@@ -7073,8 +7210,16 @@ RAMTEXT void raycast_draw_ceiling_grid(int col_start, int col_end) {
      * row-pair to the even one), so drawing them is pure waste. The
      * clear, carpet and wall passes already skip them; this one did
      * not. (ceiling grid) */
+    /* Occlusion: skip rows the walls will bury in EVERY column of this
+     * half, exactly as raycast_draw_carpet already does. Uses last
+     * frame's seams (COVER_MARGIN absorbs a frame of turning) and is
+     * gated on g_seam_rec_on, so a stale record skips nothing. The
+     * ceiling pass had never used it -- only the carpet did. */
+    int cov_lo_, cov_hi_;
+    covered_rows(col_start, col_end, &cov_lo_, &cov_hi_);
     const int yst = SHARED_UC->wall_vert ? 2 : 1;
-    for (int y = 0; y < horizon_y && y < SCREEN_H; y += yst) {
+    for (int y = (g_vp_y0 + yst - 1) & ~(yst-1); y < horizon_y && y < g_vp_y1; y += yst) {
+        if (!diag_cfg[DIAG_NO_COVERED_SKIP] && y >= cov_lo_ && y <= cov_hi_) continue;  /* buried by walls; [20] disables for A/B */
         int p = horizon_y - y;
         /* rowDist always positive; DIVU is ~3× faster than software. */
         fx_t rowDist = (fx_t)divu_u32((uint32_t)((fx_t)focal_const << FX_SHIFT),
@@ -7119,7 +7264,11 @@ RAMTEXT void raycast_draw_ceiling_grid(int col_start, int col_end) {
             int lo = FX_INT(wxL_s), hi = FX_INT(wxR_s);
             if (lo > hi) { int t = lo; lo = hi; hi = t; }
             if (lo + 1 <= hi) {
-                fx_t scale = FX_DIV((fx_t)SCREEN_W << FX_SHIFT, dX);
+                /* |dX| >= FX_ONE, so the signed 64/32 quotient is
+                 * bounded by SCREEN_W<<16 and fits the hardware divider. */
+                fx_t scale = diag_cfg[DIAG_CEIL_DIV_HW]
+                    ? fx_div_hw((fx_t)SCREEN_W << FX_SHIFT, dX)
+                    : FX_DIV((fx_t)SCREEN_W << FX_SHIFT, dX);
                 for (int target = lo + 1; target <= hi; target++) {
                     fx_t num = ((fx_t)target << FX_SHIFT) - wxL_s;
                     int col = mul_hi32_s(num, scale);
@@ -7142,7 +7291,9 @@ RAMTEXT void raycast_draw_ceiling_grid(int col_start, int col_end) {
             int lo = FX_INT(wyL_s), hi = FX_INT(wyR_s);
             if (lo > hi) { int t = lo; lo = hi; hi = t; }
             if (lo + 1 <= hi) {
-                fx_t scale = FX_DIV((fx_t)SCREEN_W << FX_SHIFT, dY);
+                fx_t scale = diag_cfg[DIAG_CEIL_DIV_HW]
+                    ? fx_div_hw((fx_t)SCREEN_W << FX_SHIFT, dY)
+                    : FX_DIV((fx_t)SCREEN_W << FX_SHIFT, dY);
                 for (int target = lo + 1; target <= hi; target++) {
                     fx_t num = ((fx_t)target << FX_SHIFT) - wyL_s;
                     int col = mul_hi32_s(num, scale);
@@ -7301,7 +7452,7 @@ RAMTEXT static void raycast_draw_low_ceiling(int col_start, int col_end, int sla
      * clear, carpet and wall passes already skip them; this one did
      * not. (low-ceiling slab) */
     const int yst = SHARED_UC->wall_vert ? 2 : 1;
-    for (int y = 0; y < horizon_y && y < SCREEN_H; y += yst) {
+    for (int y = (g_vp_y0 + yst - 1) & ~(yst-1); y < horizon_y && y < g_vp_y1; y += yst) {
         int prow = horizon_y - y;
         if (prow <= 0) continue;
         fx_t rowDist = (fx_t)divu_u32((uint32_t)((fx_t)focal << FX_SHIFT),
@@ -8023,12 +8174,13 @@ RAMTEXT void raycast_draw_carpet(int col_start, int col_end) {
      * CARPETLOD row-halving in with it — the carpet's cost is per-ROW
      * setup (DIVU + muls), which column half-res cannot touch. */
     const int vlod  = SHARED_UC->carpet_vlod
-                   || (diag_cfg[13] && SHARED_UC->wall_halfres);
+                   || (diag_cfg[DIAG_FORCE_RES_MODE] && SHARED_UC->wall_halfres);
     int cov_lo, cov_hi;
     covered_rows(col_start, col_end, &cov_lo, &cov_hi);
     int cystep = vstep;
     int y0 = (vstep == 2) ? ((horizon_y + 2) & ~1) : (horizon_y + 1);
-    for (int y = y0; y < SCREEN_H; y += cystep) {
+    if (y0 < g_vp_y0) y0 = (g_vp_y0 + vstep - 1) & ~(vstep-1);
+    for (int y = y0; y < g_vp_y1; y += cystep) {
         cystep = vstep;
         if (y < 0) continue;        /* extreme positive pitch */
         /* Skip + LOD key off the geometric (unshifted) distance so far rows
@@ -8559,6 +8711,8 @@ RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
      * 1 run-extent LUT, 2 slab gate off (diagnostic pricing). */
     int part_diag = SHARED_UC->part_diag;
     int ovl_acc = 0;                  /* FRT ticks in the see-over overlay (HUD O) */
+    uint16_t dda_acc_ = 0;            /* FRT ticks inside the DDA ray walk */
+    uint16_t lut_acc_ = 0, emit_acc_ = 0;   /* shade-LUT build / pixel emit */
     fx_t px = SHARED_UC->player.x;
     fx_t py = SHARED_UC->player.y;
     uint8_t angle = (uint8_t)SHARED_UC->player.angle;
@@ -8608,6 +8762,7 @@ RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
     const int dissolve    = (cstep0 == 1) ? (int)SHARED_UC->wall_dissolve : 0;
     const int qdither     = (cstep0 == 4) ? (int)SHARED_UC->wall_qdither : 0;
     const int lod         = (cstep0 == 1) ? (int)SHARED_UC->wall_lod : 0;
+    const int balanced = lod == 2;
     const int seam_rec    = seam_smooth || dissolve || qdither || lod;
     g_seam_rec_on = seam_rec;   /* gates the covered-row skip against stale seams */
     if (seam_rec)
@@ -8679,7 +8834,7 @@ RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
      * ALSO drops on wall_dense: a partition-heavy view where full-res-standing is
      * the F:05 pit (~84% of the pass is near slabs). Standing in a normal room
      * stays full — wall_dense only latches when last frame's wall cost was high. */
-    int lod_near_cs = (lod && (SHARED_UC->is_walking || SHARED_UC->is_turning
+    int lod_near_cs = (!balanced && lod && (SHARED_UC->is_walking || SHARED_UC->is_turning
                                || SHARED_UC->wall_dense)) ? 2 : 1;
     for (int qcol = col_start; qcol < col_end; qcol += 4) {
         int cstep_q = cstep0;
@@ -8694,7 +8849,7 @@ RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
              * ties it and looks better, so the far tier is now 2 as well. Note
              * the far-quad dither below assumes 4px blocks, so it must stay OFF
              * for LOD now that no tier produces them. */
-            cstep_q = (lod_prev_depth < LOD_T_NEAR) ? lod_near_cs : 2;
+            cstep_q = balanced ? 1 : ((lod_prev_depth < LOD_T_NEAR) ? lod_near_cs : 2);
             /* B-fix: a near see-over slab pulls this quad back to full res when
              * you STOP to look, overriding the near-band drop that pixel-doubles
              * it. While MOVING we keep the drop (same cstep the walls take), so
@@ -8715,12 +8870,20 @@ RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
             cstep_q = 1;
         fx_t quad_depth = 0x7FFFFFFF;
         fx_t quad_pt = 0x7FFFFFFF;   /* nearest see-over slab in THIS quad */
-        for (int col = qcol; col < qcol + 4 && col < col_end; col += cstep_q) {
-        int cstep = cstep_q;
+        /* Balanced keeps all rows and near/door/near-partition columns native.
+         * Eligible far quads cast at offsets 0,1,2, with only offset 2 writing
+         * its aligned partner: three samples for four columns, never 2x2. */
+        const int balanced_far = balanced && lod_prev_depth >= BALANCED_NEAR
+            && lod_prev_pt >= BALANCED_NEAR
+            && !(door_hi >= 0 && qcol <= door_hi && qcol + 3 >= door_lo);
+        int column_step = cstep_q;
+        for (int col = qcol; col < qcol + 4 && col < col_end; col += column_step) {
+        column_step = (balanced_far && (col & 3) == 2) ? 2 : cstep_q;
+        int cstep = column_step;
         /* hr must track the ACTUAL step (not hr0): a door-vetoed column at
          * cstep 1 inside a global-half frame must byte-write — word-writing
          * from every column would land misaligned stores on the odd ones. */
-        int hr = (cstep_q >= 4) ? 2 : (cstep_q >= 2) ? 1 : 0;
+        int hr = (cstep >= 4) ? 2 : (cstep >= 2) ? 1 : 0;
         WALL_DIST(col) = 0x7FFFFFFF;
         for (int j = 1; j < cstep; j++) WALL_DIST(col + j) = 0x7FFFFFFF;
         PART_TOP(col) = 0;
@@ -8771,6 +8934,8 @@ RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
             slab_offx = FX_MUL(rayDirY, slab_pbx);
             slab_offy = FX_MUL(rayDirX, slab_pby);
         }
+        int em_valid_ = 0;
+        uint16_t dda_t0_ = prof_frt_read();
         int side = 0;
         int hit = 0;
         int hit_cell = 0;          /* world_map value at the hit (2 = black exit) */
@@ -9101,6 +9266,7 @@ RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
             if (world_map[mapY][mapX]) { hit = 1; hit_cell = world_map[mapY][mapX]; break; }
             if (sideDistX > MAX_VIEW_DIST && sideDistY > MAX_VIEW_DIST) break;
         }
+        dda_acc_ += (uint16_t)(prof_frt_read() - dda_t0_);
         /* Do NOT continue on !hit yet — even when the DDA bails because
          * the nearest wall is past MAX_VIEW_DIST, a partition can still
          * be right in front of the player. Initialize perpDist to
@@ -9254,6 +9420,13 @@ RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
             }
         }
 
+        /* A newly encountered close face can precede the previous-quad
+         * estimate. Restore this pair to two native rays before any draw. */
+        if (balanced && cstep == 2 && (perpDist < BALANCED_NEAR ||
+            (fg_n && fg_t[0] < BALANCED_NEAR))) {
+            column_step = cstep = 1;
+            hr = 0;
+        }
         WALL_DIST(col) = perpDist;
         for (int j = 1; j < cstep; j++) WALL_DIST(col + j) = perpDist;
         /* See-over occlusion clip: the nearest partial band is opaque from its
@@ -9430,8 +9603,8 @@ RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
             PART_TOP(col) = pt;
             for (int j = 1; j < cstep; j++) PART_TOP(col + j) = pt;
         }
-        int drawStart = wall_top < 0 ? 0 : wall_top;
-        int drawEnd   = wall_bot >= SCREEN_H ? SCREEN_H - 1 : wall_bot;
+        int drawStart = wall_top < g_vp_y0 ? g_vp_y0 : wall_top;
+        int drawEnd   = wall_bot >= g_vp_y1 ? g_vp_y1 - 1 : wall_bot;
         if (drawEnd >= fg_clip) drawEnd = fg_clip - 1;   /* band-covered rows */
         if (drawEnd < drawStart) goto overlay_pass;      /* fully hidden */
 
@@ -9561,7 +9734,9 @@ RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
         }
         uint8_t shade_lut[WALL_TEX_HI_HEIGHT];
         if (detail_factor) {   /* uniform when faded — skip the build, flat-fill below */
+            { uint16_t lt_=prof_frt_read();
             for (int ty = 0; ty < tex_h; ty++) shade_lut[ty] = lut5[wall_col[ty]];
+              lut_acc_ += (uint16_t)(prof_frt_read()-lt_); }
         }
 
         /* Baseboard molding: bottom ~3% of the wall in world space gets
@@ -9592,6 +9767,7 @@ RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
 
         fx_t tex_step = (fx_t)divu_read();
         fx_t tex_pos  = (fx_t)(drawStart - wall_top) * tex_step;
+        uint16_t em_=prof_frt_read(); em_valid_=1;
         uint8_t *p = (uint8_t *)fb + col + drawStart * SCREEN_W;
         /* Record this anchor's drawn silhouette for the SEAMS=SMOOTH post-pass.
          * We're past every void/hidden/see-over goto, so a solid wall WILL fill
@@ -9893,6 +10069,7 @@ RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
          * baseboard so it reads identical — just shorter. Only reached for the
          * see-over case (lobby T-stem); free-standing dividers were promoted to
          * the fast main path above (fg_hit cleared). */
+        if (em_valid_) emit_acc_ += (uint16_t)(prof_frt_read()-em_);
         overlay_pass: ;
         {
             uint16_t ovl_t0 = fg_n ? prof_frt_read() : 0;
@@ -10224,6 +10401,9 @@ RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
     }       /* per-quad loop */
     if (col_start == 0) {              /* primary half only: HUD reads these */
         prof_dda_steps = (uint16_t)dda_steps;
+        prof_wall_dda_ticks = dda_acc_;
+        prof_wall_lut_ticks = lut_acc_;
+        prof_wall_emit_ticks = emit_acc_;
         prof_dda_fat   = (uint16_t)dda_fat;
         prof_pass_ovl  = (uint16_t)ovl_acc;
         prof_efg_kept  = (uint16_t)efg_kept;
@@ -10244,12 +10424,14 @@ RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
     if (seam_smooth) {
         int sample_bias = (SCREEN_H / 2 - horizon_y) + CROUCH_GRAD_SHIFT(eye_h);
         int last = col_end - cstep0;              /* need the next anchor in-half */
+        int sblk = 0, sskip = 0, spx = 0;
         for (int ac = col_start; ac < last; ac += cstep0) {
             int an = ac + cstep0;
-            if (!SEAM_VALID(ac) || !SEAM_VALID(an)) continue;
+            sblk++;
+            if (!SEAM_VALID(ac) || !SEAM_VALID(an)) { sskip++; continue; }
             int t0 = seam_top[ac], b0 = seam_bot[ac];
             int dt = seam_top[an] - t0, db = seam_bot[an] - b0;
-            if (!dt && !db) continue;            /* block already flat */
+            if (!dt && !db) { sskip++; continue; }   /* block already flat */
             /* Only smooth when both anchors sit on the SAME surface — i.e. their
              * depths are close. A near wall's edge can drop steeply across 4
              * columns yet still be one continuous face (small depth delta); a
@@ -10259,38 +10441,64 @@ RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
              * pixels into a far one behind it. Threshold: half the nearer depth. */
             fx_t d0 = WALL_DIST(ac), d1 = WALL_DIST(an);
             fx_t dd = d1 - d0; if (dd < 0) dd = -dd;
-            if (dd > (d0 >> 1)) continue;        /* depth step → corner, leave hard */
+            if (dd > (d0 >> 1)) { sskip++; continue; }  /* depth step → corner, leave hard */
+            /* Work on the grid the display can show. Under VERT that is the
+             * even rows, and the anchor's own edges must be read on the same
+             * grid or the fringe is measured against rows the emit never
+             * painted: it starts at (drawStart+1)&~1 and runs to the last even
+             * row <= drawEnd. Stepping by gstep also stops the pass writing
+             * odd rows the line table never reads — half its stores, spent on
+             * pixels that could not appear. */
+            const int legacy = diag_cfg[DIAG_LEGACY_SEAM];   /* A/B: the pre-VERT pass, verbatim */
+            const int gstep = (vert && !legacy) ? 2 : 1;
+            const int ylim  = (gstep == 2) ? (SCREEN_H - 2) : (SCREEN_H - 1);
+            int t0g = (gstep == 2) ? ((t0 + 1) & ~1) : t0;
+            int b0g = (gstep == 2) ? (b0 & ~1)       : b0;
+            if (t0g < 0) t0g = 0; else if (t0g > ylim) t0g = ylim;
+            if (b0g < 0) b0g = 0; else if (b0g > ylim) b0g = ylim;
             for (int j = 1; j < cstep0; j++) {
                 int x  = ac + j;
-                int tt = t0 + dt * j / cstep0;
-                int bb = b0 + db * j / cstep0;
-                if (tt < 0) tt = 0; else if (tt >= SCREEN_H) tt = SCREEN_H - 1;
-                if (bb < 0) bb = 0; else if (bb >= SCREEN_H) bb = SCREEN_H - 1;
+                int tt, bb;
+                if (legacy) {          /* pre-VERT math, truncating the delta */
+                    tt = t0 + dt * j / cstep0;
+                    bb = b0 + db * j / cstep0;
+                    if (tt < 0) tt = 0;
+                    if (bb < 0) bb = 0;
+                } else {
+                    tt = seam_grid_edge(t0 * cstep0 + dt * j, cstep0, gstep, x);
+                    bb = seam_grid_edge(b0 * cstep0 + db * j, cstep0, gstep, x);
+                }
+                if (tt > ylim) tt = ylim;
+                if (bb > ylim) bb = ylim;
                 uint8_t *fx = fb + x;
-                /* TOP: shift the wall's top edge from t0 to tt. */
-                if (tt > t0) {                   /* overshoot → restore ceiling */
-                    for (int y = t0; y < tt; y++) {
+                /* TOP: shift the wall's top edge from t0g to tt. */
+                if (tt > t0g) {                  /* overshoot → restore ceiling */
+                    for (int y = t0g; y < tt; y += gstep) {
                         int sy = y + sample_bias;
                         if (y <= horizon_y && sy > SCREEN_H / 2) sy = SCREEN_H / 2;
                         if (sy < 0) sy = 0; else if (sy >= SCREEN_H) sy = SCREEN_H - 1;
-                        fx[y * SCREEN_W] = row_color[sy];
+                        fx[y * SCREEN_W] = row_color[sy]; spx++;
                     }
-                } else if (tt < t0) {            /* undershoot → extend wall up */
-                    uint8_t wc = fx[t0 * SCREEN_W];
-                    for (int y = tt; y < t0; y++) fx[y * SCREEN_W] = wc;
+                } else if (tt < t0g) {           /* undershoot → extend wall up */
+                    uint8_t wc = fx[t0g * SCREEN_W];
+                    for (int y = tt; y < t0g; y += gstep) { fx[y * SCREEN_W] = wc; spx++; }
                 }
-                /* BOTTOM: shift the wall's bottom edge from b0 to bb. */
-                if (bb < b0) {                   /* overshoot → restore floor */
-                    for (int y = bb + 1; y <= b0; y++) {
+                /* BOTTOM: shift the wall's bottom edge from b0g to bb. */
+                if (bb < b0g) {                  /* overshoot → restore floor */
+                    for (int y = bb + gstep; y <= b0g; y += gstep) {
                         int sy = y + sample_bias;
                         if (sy < 0) sy = 0; else if (sy >= SCREEN_H) sy = SCREEN_H - 1;
-                        fx[y * SCREEN_W] = row_color[sy];
+                        fx[y * SCREEN_W] = row_color[sy]; spx++;
                     }
-                } else if (bb > b0) {            /* undershoot → extend wall down */
-                    uint8_t wc = fx[b0 * SCREEN_W];
-                    for (int y = b0 + 1; y <= bb; y++) fx[y * SCREEN_W] = wc;
+                } else if (bb > b0g) {           /* undershoot → extend wall down */
+                    uint8_t wc = fx[b0g * SCREEN_W];
+                    for (int y = b0g + gstep; y <= bb; y += gstep) { fx[y * SCREEN_W] = wc; spx++; }
                 }
             }
+        }
+        if (col_start == 0) {       /* primary half only, so the two CPUs don't race */
+            prof_seam_blk = (uint16_t)sblk; prof_seam_skip = (uint16_t)sskip;
+            prof_seam_px  = (uint16_t)spx;
         }
     }
 
@@ -10385,6 +10593,13 @@ RAMTEXT void raycast_draw_walls(int col_start, int col_end) {
 volatile uint16_t prof_primary_idle_ticks = 0;
 volatile uint16_t prof_primary_half_ticks = 0;
 volatile uint16_t prof_render_span = 0;   /* whole raycast_render, entry to exit */
+/* The 23% of raycast_render that no pass bracket covered. PRE = everything
+ * before the first pass (resolution decision, split controller, purges,
+ * pose publish, dispatch). POST = everything after the sprite pass (the
+ * TAIL barrier wait, wall-cover scan, head-bob line table). */
+volatile uint16_t prof_pre_ticks = 0, prof_post_ticks = 0;
+volatile uint16_t prof_fill_ticks = 0;   /* VDP auto-fill clear */
+static uint16_t prof_post_mark = 0;
 /* Per-pass FRT breakdown of the primary's half (clear/ceiling/carpet/walls). */
 volatile uint16_t prof_pass_clear = 0, prof_pass_ceil = 0,
                   prof_pass_carpet = 0, prof_pass_walls = 0;
@@ -10416,7 +10631,52 @@ static inline uint16_t prof_frt_read(void) {
  * per-row constant fill. Each CPU calls this on its own half so the
  * clear runs in parallel and no row is touched twice. col_start must
  * be a multiple of 4 (we use 32-bit stores = 4 pixels per write). */
+/* VDP AUTO-FILL CLEAR — on by default, diag_cfg[DIAG_AUTOFILL_OFF] disables.
+ *
+ * The 32X VDP can fill framebuffer runs itself and the engine has never used
+ * it. The clear pass is pure blitting with no computation, so it is the one
+ * pass that hands over cleanly. Manual (32XDK 32x-hardware-manual.md, "FILL
+ * Function"): fill time = 7 + 3*length cycles, and "do not access from SH2"
+ * while FEN is set -- so this runs on the primary BEFORE the halves are
+ * dispatched, covers the FULL width, and both CPUs then skip their own clear.
+ *
+ * Two register constraints shape the loop. FILLEN is length-1 capped at 255,
+ * so 256 words per fill. And FILADR only increments A8-A1, so a fill WRAPS
+ * inside its 512-byte page instead of running past it -- a 320-byte row that
+ * straddles a page boundary would corrupt the head of that page. Each row is
+ * therefore split at the boundary when it crosses one. */
+RAMTEXT void raycast_clear_fill(void)
+{
+    int horizon_y   = SCREEN_H / 2 - (int)SHARED_UC->pitch_y;
+    int sample_bias = (SCREEN_H / 2 - horizon_y)
+                    + CROUCH_GRAD_SHIFT(SHARED_UC->eye_h);
+    const int ystep = SHARED_UC->wall_vert ? 2 : 1;
+    /* Word address of the pixel area: the line table occupies the first
+     * 0x200 bytes of the framebuffer window. */
+    const unsigned base_w = 0x200 >> 1;
+    for (int y = 0; y < SCREEN_H; y += ystep) {
+        int sy = y + sample_bias;
+        if (y <= horizon_y && sy > SCREEN_H / 2) sy = SCREEN_H / 2;
+        if (sy < 0)         sy = 0;
+        if (sy >= SCREEN_H) sy = SCREEN_H - 1;
+        uint8_t c = row_color[sy];
+        uint16_t w = (uint16_t)((c << 8) | c);
+        unsigned addr = base_w + (unsigned)y * (SCREEN_W >> 1);
+        unsigned left = SCREEN_W >> 1;              /* words in this row */
+        while (left) {
+            unsigned room = 256u - (addr & 0xFFu);  /* to the page border */
+            unsigned n    = left < room ? left : room;
+            MARS_VDP_FILLEN = (uint16_t)(n - 1);
+            MARS_VDP_FILADR = (uint16_t)addr;
+            MARS_VDP_FILDAT = w;                    /* starts the fill */
+            while (MARS_VDP_FBCTL & MARS_VDP_FEN) { }
+            addr += n; left -= n;
+        }
+    }
+}
+
 RAMTEXT void raycast_clear_half(int col_start, int col_end) {
+    if (clear_on_vdp()) return;                  /* raycast_clear_fill() did it on the VDP */
     uint8_t *fb = fb_pixels();
     uint32_t *fb32 = (uint32_t *)fb;
     int col_words = (col_end - col_start) >> 2;
@@ -10450,11 +10710,22 @@ RAMTEXT void raycast_clear_half(int col_start, int col_end) {
         if (y <= horizon_y && sy > SCREEN_H / 2) sy = SCREEN_H / 2;
         if (sy < 0)         sy = 0;
         if (sy >= SCREEN_H) sy = SCREEN_H - 1;
-        uint8_t  c   = row_color[sy];
+        /* Framed viewport: this pass paints the BLACK SURROUND as well as the
+         * gradient, so it always runs full-width even though the detail
+         * passes are clipped to the world window. Three spans per row:
+         * black | gradient | black. Insets are multiples of 4 so the spans
+         * stay on the 4-pixel word boundary this loop writes. */
+        uint8_t  c   = (y < g_vp_y0 || y >= g_vp_y1) ? 0 : row_color[sy];
         uint32_t c32 = ((uint32_t)c << 24) | ((uint32_t)c << 16)
                      | ((uint32_t)c <<  8) |  (uint32_t)c;
         uint32_t *row = fb32 + y * (SCREEN_W / 4) + col_word_start;
-        for (int x = 0; x < col_words; x++) row[x] = c32;
+        int wl = (g_vp_x0 >> 2) - col_word_start;      /* words before the window */
+        int wr = (g_vp_x1 >> 2) - col_word_start;      /* words up to its right edge */
+        if (wl < 0) wl = 0; else if (wl > col_words) wl = col_words;
+        if (wr < 0) wr = 0; else if (wr > col_words) wr = col_words;
+        for (int x = 0;  x < wl;        x++) row[x] = 0;      /* left rail  */
+        for (int x = wl; x < wr;        x++) row[x] = c32;    /* world      */
+        for (int x = wr; x < col_words; x++) row[x] = 0;      /* right rail */
     }
 }
 
@@ -10464,8 +10735,22 @@ RAMTEXT void raycast_clear_half(int col_start, int col_end) {
  * is last-resort — it only arms when the frame is much slower than the half
  * boundary, AND you're already at half, AND moving. Raised QTR_ON for tolerance:
  * quarter now needs a genuinely struggling frame, not just "a bit heavy". */
-#define AUTO_HALF_ON   13500   /* above → drop to half   (~sub-F:13) */
-#define AUTO_HALF_OFF  11250   /* below → back to full   (~F:16+)    */
+/* AUTO thresholds, in FRT ticks of RENDER cost (the governor's hold is
+ * subtracted before the EMA — see the note at the EMA update). One vblank is
+ * ~2985 ticks, so these read as bucket boundaries: coarsen once the render
+ * alone needs ~3.85 vblanks and therefore cannot hold a 4-vblank bucket, and
+ * lift back once it fits comfortably inside 3. The old 13500/11250 pair was
+ * calibrated against DELIVERED period, which included ~0.3-1.3 vblanks of
+ * governor padding; carrying those numbers over to the decoupled input left
+ * AUTO firing on 2% of frames instead of 17%. */
+#define AUTO_HALF_ON   11500   /* render above ~3.85 vbl → drop to half */
+#define AUTO_HALF_OFF   8800   /* render below ~2.95 vbl → back to full */
+/* Minimum frames between resolution switches. The decoupling removes the
+ * controller-vs-governor limit cycle; this bounds whatever is left, so a
+ * scene sitting on the threshold cannot strobe the whole frame's resolution.
+ * ~16 frames is a quarter-second at these rates — long enough that a switch
+ * reads as the scene changing, not as the picture flickering. */
+#define AUTO_DWELL      16
 #define AUTO_QTR_ON    19000   /* above → allow quarter  (was 16000; more tolerant) */
 #define AUTO_QTR_OFF   15500   /* below → release quarter back to half (stays in half band) */
 
@@ -10487,12 +10772,13 @@ RAMTEXT void raycast_clear_half(int col_start, int col_end) {
 
 void raycast_render(void) {
     uint16_t prof_start = prof_frt_read();
-    /* diag_cfg[14]==2: the benchmark freezes input, so the stillness ratchet
+    vp_apply();
+    /* diag_cfg[DIAG_BENCH_POSE]==2: the benchmark freezes input, so the stillness ratchet
      * would correctly ratchet to FULL and the motion-gated resolution paths
      * would never arm. Claim motion HERE, before the resolution decision
      * reads it -- asserting it later (at the pose publish) was too late and
      * made the shipping AUTO path measure as if it never engaged. */
-    if (diag_cfg[14] == 2) {
+    if (diag_cfg[DIAG_BENCH_POSE] == 2) {
         /* is_walking is a file static derived from real player movement, and
          * the benchmark freezes input, so it reads 0 and the stillness
          * ratchet pins FULL. Set the static itself, not just the shared
@@ -10525,6 +10811,23 @@ void raycast_render(void) {
         uint16_t fdraw = (uint16_t)(prof_start - frame_prev_frt);
         frame_prev_frt = prof_start;
         uint32_t fdelta = (fdraw < 3000) ? (uint32_t)fdraw + 65536u : fdraw;
+        /* Subtract the pacing governor's hold. The hold sits between the
+         * previous render and this one, so entry-to-entry is the DELIVERED
+         * period — a number the governor chooses, not the cost of the scene.
+         * Feeding it back to AUTO closes a loop between two controllers: the
+         * governor pads a fast frame out to its bucket, AUTO reads the padding
+         * as work and stays coarse; the governor then steps the bucket down,
+         * AUTO reads the shorter period as the scene getting cheaper and lifts
+         * to full res, which is genuinely slower, so the governor steps back
+         * up. The pace ring shows the limit cycle directly: 12 resolution
+         * flips per 1024 attract frames, about one every 1.4s, which reads as
+         * the picture going smooth and then jagged again while you walk.
+         * diag_cfg[DIAG_LEGACY_AUTO] restores the coupled behaviour for A/B. */
+        if (!diag_cfg[DIAG_LEGACY_AUTO]) {
+            extern volatile uint16_t prof_pace_hold;
+            uint32_t hold = prof_pace_hold;
+            if (hold < fdelta) fdelta -= hold;
+        }
         frame_ema = (frame_ema - (frame_ema >> 3)) + (fdelta >> 3);
     }
 
@@ -10542,20 +10845,38 @@ void raycast_render(void) {
         eff_hr = 0;
     } else {
         uint8_t mode = SHARED_UC->wall_res_mode;
-        /* diag_cfg[13]: force a WALLS mode for headless benchmarking, encoded
+        /* diag_cfg[DIAG_FORCE_RES_MODE]: force a WALLS mode for headless benchmarking, encoded
          * as mode+1 so that FULL (mode 0) is actually reachable -- a plain
          * value made 0 mean "no override" and silently benchmarked the
          * default instead, which read as "half-res buys nothing". */
-        if (diag_cfg[13]) mode = (uint8_t)(diag_cfg[13] - 1);
+        if (diag_cfg[DIAG_FORCE_RES_MODE]) mode = (uint8_t)(diag_cfg[DIAG_FORCE_RES_MODE] - 1);
         if      (mode == 0) eff_hr = 0;
         else if (mode == 1) eff_hr = 1;
         else if (mode == 3) eff_hr = 0;   /* SERIAL diagnostic: full res */
         else if (mode == 4) eff_hr = 2;   /* QTR: force quarter — inspect the chunk in isolation */
         else if (mode == 5) { eff_hr = 0; vert = 1; }  /* VERT: full horizontal + vertical half-res */
+        else if (mode == 7) {
+            eff_hr = 0;
+            lod = (is_walking || SHARED_UC->is_turning) ? 2 : 0;
+        }
         else if (mode == 6) { eff_hr = 0; lod  = 1; }  /* LOD: full render + depth-banded re-block */
         else {
-            if      (frame_ema > AUTO_HALF_ON)  auto_hr = 1;   /* slower → half */
-            else if (frame_ema < AUTO_HALF_OFF) auto_hr = 0;   /* faster → full */
+            /* diag_cfg[DIAG_LEGACY_AUTO] selects the WHOLE legacy controller — coupled
+             * input, old thresholds, no dwell. Gating only one of the three
+             * produced a nonsense arm (old input measured against the new
+             * thresholds fired on 65% of frames), so the byte moves all of
+             * them together or the A/B means nothing. */
+            const int lg = diag_cfg[DIAG_LEGACY_AUTO];
+            const uint32_t t_on  = lg ? 13500u : AUTO_HALF_ON;
+            const uint32_t t_off = lg ? 11250u : AUTO_HALF_OFF;
+            static int auto_dwell = 0;
+            if (auto_dwell && !lg) auto_dwell--;
+            else {
+                int want = auto_hr;
+                if      (frame_ema > t_on)  want = 1;   /* slower → half */
+                else if (frame_ema < t_off) want = 0;   /* faster → full */
+                if (want != auto_hr) { auto_hr = want; auto_dwell = AUTO_DWELL; }
+            }
             eff_hr = auto_hr;
             /* MOTION-GATED QUARTER (Mike's notion): on a VERY heavy frame, drop to
              * quarter-res ONLY while the player is moving — the 4px chunk is masked
@@ -10653,8 +10974,8 @@ void raycast_render(void) {
      * no gain at all, because past 160 columns what remains is per-column
      * setup plus the row-bound passes no column reduction ever reaches.
      *
-     * diag_cfg[15] disables it, for A/B against the old behaviour. */
-    if (eff_hr >= 1 && !diag_cfg[15]) vert = 1;
+     * diag_cfg[DIAG_NO_COMBINED_AXIS] disables it, for A/B against the old behaviour. */
+    if (eff_hr >= 1 && !diag_cfg[DIAG_NO_COMBINED_AXIS]) vert = 1;
     SHARED_UC->wall_halfres = (uint8_t)eff_hr;
     SHARED_UC->wall_vert    = (uint8_t)vert;
     SHARED_UC->wall_lod     = (uint8_t)lod;
@@ -10683,13 +11004,13 @@ void raycast_render(void) {
     SHARED_UC->player.x     = player.x;
     SHARED_UC->player.y     = player.y;
     SHARED_UC->player.angle = player.angle;
-    /* diag_cfg[14]: BENCHMARK POSE. Attract walks diverge between binaries
+    /* diag_cfg[DIAG_BENCH_POSE]: BENCHMARK POSE. Attract walks diverge between binaries
      * (the procgen seed mixes in the FRT), so cross-build delivery numbers
      * are meaningless -- a "+22%" measured that way was two different levels.
      * Pinning the camera here, at the one point both CPUs read from, makes H
      * and every pass counter comparable across builds. 1 = standing,
      * 2 = reports walking too, which arms the motion-gated resolution paths. */
-    if (diag_cfg[14]) {
+    if (diag_cfg[DIAG_BENCH_POSE] && !diag_cfg[DIAG_GAMEPLAY_BENCH]) {
         SHARED_UC->player.x     = FX(16.5);
         SHARED_UC->player.y     = FX(28.5);
         SHARED_UC->player.angle = 192;
@@ -10753,19 +11074,28 @@ void raycast_render(void) {
              * controller kept pushing into the old clamp and stuck there,
              * one CPU 1.8x busier than the other. 16 keeps the 4-px word
              * alignment and a nonzero share for each CPU. */
-            if      (split < 16)            split = 16;
-            else if (split > SCREEN_W - 16) split = SCREEN_W - 16;
+            if      (split < g_vp_x0 + 16)  split = g_vp_x0 + 16;
+            else if (split > g_vp_x1 - 16)  split = g_vp_x1 - 16;
             split &= ~3;                                 /* clear pass writes 4-px words */
         }
         /* Measurement byte [17]: pin the split so a probe run draws exactly
          * the same columns whatever the secondary is doing — the adaptive
          * controller otherwise rebalances against the probe's synthetic
          * time and silently changes the primary's workload. */
-        if (diag_cfg[9]) split = SCREEN_W / 2;
+        if (diag_cfg[DIAG_PIN_SPLIT]) split = SCREEN_W / 2;
         SHARED_UC->split_col = (uint16_t)split;          /* secondary reads this */
         prof_split_col = (uint16_t)split;
     }
 
+    /* Before MARS_CMD_HALF: the manual forbids SH2 framebuffer access while
+     * FEN is set, so the fill must complete before the secondary is let loose
+     * on its half. Skipped in WIDE/FRAMED — the CPUs clear those themselves,
+     * and running it anyway would pay for both. */
+    if (clear_on_vdp()) {
+        uint16_t f0 = prof_frt_read();
+        raycast_clear_fill();
+        prof_fill_ticks = (uint16_t)(prof_frt_read() - f0);
+    }
     MARS_SYS_COMM4 = MARS_CMD_HALF;
 
     /* WALLS=SERL diagnostic: let the secondary finish its whole half BEFORE
@@ -10784,13 +11114,14 @@ void raycast_render(void) {
     }
 
     uint16_t pp = prof_frt_read();
+    prof_pre_ticks = (uint16_t)(pp - prof_start);
     raycast_clear_half(0, split);
     { uint16_t n = prof_frt_read(); prof_pass_clear  = (uint16_t)(n - pp); pp = n; }
-    raycast_draw_ceiling_grid(0, split);
+    raycast_draw_ceiling_grid(g_vp_x0, split);
     { uint16_t n = prof_frt_read(); prof_pass_ceil   = (uint16_t)(n - pp); pp = n; }
-    raycast_draw_carpet(0, split);
+    raycast_draw_carpet(g_vp_x0, split);
     { uint16_t n = prof_frt_read(); prof_pass_carpet = (uint16_t)(n - pp); pp = n; }
-    raycast_draw_walls(0, split);
+    raycast_draw_walls(g_vp_x0, split);
     { uint16_t n = prof_frt_read(); prof_pass_walls  = (uint16_t)(n - pp); }
     /* OD — wall coverage as a percent of this half's screen area. seam_top/bot
      * hold each column's wall extent and are reset to -1 per frame, so this is a
@@ -10851,7 +11182,6 @@ void raycast_render(void) {
      * settles where the whole barrier-to-barrier blocks match. */
     int sprite_split = raycast_sprite_split(split);
     if (sprite_split < 0) {
-        extern const volatile uint8_t diag_cfg[24];
         static int tail_split = SCREEN_W / 2;
         if (ultra_twin) {
             sprite_split = split;                    /* twin reuses the partner frame */
@@ -10877,18 +11207,20 @@ void raycast_render(void) {
             sprite_split = tail_split;
         }
     }
+    if (sprite_split < g_vp_x0) sprite_split = g_vp_x0;
+    if (sprite_split > g_vp_x1) sprite_split = g_vp_x1;
     SHARED_UC->sprite_split = (uint16_t)sprite_split;
 
     uint16_t ps = prof_frt_read();
     MARS_SYS_COMM4 = MARS_CMD_TAIL;          /* secondary: tail [split,W) + sprites [sprite_split,W) */
-    raycast_draw_tail(0, split);             /* primary:   tail        [0,split)  */
+    raycast_draw_tail(g_vp_x0, split);             /* primary:   tail        [0,split)  */
     { uint16_t n = prof_frt_read(); prof_pass_slab = (uint16_t)(n - ps); ps = n; }
     /* Lights first, then standups — foreground sprites overpaint ceiling-panel
      * pixels in shared rows; the per-column z-test handles walls. */
-    draw_lights(0, sprite_split);
+    draw_lights(g_vp_x0, sprite_split);
     { uint16_t n = prof_frt_read(); prof_pass_lights = (uint16_t)(n - ps); ps = n; }
-    draw_standups(0, sprite_split);
-    { uint16_t n = prof_frt_read(); prof_pass_sprite = (uint16_t)(n - ps); }
+    draw_standups(g_vp_x0, sprite_split);
+    { uint16_t n = prof_frt_read(); prof_pass_sprite = (uint16_t)(n - ps); prof_post_mark = n; }
     /* Barrier: wait for the secondary to finish its tail+sprite half before the
      * page flip makes the frame visible. */
     while (MARS_SYS_COMM4 != MARS_CMD_NONE) {
@@ -10896,6 +11228,26 @@ void raycast_render(void) {
                              "nop\n\tnop\n\tnop\n\tnop\n\t"
                              "nop\n\tnop\n\tnop\n\tnop\n\t"
                              "nop\n\tnop\n\tnop\n\tnop");
+    }
+
+    /* FRAME GUARD. The four main passes clip to the viewport, but the
+     * secondary ones (ceiling caps, exit hole, lights, standups, partition
+     * bands) still draw in screen space and spill into the surround. Rather
+     * than thread the clip through every one of them for a taste test,
+     * repaint the border after everything has drawn. Costs ~26k byte-writes;
+     * if the framed view is kept, clipping those passes properly removes
+     * both this cost and the overdraw underneath it. */
+    if (g_vp_x0 || g_vp_y0) {
+        uint8_t *fbg = fb_pixels();
+        for (int y = 0; y < SCREEN_H; y++) {
+            uint32_t *r = (uint32_t *)(fbg + y * SCREEN_W);
+            if (y < g_vp_y0 || y >= g_vp_y1) {
+                for (int x = 0; x < SCREEN_W / 4; x++) r[x] = 0;
+            } else {
+                for (int x = 0; x < g_vp_x0 / 4; x++) r[x] = 0;
+                for (int x = g_vp_x1 / 4; x < SCREEN_W / 4; x++) r[x] = 0;
+            }
+        }
     }
 
     /* Vertical head bob via framebuffer line table.
@@ -10931,5 +11283,7 @@ void raycast_render(void) {
     /* Whole-function span for the frame-accounting harness: everything
      * raycast_render does, bracketed passes and the unbracketed seams
      * (prologue, sprite_split scan, barriers, line table) alike. */
-    prof_render_span = (uint16_t)(prof_frt_read() - prof_start);
+    { uint16_t e_ = prof_frt_read();
+      prof_render_span = (uint16_t)(e_ - prof_start);
+      prof_post_ticks  = (uint16_t)(e_ - prof_post_mark); }
 }

@@ -1,0 +1,50 @@
+[
+  {
+    "file": "fmac-ram-chair-0.32x",
+    "scene": 6,
+    "mode": 0,
+    "sha256": "9934f58a2d893b33c85ddde52961dce8d1b792d6ac9e6803a109a10fdfeb8cf2"
+  },
+  {
+    "file": "fmac-ram-chair-3.32x",
+    "scene": 6,
+    "mode": 3,
+    "sha256": "723ea25f94d4068a97e5ea45cb27e4015b12e66d34f7d7c1bea7637d4566aa4d"
+  },
+  {
+    "file": "fmac-ram-desk-0.32x",
+    "scene": 7,
+    "mode": 0,
+    "sha256": "33071761a0a7d968110a399bb8c49518514dc62fd14d638084fdf39595997261"
+  },
+  {
+    "file": "fmac-ram-desk-3.32x",
+    "scene": 7,
+    "mode": 3,
+    "sha256": "782bc741bb5989191e9bfb9933887366f5e145a08f6336c5c75d3cf34159ab23"
+  },
+  {
+    "file": "fmac-ram-pvm-0.32x",
+    "scene": 8,
+    "mode": 0,
+    "sha256": "4030fd3b1db7097ad8b27d4fd9e52db0b37730eb1db000bafda499afc28b2445"
+  },
+  {
+    "file": "fmac-ram-pvm-3.32x",
+    "scene": 8,
+    "mode": 3,
+    "sha256": "d71e2e86c65fbe59f6f0562f7f690df3887db27d2b95def9965ece22f2599aea"
+  },
+  {
+    "file": "fmac-ram-deskset-0.32x",
+    "scene": 9,
+    "mode": 0,
+    "sha256": "e0ea3f9b01b7017f425fbc923994816883e2e8caa4c64927c45ad6afc500447d"
+  },
+  {
+    "file": "fmac-ram-deskset-3.32x",
+    "scene": 9,
+    "mode": 3,
+    "sha256": "fc071c749df30a10e422f42346d398bc8839a23d6273399e77df73a57ecc9762"
+  }
+]

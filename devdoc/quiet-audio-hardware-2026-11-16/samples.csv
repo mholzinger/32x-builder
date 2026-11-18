@@ -1,0 +1,13 @@
+scene,resolution,arm,frames,ceiling_ticks_mean,render_ticks_mean,delivered_vblanks_mean_x100,wall_ticks_mean,lut_ticks_mean,capture
+1,full,0,64,769,19430,811,12035,747,20261116_194400-quiet-audio-s1-a0-64f.png
+1,full,1,64,770,19499,811,12031,748,20261116_194436-quiet-audio-s1-a1-64f.png
+2,full,0,64,2498,18592,800,7063,0,20261116_194512-quiet-audio-s2-a0-64f.png
+2,full,1,64,2501,17842,800,7206,0,20261116_194548-quiet-audio-s2-a1-64f.png
+3,full,0,64,2153,27071,1100,6581,0,20261116_194624-quiet-audio-s3-a0-64f.png
+3,full,1,64,2153,26283,1031,6639,0,20261116_194700-quiet-audio-s3-a1-64f.png
+4,full,0,64,710,36647,1400,22915,0,20261116_194736-quiet-audio-s4-a0-64f.png
+4,full,1,64,712,35111,1308,23068,0,20261116_194812-quiet-audio-s4-a1-64f.png
+2,half,0,64,1292,11270,541,3773,0,20261116_194913-quiet-half-s2-a0-64f.png
+2,half,1,64,1291,10834,500,3847,0,20261116_194949-quiet-half-s2-a1-64f.png
+4,half,0,64,370,21529,900,11954,0,20261116_195025-quiet-half-s4-a0-64f.png
+4,half,1,64,371,20431,852,12031,0,20261116_195101-quiet-half-s4-a1-64f.png

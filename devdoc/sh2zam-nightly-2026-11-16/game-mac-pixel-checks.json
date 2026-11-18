@@ -1,0 +1,46 @@
+[
+  {
+    "fixture": "chair",
+    "bank": 1,
+    "rows": [
+      70,
+      223
+    ],
+    "pixels": 49280,
+    "differences": 0,
+    "sha256": "b0e96db86090c2ad179e4992622a3651e66810559ad5e8c1eb55f3932f2dfda5"
+  },
+  {
+    "fixture": "desk",
+    "bank": 1,
+    "rows": [
+      70,
+      223
+    ],
+    "pixels": 49280,
+    "differences": 0,
+    "sha256": "66273f8b5494b6be8a636304a4575de1804917413578458301d767b583e3cdde"
+  },
+  {
+    "fixture": "pvm",
+    "bank": 1,
+    "rows": [
+      70,
+      223
+    ],
+    "pixels": 49280,
+    "differences": 0,
+    "sha256": "1d2929034bd7b2d1386d55ef400b0d673d7cb25da519633b76b3d81fb383b16b"
+  },
+  {
+    "fixture": "deskset",
+    "bank": 1,
+    "rows": [
+      70,
+      223
+    ],
+    "pixels": 49280,
+    "differences": 0,
+    "sha256": "478553120d18fc1878dd50540b9e9ffccae3a52497aa9b67d293c016588b621c"
+  }
+]

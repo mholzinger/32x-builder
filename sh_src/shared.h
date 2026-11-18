@@ -162,7 +162,7 @@ typedef struct {
      * draw_walls runs on BOTH CPUs; cache-through keeps the two screen halves
      * at the same resolution the instant it's toggled. */
     volatile uint8_t wall_halfres;
-    /* WALLS menu mode: 0=FULL, 1=HALF, 2=AUTO. The primary folds this with the
+    /* WALLS menu mode: 0=FULL, 1=HALF, 2=AUTO, 7=BALANCED. The primary folds this with the
      * lobby override and (for AUTO) the measured frame time into wall_halfres
      * above each frame — that effective flag is what both CPUs' draw_walls read.
      * AUTO uses hysteresis on the frame period so it doesn't flip-flop per frame. */
@@ -173,6 +173,11 @@ typedef struct {
      * carpet + sprites), the one lever horizontal half-res can't reach (wall stores
      * are 320-strided vertical). Like wall_halfres it lives here because every pass
      * on BOTH CPUs reads it; cache-through keeps the two halves in lockstep. */
+    /* VIEWPORT: 0 = FULL 320x224, 1 = WIDE (letterbox, full width),
+     * 2 = FRAMED (black on all four sides). A crop, not a squeeze -- the
+     * projection is unchanged, you simply see less world, which is how
+     * Doom's screen-size setting works and why it is cheap. */
+    volatile uint8_t vp_mode;
     volatile uint8_t wall_vert;
     /* Seam-smoothing toggle (VISUALS: SEAMS HARD/SMOOTH). When half/quarter-res
      * coarsens the wall fill, the wall→ceiling and wall→floor silhouette turns
@@ -195,10 +200,9 @@ typedef struct {
      * dither fuses toward smooth; on sharp HDMI it reads as an intentional dither
      * texture rather than a blocky step. Both CPUs read it, each dithers its half. */
     volatile uint8_t wall_qdither;
-    /* WALLS=LOD prototype (1 = on). Full-res render + a post-pass that re-blocks
-     * each 4-col quad by DEPTH: near = leave full, mid = half (2px pairs), far =
-     * quarter + dither toward the neighbour. Visual proof of the three-band zoning
-     * — it ADDS cost (no render saving yet); the perf version skips rendering. */
+    /* Wall sampling: 0 native, 1 legacy depth half-pairs, 2 balanced.
+     * Balanced preserves nearby/door columns and all rows; eligible distant
+     * quads cast three samples across four columns. Both CPUs read this. */
     volatile uint8_t wall_lod;
     /* Partition-dense hint for LOD's near band (1 = drop the nearest quads to
      * half-res even while standing still). The near band normally stays full-res
@@ -399,6 +403,13 @@ typedef struct {
     volatile uint32_t sec_decode_sum;
     volatile uint16_t sec_decode_n;
     volatile uint16_t sec_half_overhead; /* pumps + purge inside CMD_HALF */
+    /* Distribution of that overhead: amb_pump early-returns unless the audio
+     * buffer needs filling, so the cost is bimodal (near zero most frames, a
+     * big fill occasionally). A single-frame sample of sec_half_overhead is
+     * therefore meaningless -- it lands on one mode or the other. */
+    volatile uint16_t sec_fill_n;     /* CMD_HALFs where the pumps did real work */
+    volatile uint16_t sec_half_n;     /* CMD_HALFs total */
+    volatile uint32_t sec_fill_sum;   /* summed pump ticks over those */
 } shared_t;
 
 #define LIGHTING_FLICKER  0x01   /* per-panel random brightness rolls */

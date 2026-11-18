@@ -59,8 +59,15 @@ void    m_main_automap_zoom(int dir);
 #define GAME_CONTENT_ROWS     4   /* MAP, ZOOM, 3D VIEWER, EXIT TO LOBBY */
 #define AUDIO_CONTENT_ROWS    6   /* AMBIENCE, FOOTSTEPS, BUFFER, VOICE, HELLO, HUM */
 #define LIGHTING_CONTENT_ROWS 3   /* FLICKER, STROBES, SHIMMER */
-#define VISUALS_CONTENT_ROWS  6   /* WALLS, ADAPTIVE, METRICS, SHADOWS, SEAMS, DITHER */
-#define TESTING_CONTENT_ROWS 16   /* SERIAL, VERT, BULKHEAD, CARPETLOD, HOLEJAMB, AUTOQTR, UNLITF, ULTRA, SPIN, IDLE, 68K, SMS32X, SMSBOOT, SMSGAME, EPOCH, PACE */
+#define VISUALS_CONTENT_ROWS  3   /* WALLS, ADAPTIVE, VIEWPORT — the three real
+                                   * player choices. METRICS/SHADOWS/SEAMS/DITHER
+                                   * are A/B switches and live in TESTING now. */
+#define TESTING_CONTENT_ROWS 20   /* SERIAL, VERT, BULKHEAD, CARPETLOD, HOLEJAMB, AUTOQTR, UNLITF, ULTRA, SPIN, IDLE, 68K, SMS32X, SMSBOOT, SMSGAME, EPOCH, PACE, METRICS, SHADOWS, SEAMS, DITHER */
+/* TESTING scrolls. The box comment below called this: at 16 rows the tab
+ * already reached the hint row, so the four A/B switches arriving from VISUALS
+ * could not be absorbed by another height bump. Window = the 16 rows that fit;
+ * the offset follows the cursor exactly like TAB_MAPS. */
+#define TESTING_WINDOW       16
 #define COLOR_CONTENT_ROWS    6   /* SURFACE, R, G, B, WARMTH, SAT */
 #define CREDITS_CONTENT_ROWS  0   /* read-only display, no selection cursor */
 #define CREDITS_DRAWN_ROWS    4   /* MAP / BY / BUILD / DATE lines it paints */
@@ -76,12 +83,10 @@ static int      pal_sel     = 2;   /* COLOR tab: selected surface (0=WALL..3=LIG
 static const char *const pal_surf_names[4] = { " WALL", "FLOOR", " CEIL", "LIGHT" };
 static int      auto_lod    = 0;   /* AUTO adaptive style: 0 = SCALE (default), 1 = LOD */
 
-/* Friendly WALLS resolution category: 0=FULL 1=HALF 2=LOW 3=AUTO. wall_res_mode
- * stays the render driver (0 FULL, 1 HALF, 4 LOW/quarter, 2 AUTO-scale, 6 AUTO-
- * LOD; 3 SERIAL and 5 VERT are the TESTING-tab diagnostics). */
+/* Menu categories: FULL / BALANCED / HALF / LOW / AUTO. */
 static int res_cat_of(int m) {
-    switch (m) { case 0: return 0; case 1: return 1; case 4: return 2;
-                 case 2: case 6: return 3; default: return 3; }
+    switch (m) { case 0: return 0; case 7: return 1; case 1: return 2;
+                 case 4: return 3; case 2: case 6: return 4; default: return 4; }
 }
 
 /* Layout — 22-char × 10-row box (176 × 80 px) centered on the 320×224
@@ -310,24 +315,22 @@ void menu_update(uint16_t pad) {
         SHARED_UC->lighting_flags ^= bit;
     } else if (menu_tab == TAB_VISUALS) {
         if (menu_row == 1) {
-            /* WALLS resolution: cycle FULL / HALF / LOW / AUTO. AUTO maps to the
+            /* WALLS resolution: cycle FULL / BALANCED / HALF / LOW / AUTO. AUTO maps to the
              * ADAPTIVE style (SCALE=mode2 or LOD=mode6). */
-            static const uint8_t cat_mode[4] = { 0, 1, 4, 2 };  /* AUTO base = SCALE */
-            int cat = (res_cat_of(SHARED_UC->wall_res_mode) + dir + 4) % 4;
-            SHARED_UC->wall_res_mode = (cat == 3) ? (auto_lod ? 6 : 2) : cat_mode[cat];
+            static const uint8_t cat_mode[5] = { 0, 7, 1, 4, 2 };  /* AUTO base = SCALE */
+            int cat = (res_cat_of(SHARED_UC->wall_res_mode) + dir + 5) % 5;
+            SHARED_UC->wall_res_mode = (cat == 4) ? (auto_lod ? 6 : 2) : cat_mode[cat];
         } else if (menu_row == 2) {
             /* ADAPTIVE style for AUTO: LOD (dithered depth bands) vs SCALE (whole-
              * frame frame-time scaling). Toggles the pref; applies live if AUTO. */
             auto_lod ^= 1;
             uint8_t cur = SHARED_UC->wall_res_mode;
             if (cur == 2 || cur == 6) SHARED_UC->wall_res_mode = auto_lod ? 6 : 2;
-        } else if (menu_row == 3) {
-            g_metrics_on ^= 1;
-            if (!g_metrics_on) hud_genesis_blank();   /* wipe, don't just stop drawing */
+        } else if (menu_row == 3) {                                /* VIEWPORT */
+            int v = (int)SHARED_UC->vp_mode + dir;
+            if (v < 0) v = 2; else if (v > 2) v = 0;
+            SHARED_UC->vp_mode = (uint8_t)v;
         }
-        else if (menu_row == 4) SHARED_UC->shadows_off ^= 1;       /* A/B the shadow cost */
-        else if (menu_row == 5) SHARED_UC->wall_seam_smooth ^= 1;  /* HARD/SMOOTH seams */
-        else if (menu_row == 6) SHARED_UC->wall_qdither ^= 1;      /* quarter boundary dither */
     } else if (menu_tab == TAB_TESTING) {
         /* Diagnostic RENDER modes — each ON overrides the resolution, OFF returns
          * to AUTO. LEFT/RIGHT both flip. mode 3 = SERIAL (no CPU overlap), 5 = VERT. */
@@ -362,6 +365,14 @@ void menu_update(uint16_t pad) {
         }
         else if (menu_row == 15) SHARED_UC->sms_epoch_on ^= 1;  /* delta bcast */
         else if (menu_row == 16) SHARED_UC->pace_on ^= 1;    /* bucket-lock pacing A/B */
+        /* Migrated from VISUALS. */
+        else if (menu_row == 17) {
+            g_metrics_on ^= 1;
+            if (!g_metrics_on) hud_genesis_blank();   /* wipe, don't just stop drawing */
+        }
+        else if (menu_row == 18) SHARED_UC->shadows_off ^= 1;      /* A/B the shadow cost */
+        else if (menu_row == 19) SHARED_UC->wall_seam_smooth ^= 1; /* HARD/SMOOTH seams */
+        else if (menu_row == 20) SHARED_UC->wall_qdither ^= 1;     /* quarter boundary dither */
     } else if (menu_tab == TAB_COLOR) {
         /* Live palette lab. Row 1 picks a surface; 2-4 nudge its R/G/B anchor;
          * 5-6 are the global WARMTH/SAT masters. Every change flags the palette
@@ -529,39 +540,52 @@ void menu_render(uint8_t *fb) {
         draw_row(fb, 48, menu_row == 3, "SHIMMER",
                  (f & LIGHTING_SHIMMER) ? " ON" : "OFF");
     } else if (menu_tab == TAB_VISUALS) {
-        static const char *res_names[4] = { "FULL", "HALF", " LOW", "AUTO" };
+        static const char *res_names[5] = { "FULL", "BALANCED", "HALF", " LOW", "AUTO" };
         uint8_t m = SHARED_UC->wall_res_mode;
         draw_row(fb, 32, menu_row == 1, "WALLS", res_names[res_cat_of(m)]);
         const char *adaptive = (m == 6) ? "  LOD" : (m == 2) ? "SCALE"
                              : (auto_lod ? "  LOD" : "SCALE");
         draw_row(fb, 40, menu_row == 2, "ADAPTIVE", adaptive);
-        draw_row(fb, 48, menu_row == 3, "METRICS",
-                 g_metrics_on ? " ON" : "OFF");
-        draw_row(fb, 56, menu_row == 4, "SHADOWS",
-                 SHARED_UC->shadows_off ? "OFF" : " ON");
-        draw_row(fb, 64, menu_row == 5, "SEAMS",
-                 SHARED_UC->wall_seam_smooth ? "SMOOTH" : "  HARD");
-        draw_row(fb, 72, menu_row == 6, "DITHER",
-                 SHARED_UC->wall_qdither ? " ON" : "OFF");
+        {   static const char *vp_names[3] = { "  FULL", "  WIDE", "FRAMED" };
+            draw_row(fb, 48, menu_row == 3, "VIEWPORT",
+                     vp_names[SHARED_UC->vp_mode <= 2 ? SHARED_UC->vp_mode : 0]);
+        }
     } else if (menu_tab == TAB_TESTING) {
         uint8_t m = SHARED_UC->wall_res_mode;
-        draw_row(fb, 32, menu_row == 1, "SERIAL", (m == 3) ? " ON" : "OFF");
-        draw_row(fb, 40, menu_row == 2, "VERT",   (m == 5) ? " ON" : "OFF");
-        draw_row(fb, 48, menu_row == 3, "BULKHEAD", SHARED_UC->bulk_kill ? "OFF" : " ON");
-        draw_row(fb, 56, menu_row == 4, "CARPETLOD", SHARED_UC->carpet_vlod ? " ON" : "OFF");
-        draw_row(fb, 64, menu_row == 5, "HOLEJAMB", SHARED_UC->hole_jamb ? " ON" : "OFF");
-        draw_row(fb, 72, menu_row == 6, "AUTOQTR", SHARED_UC->auto_qtr ? " ON" : "OFF");
-        draw_row(fb, 80, menu_row == 7, "UNLITF", SHARED_UC->unlit_kill ? "OFF" : " ON");
-        draw_row(fb, 88, menu_row == 8, "ULTRA", SHARED_UC->ultra_enable ? " ON" : "OFF");
-        draw_row(fb, 96,  menu_row == 9,  "SPIN", SHARED_UC->bus_spin ? " ON" : "OFF");
-        draw_row(fb, 104, menu_row == 10, "IDLE", SHARED_UC->bus_idle ? " ON" : "OFF");
-        draw_row(fb, 112, menu_row == 11, "68K",  SHARED_UC->bus_68k  ? " ON" : "OFF");
-        draw_row(fb, 120, menu_row == 12, "SMS32X", SHARED_UC->sms_on_32x ? " ON" : "OFF");
-        draw_row(fb, 128, menu_row == 13, "SMSBOOT", "GO");
-        draw_row(fb, 136, menu_row == 14, "SMSGAME", "GO");
-        draw_row(fb, 144, menu_row == 15, "EPOCH",
-                 SHARED_UC->sms_epoch_on ? " ON" : "OFF");
-        draw_row(fb, 152, menu_row == 16, "PACE", SHARED_UC->pace_on ? " ON" : "OFF");
+        /* Window offset follows the cursor, same rule as TAB_MAPS: keep one row
+         * of lead above the selection where there is room to. Rows are still
+         * numbered 1..TESTING_CONTENT_ROWS everywhere else (input handler
+         * included) — only their Y position moves. */
+        int t_off = (menu_row > 1 ? menu_row - 1 : 0) - 1;
+        if (t_off < 0) t_off = 0;
+        if (t_off > TESTING_CONTENT_ROWS - TESTING_WINDOW)
+            t_off = TESTING_CONTENT_ROWS - TESTING_WINDOW;
+        #define TROW(r, lbl, val)                                              \
+            do { if ((r) > t_off && (r) <= t_off + TESTING_WINDOW)             \
+                     draw_row(fb, 32 + ((r) - t_off - 1) * 8,                  \
+                              menu_row == (r), (lbl), (val)); } while (0)
+                TROW(1, "SERIAL", (m == 3) ? " ON" : "OFF");
+        TROW(2, "VERT", (m == 5) ? " ON" : "OFF");
+        TROW(3, "BULKHEAD", SHARED_UC->bulk_kill ? "OFF" : " ON");
+        TROW(4, "CARPETLOD", SHARED_UC->carpet_vlod ? " ON" : "OFF");
+        TROW(5, "HOLEJAMB", SHARED_UC->hole_jamb ? " ON" : "OFF");
+        TROW(6, "AUTOQTR", SHARED_UC->auto_qtr ? " ON" : "OFF");
+        TROW(7, "UNLITF", SHARED_UC->unlit_kill ? "OFF" : " ON");
+        TROW(8, "ULTRA", SHARED_UC->ultra_enable ? " ON" : "OFF");
+        TROW(9, "SPIN", SHARED_UC->bus_spin ? " ON" : "OFF");
+        TROW(10, "IDLE", SHARED_UC->bus_idle ? " ON" : "OFF");
+        TROW(11, "68K", SHARED_UC->bus_68k  ? " ON" : "OFF");
+        TROW(12, "SMS32X", SHARED_UC->sms_on_32x ? " ON" : "OFF");
+        TROW(13, "SMSBOOT", "GO");
+        TROW(14, "SMSGAME", "GO");
+        TROW(15, "EPOCH", SHARED_UC->sms_epoch_on ? " ON" : "OFF");
+        TROW(16, "PACE", SHARED_UC->pace_on ? " ON" : "OFF");
+        /* Migrated from VISUALS: A/B switches, not player choices. */
+        TROW(17, "METRICS", g_metrics_on ? " ON" : "OFF");
+        TROW(18, "SHADOWS", SHARED_UC->shadows_off ? "OFF" : " ON");
+        TROW(19, "SEAMS",   SHARED_UC->wall_seam_smooth ? "SMOOTH" : "  HARD");
+        TROW(20, "DITHER",  SHARED_UC->wall_qdither ? " ON" : "OFF");
+        #undef TROW
     } else if (menu_tab == TAB_COLOR) {
         char v[6];
         draw_row(fb, 32, menu_row == 1, "SURFACE", pal_surf_names[pal_sel]);
@@ -624,8 +648,12 @@ void menu_render(uint8_t *fb) {
     int used;
     if      (menu_tab == TAB_MAPS)    used = MAPS_WINDOW;         /* its loop blanks past-end rows */
     else if (menu_tab == TAB_CREDITS) used = CREDITS_DRAWN_ROWS;  /* keep MAP/BY/BUILD/DATE */
+    else if (menu_tab == TAB_TESTING) used = TESTING_WINDOW;      /* scrolls: window always full */
     else                              used = content_rows_for(menu_tab);
-    for (int r = used + 1; r <= TESTING_CONTENT_ROWS; r++)
+    /* Bound by DRAWN POSITIONS, not selectable rows. TESTING has 20 rows but
+     * only ever paints 16 of them; clearing to 20 would write four lines past
+     * the window, straight through the hint row at y=160. */
+    for (int r = used + 1; r <= TESTING_WINDOW; r++)
         menu_puts_pad(TX(X + 8), 32 + (r - 1) * 8, "", 20);
 
     /* Hint row below all content (box is 160px, 13 rows). */

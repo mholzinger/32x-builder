@@ -1,0 +1,9 @@
+scene,mode,frames,ceiling_ticks_mean,render_ticks_mean,delivered_vblanks_mean_x100,wall_ticks_mean,lut_ticks_mean,capture
+1,full,64,770,20270,836,12365,729,20261116_212308-balanced2-full-s1-64f.png
+1,balanced,64,780,19053,800,10665,613,20261116_212344-balanced2-balanced-s1-64f.png
+2,full,64,2501,19316,800,6853,0,20261116_212420-balanced2-full-s2-64f.png
+2,balanced,64,2503,17474,769,5512,0,20261116_212456-balanced2-balanced-s2-64f.png
+3,full,64,2156,29346,1150,6942,0,20261116_212532-balanced2-full-s3-64f.png
+3,balanced,64,2157,27604,1100,5547,0,20261116_212608-balanced2-balanced-s3-64f.png
+4,full,64,710,38604,1461,22585,0,20261116_212644-balanced2-full-s4-64f.png
+4,balanced,64,714,31676,1216,17528,0,20261116_212720-balanced2-balanced-s4-64f.png

@@ -1,0 +1,102 @@
+SH GCC 15.2.0 -O2 LTO, /tmp/furniture-divu-final.elf
+Corner start at 060027d2; 3 dmuls before read at 06002bc8.
+Center start at 0600433e; 3 dmuls before read at 06004714.
+
+ 60027ca:	91 40       	mov.w	600284e <_draw_standups.lto_priv.0+0x1ca6>,r1	! ff00
+ 60027cc:	21 52       	mov.l	r5,@r1
+ 60027ce:	e5 01       	mov	#1,r5
+ 60027d0:	11 54       	mov.l	r5,@(16,r1)
+ 60027d2:	11 65       	mov.l	r6,@(20,r1)
+ 60027d4:	e6 00       	mov	#0,r6
+ 60027d6:	94 3b       	mov.w	6002850 <_draw_standups.lto_priv.0+0x1ca8>,r4	! bc
+ 60027d8:	26 68       	tst	r6,r6
+ 60027da:	34 ec       	add	r14,r4
+ 60027dc:	54 4e       	mov.l	@(56,r4),r4
+ 60027de:	34 9d       	dmuls.l	r9,r4
+ 60027e0:	01 1a       	sts	macl,r1
+ 60027e2:	05 0a       	sts	mach,r5
+ 60027e4:	45 28       	shll16	r5
+ 60027e6:	41 29       	shlr16	r1
+ 60027e8:	31 5c       	add	r5,r1
+ 60027ea:	95 2e       	mov.w	600284a <_draw_standups.lto_priv.0+0x1ca2>,r5	! fc
+ 60027ec:	35 ec       	add	r14,r5
+ 60027ee:	55 50       	mov.l	@(0,r5),r5
+ 60027f0:	35 8d       	dmuls.l	r8,r5
+ 60027f2:	98 2a       	mov.w	600284a <_draw_standups.lto_priv.0+0x1ca2>,r8	! fc
+ 60027f4:	05 1a       	sts	macl,r5
+ 60027f6:	04 0a       	sts	mach,r4
+ 60027f8:	38 ec       	add	r14,r8
+ 60027fa:	58 8a       	mov.l	@(40,r8),r8
+ 60027fc:	44 28       	shll16	r4
+ 60027fe:	45 29       	shlr16	r5
+ 6002800:	35 4c       	add	r4,r5
+ 6002802:	31 58       	sub	r5,r1
+ 6002804:	31 8d       	dmuls.l	r8,r1
+ 6002806:	05 1a       	sts	macl,r5
+ 6002808:	01 0a       	sts	mach,r1
+ 600280a:	41 28       	shll16	r1
+ 600280c:	45 29       	shlr16	r5
+ 600280e:	8f 02       	bf.s	6002816 <_draw_standups.lto_priv.0+0x1c6e>
+ 6002810:	31 5c       	add	r5,r1
+ 6002812:	a1 d8       	bra	6002bc6 <_draw_standups.lto_priv.0+0x201e>
+ 6002814:	00 09       	nop	
+ 6002816:	d5 0f       	mov.l	6002854 <_draw_standups.lto_priv.0+0x1cac>,r5	! 7fffffff
+ 6002818:	ac 9c       	bra	6002154 <_draw_standups.lto_priv.0+0x15ac>
+ 600281a:	e4 00       	mov	#0,r4
+ 600281c:	61 03       	mov	r0,r1
+ 6002bc6:	95 0f       	mov.w	6002be8 <_draw_standups.lto_priv.0+0x2040>,r5	! ff14
+ 6002bc8:	65 52       	mov.l	@r5,r5
+ 6002bca:	36 57       	cmp/gt	r5,r6
+ 6002bcc:	aa c2       	bra	6002154 <_draw_standups.lto_priv.0+0x15ac>
+ 6002bce:	34 4a       	subc	r4,r4
+ 6002bd0:	90 05       	mov.w	6002bde <_draw_standups.lto_priv.0+0x2036>,r0	! fc
+ 6004336:	91 2f       	mov.w	6004398 <_draw_standups.lto_priv.0+0x37f0>,r1	! ff00
+ 6004338:	21 52       	mov.l	r5,@r1
+ 600433a:	e5 01       	mov	#1,r5
+ 600433c:	11 54       	mov.l	r5,@(16,r1)
+ 600433e:	11 65       	mov.l	r6,@(20,r1)
+ 6004340:	26 68       	tst	r6,r6
+ 6004342:	94 23       	mov.w	600438c <_draw_standups.lto_priv.0+0x37e4>,r4	! bc
+ 6004344:	95 21       	mov.w	600438a <_draw_standups.lto_priv.0+0x37e2>,r5	! fc
+ 6004346:	34 ec       	add	r14,r4
+ 6004348:	54 4e       	mov.l	@(56,r4),r4
+ 600434a:	35 ec       	add	r14,r5
+ 600434c:	55 50       	mov.l	@(0,r5),r5
+ 600434e:	34 7d       	dmuls.l	r7,r4
+ 6004350:	01 1a       	sts	macl,r1
+ 6004352:	07 0a       	sts	mach,r7
+ 6004354:	47 28       	shll16	r7
+ 6004356:	35 2d       	dmuls.l	r2,r5
+ 6004358:	41 29       	shlr16	r1
+ 600435a:	31 7c       	add	r7,r1
+ 600435c:	02 1a       	sts	macl,r2
+ 600435e:	07 0a       	sts	mach,r7
+ 6004360:	47 28       	shll16	r7
+ 6004362:	42 29       	shlr16	r2
+ 6004364:	32 7c       	add	r7,r2
+ 6004366:	97 10       	mov.w	600438a <_draw_standups.lto_priv.0+0x37e2>,r7	! fc
+ 6004368:	31 28       	sub	r2,r1
+ 600436a:	37 ec       	add	r14,r7
+ 600436c:	57 7a       	mov.l	@(40,r7),r7
+ 600436e:	31 7d       	dmuls.l	r7,r1
+ 6004370:	01 1a       	sts	macl,r1
+ 6004372:	02 0a       	sts	mach,r2
+ 6004374:	42 28       	shll16	r2
+ 6004376:	41 29       	shlr16	r1
+ 6004378:	8f 02       	bf.s	6004380 <_draw_standups.lto_priv.0+0x37d8>
+ 600437a:	32 1c       	add	r1,r2
+ 600437c:	a1 c9       	bra	6004712 <_draw_standups.lto_priv.0+0x3b6a>
+ 600437e:	00 09       	nop	
+ 6004380:	d1 0a       	mov.l	60043ac <_draw_standups.lto_priv.0+0x3804>,r1	! 7fffffff
+ 6004382:	95 01       	mov.w	6004388 <_draw_standups.lto_priv.0+0x37e0>,r5	! e75e
+ 6004384:	05 23       	braf	r5
+ 6004386:	e6 00       	mov	#0,r6
+ 6004388:	e7 5e       	mov	#94,r7
+ 600438a:	00 fc       	mov.b	@(r0,r15),r0
+ 600438c:	00 bc       	mov.b	@(r0,r11),r0
+ 600438e:	33 32       	cmp/hs	r3,r3
+ 6004712:	91 74       	mov.w	60047fe <_draw_standups.lto_priv.0+0x3c56>,r1	! ff14
+ 6004714:	61 12       	mov.l	@r1,r1
+ 6004716:	36 17       	cmp/gt	r1,r6
+ 6004718:	95 01       	mov.w	600471e <_draw_standups.lto_priv.0+0x3b76>,r5	! e3c8
+ 600471a:	05 23       	braf	r5

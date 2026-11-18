@@ -1,0 +1,9 @@
+{
+  "emulated_frames": 6000,
+  "valid_mode7_samples": 5900,
+  "walking_samples": 3172,
+  "balanced_walking_samples": 2937,
+  "native_rest_samples": 2568,
+  "global_halfres_samples": 0,
+  "row_doubling_samples": 0
+}

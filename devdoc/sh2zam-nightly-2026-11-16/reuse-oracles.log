@@ -1,0 +1,5 @@
+fixture=0 count=288 x=8 yz=40 reusable=1 blocks8=0 hash=8a257095 workspace=41856
+fixture=1 count=384 x=24 yz=32 reusable=1 blocks8=0 hash=374d1c45 workspace=41856
+fixture=2 count=256 x=28 yz=36 reusable=1 blocks8=0 hash=327bf185 workspace=41856
+fixture=3 count=731 x=40 yz=128 reusable=0 blocks8=0 hash=5fc952ed workspace=41856
+random-matrix vertex-oracles=265440

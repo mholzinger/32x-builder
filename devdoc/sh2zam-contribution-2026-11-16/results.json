@@ -1,0 +1,848 @@
+[
+  {
+    "capture": "devdoc/sh2zam-contribution-2026-11-16/20261116_220354-sh2zam-contrib-1-a-final.png",
+    "page": 1,
+    "repeat": "a",
+    "count": 8,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "GENERAL": {
+        "avg_ticks_floor": 28,
+        "min_ticks": 27,
+        "max_ticks": 29
+      },
+      "BATCH": {
+        "avg_ticks_floor": 22,
+        "min_ticks": 22,
+        "max_ticks": 23
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 25,
+        "min_ticks": 25,
+        "max_ticks": 26
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 18,
+        "min_ticks": 18,
+        "max_ticks": 19
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 12,
+        "min_ticks": 11,
+        "max_ticks": 13
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 14,
+        "min_ticks": 14,
+        "max_ticks": 15
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 20,
+        "min_ticks": 20,
+        "max_ticks": 21
+      },
+      "REUSE": {
+        "avg_ticks_floor": 27,
+        "min_ticks": 27,
+        "max_ticks": 28
+      },
+      "BOX8": {
+        "avg_ticks_floor": 21,
+        "min_ticks": 21,
+        "max_ticks": 22
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-contribution-2026-11-16/20261116_220404-sh2zam-contrib-2-a-final.png",
+    "page": 2,
+    "repeat": "a",
+    "count": 24,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "GENERAL": {
+        "avg_ticks_floor": 83,
+        "min_ticks": 83,
+        "max_ticks": 84
+      },
+      "BATCH": {
+        "avg_ticks_floor": 59,
+        "min_ticks": 59,
+        "max_ticks": 60
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 53,
+        "min_ticks": 53,
+        "max_ticks": 54
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 42,
+        "min_ticks": 42,
+        "max_ticks": 43
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 30,
+        "min_ticks": 30,
+        "max_ticks": 31
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 31,
+        "min_ticks": 31,
+        "max_ticks": 32
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 45,
+        "min_ticks": 45,
+        "max_ticks": 47
+      },
+      "REUSE": {
+        "avg_ticks_floor": 53,
+        "min_ticks": 52,
+        "max_ticks": 54
+      },
+      "BOX8": {
+        "avg_ticks_floor": 62,
+        "min_ticks": 62,
+        "max_ticks": 63
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-contribution-2026-11-16/20261116_220414-sh2zam-contrib-3-a-final.png",
+    "page": 3,
+    "repeat": "a",
+    "count": 28,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "GENERAL": {
+        "avg_ticks_floor": 97,
+        "min_ticks": 97,
+        "max_ticks": 98
+      },
+      "BATCH": {
+        "avg_ticks_floor": 69,
+        "min_ticks": 69,
+        "max_ticks": 70
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 60,
+        "min_ticks": 60,
+        "max_ticks": 61
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 48,
+        "min_ticks": 47,
+        "max_ticks": 49
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 35,
+        "min_ticks": 35,
+        "max_ticks": 36
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 35,
+        "min_ticks": 34,
+        "max_ticks": 36
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 51,
+        "min_ticks": 51,
+        "max_ticks": 52
+      },
+      "REUSE": {
+        "avg_ticks_floor": 58,
+        "min_ticks": 58,
+        "max_ticks": 59
+      },
+      "BOX8": {
+        "avg_ticks_floor": 80,
+        "min_ticks": 80,
+        "max_ticks": 81
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-contribution-2026-11-16/20261116_220424-sh2zam-contrib-4-a-final.png",
+    "page": 4,
+    "repeat": "a",
+    "count": 48,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "GENERAL": {
+        "avg_ticks_floor": 170,
+        "min_ticks": 170,
+        "max_ticks": 172
+      },
+      "BATCH": {
+        "avg_ticks_floor": 121,
+        "min_ticks": 121,
+        "max_ticks": 122
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 96,
+        "min_ticks": 96,
+        "max_ticks": 97
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 77,
+        "min_ticks": 77,
+        "max_ticks": 79
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 63,
+        "min_ticks": 63,
+        "max_ticks": 64
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 52,
+        "min_ticks": 52,
+        "max_ticks": 54
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 78,
+        "min_ticks": 78,
+        "max_ticks": 79
+      },
+      "REUSE": {
+        "avg_ticks_floor": 85,
+        "min_ticks": 85,
+        "max_ticks": 86
+      },
+      "BOX8": {
+        "avg_ticks_floor": 126,
+        "min_ticks": 126,
+        "max_ticks": 127
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-contribution-2026-11-16/20261116_220434-sh2zam-contrib-5-a-final.png",
+    "page": 5,
+    "repeat": "a",
+    "count": 72,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "GENERAL": {
+        "avg_ticks_floor": 257,
+        "min_ticks": 257,
+        "max_ticks": 259
+      },
+      "BATCH": {
+        "avg_ticks_floor": 184,
+        "min_ticks": 184,
+        "max_ticks": 185
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 134,
+        "min_ticks": 134,
+        "max_ticks": 136
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 109,
+        "min_ticks": 109,
+        "max_ticks": 110
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 93,
+        "min_ticks": 93,
+        "max_ticks": 94
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 75,
+        "min_ticks": 74,
+        "max_ticks": 76
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 107,
+        "min_ticks": 107,
+        "max_ticks": 108
+      },
+      "REUSE": {
+        "avg_ticks_floor": 124,
+        "min_ticks": 124,
+        "max_ticks": 125
+      },
+      "BOX8": {
+        "avg_ticks_floor": 190,
+        "min_ticks": 190,
+        "max_ticks": 191
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-contribution-2026-11-16/20261116_220444-sh2zam-contrib-6-a-final.png",
+    "page": 6,
+    "repeat": "a",
+    "count": 128,
+    "failures": 0,
+    "reuse": 1,
+    "mac": 1,
+    "kernels": {
+      "GENERAL": {
+        "avg_ticks_floor": 466,
+        "min_ticks": 465,
+        "max_ticks": 467
+      },
+      "BATCH": {
+        "avg_ticks_floor": 329,
+        "min_ticks": 329,
+        "max_ticks": 330
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 230,
+        "min_ticks": 230,
+        "max_ticks": 231
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 185,
+        "min_ticks": 185,
+        "max_ticks": 186
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 170,
+        "min_ticks": 170,
+        "max_ticks": 171
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 134,
+        "min_ticks": 133,
+        "max_ticks": 135
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 182,
+        "min_ticks": 181,
+        "max_ticks": 183
+      },
+      "REUSE": {
+        "avg_ticks_floor": 133,
+        "min_ticks": 133,
+        "max_ticks": 134
+      },
+      "BOX8": {
+        "avg_ticks_floor": 345,
+        "min_ticks": 344,
+        "max_ticks": 346
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-contribution-2026-11-16/20261116_220454-sh2zam-contrib-7-a-final.png",
+    "page": 7,
+    "repeat": "a",
+    "count": 256,
+    "failures": 0,
+    "reuse": 1,
+    "mac": 1,
+    "kernels": {
+      "GENERAL": {
+        "avg_ticks_floor": 931,
+        "min_ticks": 930,
+        "max_ticks": 932
+      },
+      "BATCH": {
+        "avg_ticks_floor": 652,
+        "min_ticks": 652,
+        "max_ticks": 654
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 436,
+        "min_ticks": 436,
+        "max_ticks": 438
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 349,
+        "min_ticks": 349,
+        "max_ticks": 350
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 332,
+        "min_ticks": 332,
+        "max_ticks": 334
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 247,
+        "min_ticks": 247,
+        "max_ticks": 248
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 342,
+        "min_ticks": 342,
+        "max_ticks": 344
+      },
+      "REUSE": {
+        "avg_ticks_floor": 210,
+        "min_ticks": 209,
+        "max_ticks": 211
+      },
+      "BOX8": {
+        "avg_ticks_floor": 676,
+        "min_ticks": 675,
+        "max_ticks": 677
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-contribution-2026-11-16/20261116_220504-sh2zam-contrib-8-a-final.png",
+    "page": 8,
+    "repeat": "a",
+    "count": 32,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 0,
+    "kernels": {
+      "DIV1": {
+        "avg_ticks_floor": 30,
+        "min_ticks": 30,
+        "max_ticks": 31
+      },
+      "DIVU16": {
+        "avg_ticks_floor": 25,
+        "min_ticks": 25,
+        "max_ticks": 26
+      },
+      "SPLIT16": {
+        "avg_ticks_floor": 21,
+        "min_ticks": 21,
+        "max_ticks": 22
+      },
+      "DIVU64": {
+        "avg_ticks_floor": 24,
+        "min_ticks": 24,
+        "max_ticks": 25
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-contribution-2026-11-16/20261116_220514-sh2zam-contrib-1-b-final.png",
+    "page": 1,
+    "repeat": "b",
+    "count": 8,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "GENERAL": {
+        "avg_ticks_floor": 27,
+        "min_ticks": 27,
+        "max_ticks": 29
+      },
+      "BATCH": {
+        "avg_ticks_floor": 22,
+        "min_ticks": 22,
+        "max_ticks": 23
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 25,
+        "min_ticks": 25,
+        "max_ticks": 26
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 18,
+        "min_ticks": 18,
+        "max_ticks": 19
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 12,
+        "min_ticks": 11,
+        "max_ticks": 13
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 14,
+        "min_ticks": 14,
+        "max_ticks": 15
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 20,
+        "min_ticks": 20,
+        "max_ticks": 21
+      },
+      "REUSE": {
+        "avg_ticks_floor": 27,
+        "min_ticks": 27,
+        "max_ticks": 28
+      },
+      "BOX8": {
+        "avg_ticks_floor": 21,
+        "min_ticks": 21,
+        "max_ticks": 22
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-contribution-2026-11-16/20261116_220524-sh2zam-contrib-2-b-final.png",
+    "page": 2,
+    "repeat": "b",
+    "count": 24,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "GENERAL": {
+        "avg_ticks_floor": 83,
+        "min_ticks": 83,
+        "max_ticks": 84
+      },
+      "BATCH": {
+        "avg_ticks_floor": 59,
+        "min_ticks": 59,
+        "max_ticks": 60
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 53,
+        "min_ticks": 53,
+        "max_ticks": 54
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 42,
+        "min_ticks": 42,
+        "max_ticks": 43
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 30,
+        "min_ticks": 30,
+        "max_ticks": 31
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 31,
+        "min_ticks": 31,
+        "max_ticks": 32
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 45,
+        "min_ticks": 45,
+        "max_ticks": 47
+      },
+      "REUSE": {
+        "avg_ticks_floor": 53,
+        "min_ticks": 52,
+        "max_ticks": 54
+      },
+      "BOX8": {
+        "avg_ticks_floor": 62,
+        "min_ticks": 62,
+        "max_ticks": 63
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-contribution-2026-11-16/20261116_220534-sh2zam-contrib-3-b-final.png",
+    "page": 3,
+    "repeat": "b",
+    "count": 28,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "GENERAL": {
+        "avg_ticks_floor": 97,
+        "min_ticks": 97,
+        "max_ticks": 98
+      },
+      "BATCH": {
+        "avg_ticks_floor": 69,
+        "min_ticks": 69,
+        "max_ticks": 70
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 60,
+        "min_ticks": 60,
+        "max_ticks": 61
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 48,
+        "min_ticks": 47,
+        "max_ticks": 49
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 35,
+        "min_ticks": 35,
+        "max_ticks": 36
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 35,
+        "min_ticks": 35,
+        "max_ticks": 36
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 51,
+        "min_ticks": 51,
+        "max_ticks": 52
+      },
+      "REUSE": {
+        "avg_ticks_floor": 58,
+        "min_ticks": 57,
+        "max_ticks": 59
+      },
+      "BOX8": {
+        "avg_ticks_floor": 80,
+        "min_ticks": 80,
+        "max_ticks": 81
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-contribution-2026-11-16/20261116_220544-sh2zam-contrib-4-b-final.png",
+    "page": 4,
+    "repeat": "b",
+    "count": 48,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "GENERAL": {
+        "avg_ticks_floor": 170,
+        "min_ticks": 170,
+        "max_ticks": 172
+      },
+      "BATCH": {
+        "avg_ticks_floor": 121,
+        "min_ticks": 121,
+        "max_ticks": 122
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 96,
+        "min_ticks": 96,
+        "max_ticks": 98
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 77,
+        "min_ticks": 77,
+        "max_ticks": 79
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 63,
+        "min_ticks": 63,
+        "max_ticks": 64
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 52,
+        "min_ticks": 52,
+        "max_ticks": 54
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 78,
+        "min_ticks": 78,
+        "max_ticks": 79
+      },
+      "REUSE": {
+        "avg_ticks_floor": 85,
+        "min_ticks": 85,
+        "max_ticks": 87
+      },
+      "BOX8": {
+        "avg_ticks_floor": 126,
+        "min_ticks": 126,
+        "max_ticks": 127
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-contribution-2026-11-16/20261116_220554-sh2zam-contrib-5-b-final.png",
+    "page": 5,
+    "repeat": "b",
+    "count": 72,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "GENERAL": {
+        "avg_ticks_floor": 257,
+        "min_ticks": 257,
+        "max_ticks": 259
+      },
+      "BATCH": {
+        "avg_ticks_floor": 184,
+        "min_ticks": 184,
+        "max_ticks": 185
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 135,
+        "min_ticks": 134,
+        "max_ticks": 136
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 109,
+        "min_ticks": 109,
+        "max_ticks": 110
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 93,
+        "min_ticks": 93,
+        "max_ticks": 94
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 75,
+        "min_ticks": 75,
+        "max_ticks": 76
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 107,
+        "min_ticks": 107,
+        "max_ticks": 108
+      },
+      "REUSE": {
+        "avg_ticks_floor": 124,
+        "min_ticks": 124,
+        "max_ticks": 125
+      },
+      "BOX8": {
+        "avg_ticks_floor": 190,
+        "min_ticks": 190,
+        "max_ticks": 192
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-contribution-2026-11-16/20261116_220604-sh2zam-contrib-6-b-final.png",
+    "page": 6,
+    "repeat": "b",
+    "count": 128,
+    "failures": 0,
+    "reuse": 1,
+    "mac": 1,
+    "kernels": {
+      "GENERAL": {
+        "avg_ticks_floor": 466,
+        "min_ticks": 465,
+        "max_ticks": 467
+      },
+      "BATCH": {
+        "avg_ticks_floor": 329,
+        "min_ticks": 328,
+        "max_ticks": 330
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 230,
+        "min_ticks": 230,
+        "max_ticks": 231
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 185,
+        "min_ticks": 185,
+        "max_ticks": 186
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 170,
+        "min_ticks": 170,
+        "max_ticks": 171
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 134,
+        "min_ticks": 133,
+        "max_ticks": 135
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 182,
+        "min_ticks": 182,
+        "max_ticks": 183
+      },
+      "REUSE": {
+        "avg_ticks_floor": 133,
+        "min_ticks": 133,
+        "max_ticks": 135
+      },
+      "BOX8": {
+        "avg_ticks_floor": 345,
+        "min_ticks": 345,
+        "max_ticks": 346
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-contribution-2026-11-16/20261116_220614-sh2zam-contrib-7-b-final.png",
+    "page": 7,
+    "repeat": "b",
+    "count": 256,
+    "failures": 0,
+    "reuse": 1,
+    "mac": 1,
+    "kernels": {
+      "GENERAL": {
+        "avg_ticks_floor": 931,
+        "min_ticks": 930,
+        "max_ticks": 932
+      },
+      "BATCH": {
+        "avg_ticks_floor": 652,
+        "min_ticks": 652,
+        "max_ticks": 654
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 436,
+        "min_ticks": 436,
+        "max_ticks": 438
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 349,
+        "min_ticks": 348,
+        "max_ticks": 350
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 332,
+        "min_ticks": 332,
+        "max_ticks": 333
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 247,
+        "min_ticks": 247,
+        "max_ticks": 248
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 342,
+        "min_ticks": 342,
+        "max_ticks": 344
+      },
+      "REUSE": {
+        "avg_ticks_floor": 210,
+        "min_ticks": 209,
+        "max_ticks": 211
+      },
+      "BOX8": {
+        "avg_ticks_floor": 676,
+        "min_ticks": 675,
+        "max_ticks": 678
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-contribution-2026-11-16/20261116_220624-sh2zam-contrib-8-b-final.png",
+    "page": 8,
+    "repeat": "b",
+    "count": 32,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 0,
+    "kernels": {
+      "DIV1": {
+        "avg_ticks_floor": 30,
+        "min_ticks": 30,
+        "max_ticks": 31
+      },
+      "DIVU16": {
+        "avg_ticks_floor": 25,
+        "min_ticks": 25,
+        "max_ticks": 26
+      },
+      "SPLIT16": {
+        "avg_ticks_floor": 22,
+        "min_ticks": 22,
+        "max_ticks": 22
+      },
+      "DIVU64": {
+        "avg_ticks_floor": 24,
+        "min_ticks": 24,
+        "max_ticks": 25
+      }
+    }
+  }
+]

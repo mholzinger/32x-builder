@@ -1,0 +1,55 @@
+Test project /tmp/sh2zam-gcc-build
+      Start  1: legacy_regressions
+ 1/25 Test  #1: legacy_regressions ...............   Passed    0.17 sec
+      Start  2: foundation_oracles
+ 2/25 Test  #2: foundation_oracles ...............   Passed    0.14 sec
+      Start  3: batch_transform_oracles
+ 3/25 Test  #3: batch_transform_oracles ..........   Passed    0.12 sec
+      Start  4: prepared_transform_oracles
+ 4/25 Test  #4: prepared_transform_oracles .......   Passed    0.12 sec
+      Start  5: coordinate_reuse_oracles
+ 5/25 Test  #5: coordinate_reuse_oracles .........   Passed    0.13 sec
+      Start  6: native_batch_host_models
+ 6/25 Test  #6: native_batch_host_models .........   Passed    0.12 sec
+      Start  7: rotation_batch_exact
+ 7/25 Test  #7: rotation_batch_exact .............   Passed    0.13 sec
+      Start  8: spatial_exact
+ 8/25 Test  #8: spatial_exact ....................   Passed    0.16 sec
+      Start  9: view_exact
+ 9/25 Test  #9: view_exact .......................   Passed    0.31 sec
+      Start 10: divu_exact
+10/25 Test #10: divu_exact .......................   Passed    0.26 sec
+      Start 11: edges_exact
+11/25 Test #11: edges_exact ......................   Passed    0.50 sec
+      Start 12: box_exact
+12/25 Test #12: box_exact ........................   Passed    0.14 sec
+      Start 13: divu16_exact
+13/25 Test #13: divu16_exact .....................   Passed    0.11 sec
+      Start 14: workload_fixture_exact
+14/25 Test #14: workload_fixture_exact ...........   Passed    0.17 sec
+      Start 15: scalar_fast_exact
+15/25 Test #15: scalar_fast_exact ................   Passed    0.45 sec
+      Start 16: transform_fast_exact
+16/25 Test #16: transform_fast_exact .............   Passed    0.17 sec
+      Start 17: trig_fast_exact
+17/25 Test #17: trig_fast_exact ..................   Passed    0.34 sec
+      Start 18: cpp11_interop
+18/25 Test #18: cpp11_interop ....................   Passed    0.39 sec
+      Start 19: example_orbit
+19/25 Test #19: example_orbit ....................   Passed    0.14 sec
+      Start 20: example_cube
+20/25 Test #20: example_cube .....................   Passed    0.15 sec
+      Start 21: example_batch
+21/25 Test #21: example_batch ....................   Passed    0.16 sec
+      Start 22: example_smoke_main
+22/25 Test #22: example_smoke_main ...............   Passed    0.13 sec
+      Start 23: example_view
+23/25 Test #23: example_view .....................   Passed    0.12 sec
+      Start 24: example_edges
+24/25 Test #24: example_edges ....................   Passed    0.12 sec
+      Start 25: small_batch_fixture_exact
+25/25 Test #25: small_batch_fixture_exact ........   Passed    0.11 sec
+
+100% tests passed out of 25
+
+Total Test time (real) =   4.89 sec

@@ -1,0 +1,8 @@
+actual mesh vertices=106496 changed-by-single-floor=79040 max-world-ulp=1 workspace=9672
+vertices=2981888 near_mismatch=36 in_front=2334052 pixel_mismatch=1446889 onscreen_mismatch=910147 max_dx=1 max_dy=2 max_onscreen_dx=1 max_onscreen_dy=2 workspace=5396
+faces=1118208 partially-crossing=200560 intersection-oracles=401120 recovered-vertices=801360 workspace=12848
+fixture=0 count=288 x=8 yz=40 reusable=1 blocks8=0 hash=8a257095 workspace=41856
+fixture=1 count=384 x=24 yz=32 reusable=1 blocks8=0 hash=374d1c45 workspace=41856
+fixture=2 count=256 x=28 yz=36 reusable=1 blocks8=0 hash=327bf185 workspace=41856
+fixture=3 count=731 x=40 yz=128 reusable=0 blocks8=0 hash=5fc952ed workspace=41856
+random-matrix vertex-oracles=265440

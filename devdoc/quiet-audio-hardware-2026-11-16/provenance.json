@@ -1,0 +1,17 @@
+{
+  "rig": "mister.office.local",
+  "core": "S32X_20260603.rbf",
+  "compiler": "SH-2 GCC 15.2.0 O2/LTO",
+  "timed_build_sha256": "1467fe54815a10cbecae074b26030995c48cf7b06e9ced9935ef231007aca359",
+  "sample_frames": 64,
+  "warmup_frames": 8,
+  "settle_seconds": 35,
+  "experiment_byte": 30,
+  "ceiling_hardware_divider": true,
+  "source_capture_timezone": "America/New_York EST",
+  "caption_validation": "exact project-font matching; nonzero/ambiguous match errors rejected",
+  "test_seam_production_rom_identical": true,
+  "normal_build_sha256": "3e8c757dd7aa2fcc40c67ac567f90bedbdd5fc8048c0b0f6539a3fa7d3e38da3",
+  "deployed_sha256": "3e8c757dd7aa2fcc40c67ac567f90bedbdd5fc8048c0b0f6539a3fa7d3e38da3",
+  "normal_smoke_check": "Normal attract/gameplay scene captured after boot; all benchmark flags off; remote/local SHA256 matched."
+}

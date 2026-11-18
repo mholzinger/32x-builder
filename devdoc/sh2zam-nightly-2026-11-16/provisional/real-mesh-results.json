@@ -1,0 +1,818 @@
+[
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/provisional/20261116_231553-sh2zam-contrib-9-a-nightly.png",
+    "page": 9,
+    "repeat": "a",
+    "count": 72,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 140,
+        "min_ticks": 140,
+        "max_ticks": 141
+      },
+      "BATCH": {
+        "avg_ticks_floor": 176,
+        "min_ticks": 176,
+        "max_ticks": 177
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 135,
+        "min_ticks": 135,
+        "max_ticks": 136
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 110,
+        "min_ticks": 109,
+        "max_ticks": 111
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 83,
+        "min_ticks": 82,
+        "max_ticks": 85
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 110,
+        "min_ticks": 110,
+        "max_ticks": 111
+      },
+      "REUSE": {
+        "avg_ticks_floor": 138,
+        "min_ticks": 137,
+        "max_ticks": 139
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 85,
+        "min_ticks": 85,
+        "max_ticks": 87
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/provisional/20261116_231603-sh2zam-contrib-10-a-nightly.png",
+    "page": 10,
+    "repeat": "a",
+    "count": 24,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 46,
+        "min_ticks": 46,
+        "max_ticks": 47
+      },
+      "BATCH": {
+        "avg_ticks_floor": 55,
+        "min_ticks": 55,
+        "max_ticks": 56
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 56,
+        "min_ticks": 56,
+        "max_ticks": 57
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 44,
+        "min_ticks": 44,
+        "max_ticks": 45
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 31,
+        "min_ticks": 30,
+        "max_ticks": 32
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 40,
+        "min_ticks": 40,
+        "max_ticks": 41
+      },
+      "REUSE": {
+        "avg_ticks_floor": 49,
+        "min_ticks": 49,
+        "max_ticks": 50
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 30,
+        "min_ticks": 30,
+        "max_ticks": 31
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/provisional/20261116_231613-sh2zam-contrib-11-a-nightly.png",
+    "page": 11,
+    "repeat": "a",
+    "count": 48,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 94,
+        "min_ticks": 94,
+        "max_ticks": 95
+      },
+      "BATCH": {
+        "avg_ticks_floor": 114,
+        "min_ticks": 113,
+        "max_ticks": 115
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 95,
+        "min_ticks": 94,
+        "max_ticks": 96
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 74,
+        "min_ticks": 74,
+        "max_ticks": 75
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 52,
+        "min_ticks": 52,
+        "max_ticks": 53
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 74,
+        "min_ticks": 72,
+        "max_ticks": 75
+      },
+      "REUSE": {
+        "avg_ticks_floor": 92,
+        "min_ticks": 92,
+        "max_ticks": 93
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 58,
+        "min_ticks": 58,
+        "max_ticks": 59
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/provisional/20261116_231623-sh2zam-contrib-12-a-nightly.png",
+    "page": 12,
+    "repeat": "a",
+    "count": 64,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 122,
+        "min_ticks": 122,
+        "max_ticks": 123
+      },
+      "BATCH": {
+        "avg_ticks_floor": 153,
+        "min_ticks": 153,
+        "max_ticks": 155
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 119,
+        "min_ticks": 119,
+        "max_ticks": 121
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 95,
+        "min_ticks": 95,
+        "max_ticks": 96
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 73,
+        "min_ticks": 73,
+        "max_ticks": 75
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 94,
+        "min_ticks": 92,
+        "max_ticks": 95
+      },
+      "REUSE": {
+        "avg_ticks_floor": 122,
+        "min_ticks": 122,
+        "max_ticks": 124
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 76,
+        "min_ticks": 76,
+        "max_ticks": 78
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/provisional/20261116_231633-sh2zam-contrib-13-a-nightly.png",
+    "page": 13,
+    "repeat": "a",
+    "count": 72,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 140,
+        "min_ticks": 140,
+        "max_ticks": 141
+      },
+      "BATCH": {
+        "avg_ticks_floor": 184,
+        "min_ticks": 183,
+        "max_ticks": 185
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 141,
+        "min_ticks": 141,
+        "max_ticks": 142
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 112,
+        "min_ticks": 111,
+        "max_ticks": 114
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 88,
+        "min_ticks": 87,
+        "max_ticks": 89
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 115,
+        "min_ticks": 114,
+        "max_ticks": 117
+      },
+      "REUSE": {
+        "avg_ticks_floor": 146,
+        "min_ticks": 146,
+        "max_ticks": 148
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 87,
+        "min_ticks": 87,
+        "max_ticks": 88
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/provisional/20261116_231643-sh2zam-contrib-14-a-nightly.png",
+    "page": 14,
+    "repeat": "a",
+    "count": 24,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 46,
+        "min_ticks": 45,
+        "max_ticks": 47
+      },
+      "BATCH": {
+        "avg_ticks_floor": 56,
+        "min_ticks": 56,
+        "max_ticks": 56
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 59,
+        "min_ticks": 59,
+        "max_ticks": 60
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 49,
+        "min_ticks": 48,
+        "max_ticks": 50
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 34,
+        "min_ticks": 33,
+        "max_ticks": 36
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 41,
+        "min_ticks": 40,
+        "max_ticks": 42
+      },
+      "REUSE": {
+        "avg_ticks_floor": 60,
+        "min_ticks": 59,
+        "max_ticks": 61
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 29,
+        "min_ticks": 29,
+        "max_ticks": 30
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/provisional/20261116_231653-sh2zam-contrib-15-a-nightly.png",
+    "page": 15,
+    "repeat": "a",
+    "count": 48,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 94,
+        "min_ticks": 94,
+        "max_ticks": 95
+      },
+      "BATCH": {
+        "avg_ticks_floor": 117,
+        "min_ticks": 117,
+        "max_ticks": 118
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 92,
+        "min_ticks": 91,
+        "max_ticks": 93
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 75,
+        "min_ticks": 75,
+        "max_ticks": 77
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 54,
+        "min_ticks": 54,
+        "max_ticks": 55
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 77,
+        "min_ticks": 76,
+        "max_ticks": 79
+      },
+      "REUSE": {
+        "avg_ticks_floor": 97,
+        "min_ticks": 97,
+        "max_ticks": 98
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 59,
+        "min_ticks": 59,
+        "max_ticks": 61
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/provisional/20261116_231703-sh2zam-contrib-16-a-nightly.png",
+    "page": 16,
+    "repeat": "a",
+    "count": 64,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 122,
+        "min_ticks": 122,
+        "max_ticks": 123
+      },
+      "BATCH": {
+        "avg_ticks_floor": 157,
+        "min_ticks": 157,
+        "max_ticks": 158
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 132,
+        "min_ticks": 132,
+        "max_ticks": 134
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 100,
+        "min_ticks": 98,
+        "max_ticks": 101
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 77,
+        "min_ticks": 75,
+        "max_ticks": 78
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 96,
+        "min_ticks": 96,
+        "max_ticks": 98
+      },
+      "REUSE": {
+        "avg_ticks_floor": 135,
+        "min_ticks": 135,
+        "max_ticks": 137
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 76,
+        "min_ticks": 76,
+        "max_ticks": 78
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/provisional/20261116_231713-sh2zam-contrib-9-b-nightly.png",
+    "page": 9,
+    "repeat": "b",
+    "count": 72,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 140,
+        "min_ticks": 140,
+        "max_ticks": 141
+      },
+      "BATCH": {
+        "avg_ticks_floor": 176,
+        "min_ticks": 176,
+        "max_ticks": 177
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 135,
+        "min_ticks": 135,
+        "max_ticks": 136
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 110,
+        "min_ticks": 108,
+        "max_ticks": 111
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 83,
+        "min_ticks": 83,
+        "max_ticks": 84
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 110,
+        "min_ticks": 110,
+        "max_ticks": 111
+      },
+      "REUSE": {
+        "avg_ticks_floor": 138,
+        "min_ticks": 137,
+        "max_ticks": 139
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 85,
+        "min_ticks": 85,
+        "max_ticks": 87
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/provisional/20261116_231723-sh2zam-contrib-10-b-nightly.png",
+    "page": 10,
+    "repeat": "b",
+    "count": 24,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 46,
+        "min_ticks": 45,
+        "max_ticks": 47
+      },
+      "BATCH": {
+        "avg_ticks_floor": 55,
+        "min_ticks": 55,
+        "max_ticks": 56
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 56,
+        "min_ticks": 56,
+        "max_ticks": 57
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 44,
+        "min_ticks": 44,
+        "max_ticks": 45
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 31,
+        "min_ticks": 31,
+        "max_ticks": 32
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 40,
+        "min_ticks": 39,
+        "max_ticks": 41
+      },
+      "REUSE": {
+        "avg_ticks_floor": 49,
+        "min_ticks": 49,
+        "max_ticks": 50
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 30,
+        "min_ticks": 30,
+        "max_ticks": 31
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/provisional/20261116_231733-sh2zam-contrib-11-b-nightly.png",
+    "page": 11,
+    "repeat": "b",
+    "count": 48,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 94,
+        "min_ticks": 94,
+        "max_ticks": 95
+      },
+      "BATCH": {
+        "avg_ticks_floor": 114,
+        "min_ticks": 113,
+        "max_ticks": 115
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 95,
+        "min_ticks": 94,
+        "max_ticks": 96
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 74,
+        "min_ticks": 74,
+        "max_ticks": 75
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 52,
+        "min_ticks": 52,
+        "max_ticks": 53
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 74,
+        "min_ticks": 73,
+        "max_ticks": 75
+      },
+      "REUSE": {
+        "avg_ticks_floor": 92,
+        "min_ticks": 91,
+        "max_ticks": 93
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 58,
+        "min_ticks": 58,
+        "max_ticks": 59
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/provisional/20261116_231743-sh2zam-contrib-12-b-nightly.png",
+    "page": 12,
+    "repeat": "b",
+    "count": 64,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 122,
+        "min_ticks": 122,
+        "max_ticks": 123
+      },
+      "BATCH": {
+        "avg_ticks_floor": 154,
+        "min_ticks": 153,
+        "max_ticks": 155
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 119,
+        "min_ticks": 119,
+        "max_ticks": 120
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 95,
+        "min_ticks": 94,
+        "max_ticks": 96
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 73,
+        "min_ticks": 73,
+        "max_ticks": 75
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 94,
+        "min_ticks": 93,
+        "max_ticks": 95
+      },
+      "REUSE": {
+        "avg_ticks_floor": 122,
+        "min_ticks": 122,
+        "max_ticks": 124
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 76,
+        "min_ticks": 76,
+        "max_ticks": 77
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/provisional/20261116_231753-sh2zam-contrib-13-b-nightly.png",
+    "page": 13,
+    "repeat": "b",
+    "count": 72,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 140,
+        "min_ticks": 140,
+        "max_ticks": 141
+      },
+      "BATCH": {
+        "avg_ticks_floor": 184,
+        "min_ticks": 183,
+        "max_ticks": 185
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 141,
+        "min_ticks": 141,
+        "max_ticks": 142
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 112,
+        "min_ticks": 111,
+        "max_ticks": 113
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 87,
+        "min_ticks": 87,
+        "max_ticks": 88
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 115,
+        "min_ticks": 113,
+        "max_ticks": 116
+      },
+      "REUSE": {
+        "avg_ticks_floor": 146,
+        "min_ticks": 146,
+        "max_ticks": 147
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 87,
+        "min_ticks": 87,
+        "max_ticks": 88
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/provisional/20261116_231803-sh2zam-contrib-14-b-nightly.png",
+    "page": 14,
+    "repeat": "b",
+    "count": 24,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 46,
+        "min_ticks": 45,
+        "max_ticks": 47
+      },
+      "BATCH": {
+        "avg_ticks_floor": 55,
+        "min_ticks": 55,
+        "max_ticks": 56
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 59,
+        "min_ticks": 59,
+        "max_ticks": 60
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 48,
+        "min_ticks": 48,
+        "max_ticks": 50
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 34,
+        "min_ticks": 34,
+        "max_ticks": 36
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 41,
+        "min_ticks": 40,
+        "max_ticks": 42
+      },
+      "REUSE": {
+        "avg_ticks_floor": 60,
+        "min_ticks": 59,
+        "max_ticks": 61
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 29,
+        "min_ticks": 29,
+        "max_ticks": 30
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/provisional/20261116_231813-sh2zam-contrib-15-b-nightly.png",
+    "page": 15,
+    "repeat": "b",
+    "count": 48,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 94,
+        "min_ticks": 94,
+        "max_ticks": 95
+      },
+      "BATCH": {
+        "avg_ticks_floor": 117,
+        "min_ticks": 117,
+        "max_ticks": 119
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 92,
+        "min_ticks": 92,
+        "max_ticks": 93
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 76,
+        "min_ticks": 75,
+        "max_ticks": 77
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 54,
+        "min_ticks": 54,
+        "max_ticks": 55
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 77,
+        "min_ticks": 76,
+        "max_ticks": 79
+      },
+      "REUSE": {
+        "avg_ticks_floor": 97,
+        "min_ticks": 97,
+        "max_ticks": 98
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 59,
+        "min_ticks": 59,
+        "max_ticks": 61
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/provisional/20261116_231823-sh2zam-contrib-16-b-nightly.png",
+    "page": 16,
+    "repeat": "b",
+    "count": 64,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 122,
+        "min_ticks": 122,
+        "max_ticks": 123
+      },
+      "BATCH": {
+        "avg_ticks_floor": 157,
+        "min_ticks": 157,
+        "max_ticks": 158
+      },
+      "COLD-PREP": {
+        "avg_ticks_floor": 133,
+        "min_ticks": 132,
+        "max_ticks": 134
+      },
+      "WARM-PREP": {
+        "avg_ticks_floor": 100,
+        "min_ticks": 98,
+        "max_ticks": 102
+      },
+      "MAC-PREP": {
+        "avg_ticks_floor": 77,
+        "min_ticks": 75,
+        "max_ticks": 78
+      },
+      "DMUL-PREP": {
+        "avg_ticks_floor": 96,
+        "min_ticks": 96,
+        "max_ticks": 98
+      },
+      "REUSE": {
+        "avg_ticks_floor": 135,
+        "min_ticks": 134,
+        "max_ticks": 136
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 76,
+        "min_ticks": 76,
+        "max_ticks": 78
+      }
+    }
+  }
+]

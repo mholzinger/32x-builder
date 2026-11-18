@@ -1,0 +1,64 @@
+--- a/sh_src/raycast.c
++++ b/sh_src/raycast.c
+@@ -38,6 +38,7 @@
+  *   [27] direct gameplay benchmark: 1 corridor, 2 room, 3 crawl, 4 pit,
+  *        5 testbed spawn. Authored maps, frozen world clock, no menu.
+  *   [28] ceiling grid scale: 0 software reference, 1 hardware divider.
++ *   [29] experimental per-invocation wall shade-table reuse (0 baseline).
+  * volatile so each gate is a real ROM read, not a folded constant. All
+  * diagnostics ship zero except [28], the qualified exact divider optimization.
+  * A ROM with benchmark/attribution bytes enabled is never released. */
+@@ -843,6 +844,7 @@
+ void pedge_build_cells(void);
+ volatile uint16_t prof_dda_steps = 0;
+ volatile uint16_t prof_wall_dda_ticks = 0;  /* ray walk inside the wall pass */
++volatile uint16_t prof_wall_lut_hits = 0;
+ volatile uint16_t prof_wall_lut_ticks = 0;  /* per-column shade-LUT build */
+ volatile uint16_t prof_wall_emit_ticks = 0; /* per-column pixel emit */   /* primary half: DDA steps walked/frame */
+ volatile uint16_t prof_dda_fat   = 0;   /* primary half: steps in the slab-gate path */
+@@ -8669,6 +8671,13 @@
+     int part_diag = SHARED_UC->part_diag;
+     int ovl_acc = 0;                  /* FRT ticks in the see-over overlay (HUD O) */
+     uint16_t dda_acc_ = 0;            /* FRT ticks inside the DDA ray walk */
++    /* Invocation-local, so each CPU owns its table and changing frames,
++     * palettes or models cannot reuse stale entries. Key every build input. */
++    uint8_t shade_lut[WALL_TEX_HI_HEIGHT];
++    const uint8_t *lut_col_prev = 0;
++    int lut_key_prev = -1;
++    uint16_t lut_hits_ = 0;
++    const int reuse_lut = diag_cfg[29] != 0;
+     uint16_t lut_acc_ = 0, emit_acc_ = 0;   /* shade-LUT build / pixel emit */
+     fx_t px = SHARED_UC->player.x;
+     fx_t py = SHARED_UC->player.y;
+@@ -9673,11 +9682,19 @@
+             if (s >= SHADE_LEVELS) s = SHADE_LEVELS - 1;
+             lut5[v] = (uint8_t)(lut_base + s);
+         }
+-        uint8_t shade_lut[WALL_TEX_HI_HEIGHT];
+         if (detail_factor) {   /* uniform when faded — skip the build, flat-fill below */
+-            { uint16_t lt_=prof_frt_read();
+-            for (int ty = 0; ty < tex_h; ty++) shade_lut[ty] = lut5[wall_col[ty]];
+-              lut_acc_ += (uint16_t)(prof_frt_read()-lt_); }
++            int lut_key = reuse_lut ? wall_shade | (detail_factor << 8) | (tex_h << 16) : 0;
++            if (reuse_lut && lut_col_prev == wall_col && lut_key_prev == lut_key) {
++                ++lut_hits_;
++            } else {
++                uint16_t lt_ = prof_frt_read();
++                for (int ty = 0; ty < tex_h; ty++) shade_lut[ty] = lut5[wall_col[ty]];
++                lut_acc_ += (uint16_t)(prof_frt_read() - lt_);
++                if (reuse_lut) {
++                    lut_col_prev = wall_col;
++                    lut_key_prev = lut_key;
++                }
++            }
+         }
+ 
+         /* Baseboard molding: bottom ~3% of the wall in world space gets
+@@ -10344,6 +10361,7 @@
+         prof_dda_steps = (uint16_t)dda_steps;
+         prof_wall_dda_ticks = dda_acc_;
+         prof_wall_lut_ticks = lut_acc_;
++        prof_wall_lut_hits = lut_hits_;
+         prof_wall_emit_ticks = emit_acc_;
+         prof_dda_fat   = (uint16_t)dda_fat;
+         prof_pass_ovl  = (uint16_t)ovl_acc;

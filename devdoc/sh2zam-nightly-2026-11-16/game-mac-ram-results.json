@@ -1,0 +1,178 @@
+[
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_235034-fmac-ram-chair-0-a.png",
+    "fixture": "chair",
+    "mode": 0,
+    "repeat": "a",
+    "grid_ticks": 688,
+    "render_ticks": 25577,
+    "vblank100": 1000,
+    "primary_model_vertices": 72,
+    "primary_furniture_ticks": 1240
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_235058-fmac-ram-chair-3-a.png",
+    "fixture": "chair",
+    "mode": 3,
+    "repeat": "a",
+    "grid_ticks": 689,
+    "render_ticks": 25618,
+    "vblank100": 1002,
+    "primary_model_vertices": 72,
+    "primary_furniture_ticks": 1269
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_235122-fmac-ram-desk-0-a.png",
+    "fixture": "desk",
+    "mode": 0,
+    "repeat": "a",
+    "grid_ticks": 689,
+    "render_ticks": 24913,
+    "vblank100": 1000,
+    "primary_model_vertices": 24,
+    "primary_furniture_ticks": 1094
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_235146-fmac-ram-desk-3-a.png",
+    "fixture": "desk",
+    "mode": 3,
+    "repeat": "a",
+    "grid_ticks": 689,
+    "render_ticks": 24953,
+    "vblank100": 1000,
+    "primary_model_vertices": 24,
+    "primary_furniture_ticks": 1124
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_235210-fmac-ram-pvm-0-a.png",
+    "fixture": "pvm",
+    "mode": 0,
+    "repeat": "a",
+    "grid_ticks": 687,
+    "render_ticks": 25241,
+    "vblank100": 1000,
+    "primary_model_vertices": 48,
+    "primary_furniture_ticks": 1505
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_235234-fmac-ram-pvm-3-a.png",
+    "fixture": "pvm",
+    "mode": 3,
+    "repeat": "a",
+    "grid_ticks": 688,
+    "render_ticks": 25277,
+    "vblank100": 1000,
+    "primary_model_vertices": 48,
+    "primary_furniture_ticks": 1540
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_235258-fmac-ram-deskset-0-a.png",
+    "fixture": "deskset",
+    "mode": 0,
+    "repeat": "a",
+    "grid_ticks": 687,
+    "render_ticks": 26270,
+    "vblank100": 1064,
+    "primary_model_vertices": 64,
+    "primary_furniture_ticks": 2386
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_235322-fmac-ram-deskset-3-a.png",
+    "fixture": "deskset",
+    "mode": 3,
+    "repeat": "a",
+    "grid_ticks": 687,
+    "render_ticks": 26422,
+    "vblank100": 1083,
+    "primary_model_vertices": 64,
+    "primary_furniture_ticks": 2359
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_235346-fmac-ram-chair-3-b.png",
+    "fixture": "chair",
+    "mode": 3,
+    "repeat": "b",
+    "grid_ticks": 688,
+    "render_ticks": 25592,
+    "vblank100": 1000,
+    "primary_model_vertices": 72,
+    "primary_furniture_ticks": 1271
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_235410-fmac-ram-chair-0-b.png",
+    "fixture": "chair",
+    "mode": 0,
+    "repeat": "b",
+    "grid_ticks": 689,
+    "render_ticks": 25565,
+    "vblank100": 1000,
+    "primary_model_vertices": 72,
+    "primary_furniture_ticks": 1235
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_235434-fmac-ram-desk-3-b.png",
+    "fixture": "desk",
+    "mode": 3,
+    "repeat": "b",
+    "grid_ticks": 688,
+    "render_ticks": 24958,
+    "vblank100": 1000,
+    "primary_model_vertices": 24,
+    "primary_furniture_ticks": 1116
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_235458-fmac-ram-desk-0-b.png",
+    "fixture": "desk",
+    "mode": 0,
+    "repeat": "b",
+    "grid_ticks": 688,
+    "render_ticks": 24915,
+    "vblank100": 1000,
+    "primary_model_vertices": 24,
+    "primary_furniture_ticks": 1093
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_235522-fmac-ram-pvm-3-b.png",
+    "fixture": "pvm",
+    "mode": 3,
+    "repeat": "b",
+    "grid_ticks": 688,
+    "render_ticks": 25278,
+    "vblank100": 1000,
+    "primary_model_vertices": 48,
+    "primary_furniture_ticks": 1543
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_235546-fmac-ram-pvm-0-b.png",
+    "fixture": "pvm",
+    "mode": 0,
+    "repeat": "b",
+    "grid_ticks": 690,
+    "render_ticks": 25256,
+    "vblank100": 1000,
+    "primary_model_vertices": 48,
+    "primary_furniture_ticks": 1502
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_235610-fmac-ram-deskset-3-b.png",
+    "fixture": "deskset",
+    "mode": 3,
+    "repeat": "b",
+    "grid_ticks": 686,
+    "render_ticks": 26421,
+    "vblank100": 1083,
+    "primary_model_vertices": 64,
+    "primary_furniture_ticks": 2357
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_235634-fmac-ram-deskset-0-b.png",
+    "fixture": "deskset",
+    "mode": 0,
+    "repeat": "b",
+    "grid_ticks": 688,
+    "render_ticks": 26298,
+    "vblank100": 1069,
+    "primary_model_vertices": 64,
+    "primary_furniture_ticks": 2383
+  }
+]

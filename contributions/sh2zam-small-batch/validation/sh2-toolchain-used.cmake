@@ -1,0 +1,7 @@
+set(CMAKE_SYSTEM_NAME Generic)
+set(CMAKE_SYSTEM_PROCESSOR sh2)
+set(CMAKE_C_COMPILER /Users/mikeholzinger/src/marsdev/mars/sh-elf/bin/sh-elf-gcc)
+set(CMAKE_AR /Users/mikeholzinger/src/marsdev/mars/sh-elf/bin/sh-elf-ar)
+set(CMAKE_RANLIB /Users/mikeholzinger/src/marsdev/mars/sh-elf/bin/sh-elf-ranlib)
+set(CMAKE_C_FLAGS_INIT "-m2 -mb -ffreestanding -DSH2Z_REQUIRE_SH2=1")
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)

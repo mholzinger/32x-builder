@@ -239,4 +239,5 @@ int  raycast_glass_active(void);
 void raycast_glass_sample(void);
 void raycast_add_dark_room(int x0, int y0, int x1, int y1);
 
+extern int g_vp_x0, g_vp_x1, g_vp_y0, g_vp_y1;   /* framed viewport (diag_cfg[21]) */
 #endif

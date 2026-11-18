@@ -13,6 +13,8 @@
 #include "box3d.h"
 #include "box_hero.h"
 #include "sound.h"
+#include "diag_cfg.h"
+#include "sh2zam_bench.h"
 
 /* Non-static so box3d.c can drive the same swap state during the
  * title screen — keeps the front/back buffer bookkeeping in one
@@ -50,7 +52,6 @@ static fx_t am_s_cur = 4 << 16;
 static int g_custom_current = -1;
 /* Seed of the procgen level currently loaded — its entire identity. The
  * automap footer derives the level's "name" from it (stable per level). */
-extern const volatile uint8_t diag_cfg[24];
 static uint32_t g_procgen_seed = 0;
 
 
@@ -202,8 +203,13 @@ static void metrics_mode_check(uint16_t pad) {
      * honored: a deliberate human MODE-hold always is, while a single-frame
      * phantom MODE (mis-read pad on real hardware) never toggles anything. */
     if ((pad & SEGA_CTRL_MODE) && (prev & SEGA_CTRL_MODE)) {
-        if ((pad & SEGA_CTRL_X) && !(prev & SEGA_CTRL_X))
-            SHARED_UC->wall_res_mode = (uint8_t)((SHARED_UC->wall_res_mode + 1) % 5);
+        if ((pad & SEGA_CTRL_X) && !(prev & SEGA_CTRL_X)) {
+            static const uint8_t modes[] = {0, 7, 1, 2, 3, 4};
+            unsigned next = 0;
+            for (unsigned i = 0; i < sizeof modes; ++i)
+                if (modes[i] == SHARED_UC->wall_res_mode) next = (i + 1) % sizeof modes;
+            SHARED_UC->wall_res_mode = modes[next];
+        }
         if ((pad & SEGA_CTRL_Y) && !(prev & SEGA_CTRL_Y)) {
             g_metrics_on ^= 1;
             if (!g_metrics_on) hud_genesis_blank();
@@ -310,12 +316,11 @@ static inline void prof_init(void) {
                           * now; ~5.6us/tick is ample for pass-level metrics. */
     SH2_FRT_FTCSR = 0;     /* clear OVF/OCF; free-running */
     prof_prev_frt = prof_read_frt();
-    {   /* diag_cfg[10]: metrics HUD up from boot, so a measurement run is
+    {   /* diag_cfg[DIAG_METRICS_AT_BOOT]: metrics HUD up from boot, so a measurement run is
          * readable over SSH (deploy, launch, screenshot) with no pad input
          * at all. The HUD draw sits OUTSIDE the render brackets, so it
          * cannot perturb H or the pass counters it is there to read. */
-        extern const volatile uint8_t diag_cfg[24];
-        if (diag_cfg[10]) g_metrics_on = 1;
+        if (diag_cfg[DIAG_METRICS_AT_BOOT]) g_metrics_on = 1;
     }
 }
 
@@ -442,8 +447,18 @@ static void prof_sample_and_draw(uint8_t *fb) {
         /* Effective FPS = 720000 / frame_period (FRT is ~720kHz). The 16-bit
          * FRT wraps at 65536 (~91ms); a per-frame delta below one vblank
          * (12000 ticks) wrapped once, so add 65536 — honest down to ~10fps. */
+        /* F reports the rate you PLAY at, not the rate while being watched.
+         * Drawing this HUD costs ~19.6ms/frame (it is many short HwMdPuts
+         * runs through the 68K bridge), and prof_sample_and_draw measures
+         * the period between its own calls -- so that cost sits inside every
+         * delta it takes. Uncorrected, opening MODE+Y made F read 10 on a
+         * frame the player gets at 14. prof_post_hud times exactly that draw,
+         * so subtract it. Players never pay it; observers should not see it.
+         * (FRT is Phi/128 = 179,766Hz against this 180000 divisor: 0.13%.) */
         uint32_t ft = delta ? delta : 1;
         if (ft < 3000) ft += 65536;
+        { uint32_t hud_ = prof_post_hud;
+          if (hud_ < ft) ft -= hud_; }
         uint32_t fps = (180000u + ft / 2) / ft;
         if (fps > 99) fps = 99;
         t2[pos++] = 'F'; t2[pos++] = ':';
@@ -866,6 +881,11 @@ volatile uint32_t pace_ring_i = 0;
 
 /* Pacing governor state — the target bucket and its evidence counters.
  * See shared.h at pace_on for the design; policy knobs here. */
+/* Ticks the governor's hold burned on the frame just delivered. Published so
+ * the AUTO resolution controller can subtract it: its EMA is measured from one
+ * render entry to the next, and the hold sits in that gap, so without this AUTO
+ * is reading a period the governor chose rather than the cost of the scene. */
+volatile uint16_t prof_pace_hold = 0;
 static uint8_t pace_target   = 3;   /* hold in-game flips to this many vblanks */
 static uint8_t pace_fast_run = 0;   /* consecutive walking frames a bucket under */
 static uint8_t pace_over_run = 0;   /* consecutive walking frames over target */
@@ -904,12 +924,13 @@ void swapBuffers(void) {
      * Votes: ready by tick target-2 (raw < target-1) could have displayed
      * target-1, that's the step-down; raw >= target displays target+1+,
      * that's the overrun. */
-    /* diag_cfg[18]: bypass the pacing governor for benchmarking. The hold
+    /* diag_cfg[DIAG_PACE_BYPASS]: bypass the pacing governor for benchmarking. The hold
      * pins every in-level frame to pace_target vblanks, so a render that got
      * 24% faster still delivers at exactly the same rate until the governor
      * steps down (PACE_DOWN_RUN frames later). Measuring a render change
      * through the governor reads as "no effect". */
-    if (SHARED_UC->pace_on && g_pace_scope && !menu_is_active() && !diag_cfg[18]) {
+    prof_pace_hold = 0;          /* no hold unless the branch below takes one */
+    if (SHARED_UC->pace_on && g_pace_scope && !menu_is_active() && !diag_cfg[DIAG_PACE_BYPASS]) {
         uint16_t raw = (uint16_t)((uint16_t)(MARS_SYS_COMM12 >> 16)
                                 - (uint16_t)(lastTick >> 16));
         int vote = SHARED_UC->is_walking != 0;
@@ -930,8 +951,10 @@ void swapBuffers(void) {
             /* The hold: burn the leftover vblanks. Sysreg-only spin, same
              * bus-free contract as the tick wait below. */
             SHARED_UC->primary_vwait = 1;
+            uint16_t hold_t0 = prof_read_frt();
             BUS_WAIT((uint16_t)((uint16_t)(MARS_SYS_COMM12 >> 16)
                               - (uint16_t)(lastTick >> 16)) < pace_target);
+            prof_pace_hold = (uint16_t)(prof_read_frt() - hold_t0);
             SHARED_UC->primary_vwait = 0;
         }
     }
@@ -2483,7 +2506,7 @@ static void portal_to_procgen(void) {
     }
     if (g_next_seed_set) { g_procgen_seed = g_next_seed; g_next_seed_set = 0; }
     else g_procgen_seed = SHARED_UC->frame_count * 1000003u + (uint32_t)player.x;
-    if (diag_cfg[14]) g_procgen_seed = 0x1234567u;   /* benchmark: fixed map */
+    if (diag_cfg[DIAG_BENCH_POSE]) g_procgen_seed = 0x1234567u;   /* benchmark: fixed map */
     if (!g_map_pregen) procgen_run(g_procgen_seed);   /* corridor pre-generated */
     g_map_pregen = 0;
     player.x = FX(16.5); player.y = FX(28.5); player.angle = 192;
@@ -2572,6 +2595,108 @@ static void portal_to_custom(int idx) {
     fade_step(FADE_STEPS);
 }
 
+/* Diagnostic-only direct gameplay entry. Stable authored map + camera,
+ * full resolution, fixed split and frozen animation clock. Uses the shipping
+ * renderer and secondary/audio dispatch, with no menu or pacing governor. */
+static void gameplay_benchmark(void) {
+    unsigned scene = diag_cfg[DIAG_GAMEPLAY_BENCH];
+    raycast_load_custom(scene >= 5 ? 1 : 0);
+    if (scene >= 6) {
+        standups_clear();
+        raycast_add_standup(FX(16.5), FX(26.0), diag_cfg[DIAG_BOX_BENCH_POSE] ? diag_cfg[DIAG_BOX_BENCH_POSE]-1 : 64,
+            scene == 6 ? CHAIR_ASSET_KIND : scene == 7 ? DESK_ASSET_KIND : PVM_ASSET_KIND);
+        if (scene == 9) raycast_standup_make_desk();
+    }
+    if (scene == 2) { player.x = FX(1.3); player.y = FX(13.8); player.angle = 0; }
+    if (scene == 3) { player.x = FX(1.3); player.y = FX(22.3); player.angle = 64; }
+    if (scene == 4) { player.x = FX(27.8); player.y = FX(14.4); player.angle = 212; }
+    raycast_init();
+    raycast_eye_settle();
+    prof_init();
+    g_metrics_on = 1;
+    SHARED_UC->eye_h = 128;
+    SHARED_UC->wall_res_mode = 0;
+    SHARED_UC->split_col = 160;
+    SHARED_UC->pace_on = 0;
+    SHARED_UC->frame_count = 64;
+    amb_set_active(1);
+    unsigned samples = 0, warmup = 8;
+    uint32_t grid_sum = 0, render_sum = 0, vblank_sum = 0;
+    uint32_t wall_sum = 0, lut_sum = 0, chair_sum = 0;
+    uint16_t chair_avg = 0;
+    uint16_t wall_avg = 0, lut_avg = 0;
+    uint16_t vb_prev = (uint16_t)(MARS_SYS_COMM12 >> 16);
+    uint16_t grid_avg = 0, render_avg = 0, vb_avg = 0;
+    extern volatile uint16_t prof_pass_ceil, prof_pass_walls, prof_wall_lut_ticks, prof_pass_chair;
+    extern volatile uint16_t prof_furniture_vertices;
+    for (;;) {
+        prof_mark_render(6);
+        uint16_t render_start = prof_read_frt();
+        prof_furniture_vertices = 0;
+        raycast_render();
+        uint16_t post = prof_read_frt();
+        uint16_t render_ticks = (uint16_t)(post - render_start);
+        uint16_t grid_ticks = prof_pass_ceil;
+        uint16_t wall_ticks = prof_pass_walls, lut_ticks = prof_wall_lut_ticks;
+        uint8_t *fb = (uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200);
+        prof_sample_and_draw(fb);
+        pos_draw(fb);
+        char label[] = "BENCH S:0 DIV:0 Q:0 M:0";
+        label[8] = '0' + scene;
+        label[14] = '0' + !!diag_cfg[DIAG_CEIL_DIV_HW];
+        label[18] = '0' + !!diag_cfg[DIAG_QUIET_PWM];
+        label[22] = '0' + (diag_cfg[DIAG_FORCE_RES_MODE] ? diag_cfg[DIAG_FORCE_RES_MODE] - 1 : SHARED_UC->wall_res_mode);
+        font_draw_string(fb, 8, 32, label, 49);
+        char stats[] = "G:00000 R:00000 V:00000";
+        uint16_t values[3] = {grid_avg, render_avg, vb_avg};
+        for (int k = 0; k < 3; ++k) {
+            uint16_t val = values[k];
+            for (int d = 4; d >= 0; --d) {
+                stats[k * 8 + 2 + d] = '0' + val % 10; val /= 10;
+            }
+        }
+        font_draw_string(fb, 8, 41, stats, 49);
+        char wall_stats[] = "W:00000 L:00000";
+        uint16_t wall_values[2] = {wall_avg, lut_avg};
+        for (int k = 0; k < 2; ++k) {
+            uint16_t val = wall_values[k];
+            for (int d = 4; d >= 0; --d) {
+                wall_stats[k * 8 + 2 + d] = '0' + val % 10; val /= 10;
+            }
+        }
+        font_draw_string(fb, 8, 50, wall_stats, 49);
+        char furniture_stats[] = "F:00000 D:0 C:00000";
+        unsigned fv = prof_furniture_vertices;
+        for (int d = 4; d >= 0; --d) { furniture_stats[2+d] = '0' + fv%10; fv/=10; }
+        furniture_stats[10] = '0' + diag_cfg[DIAG_FURNITURE_RECIP];
+        unsigned cv = chair_avg;
+        for (int d = 4; d >= 0; --d) { furniture_stats[14+d] = '0' + cv%10; cv/=10; }
+        font_draw_string(fb, 8, 59, furniture_stats, 49);
+        uint16_t n = prof_read_frt();
+        prof_post_hud = (uint16_t)(n - post);
+        swapBuffers();
+        prof_logic_t0 = prof_read_frt();
+        prof_post_swap = (uint16_t)(prof_logic_t0 - n);
+        uint16_t vb_now = (uint16_t)(MARS_SYS_COMM12 >> 16);
+        if (warmup) --warmup;
+        else if (samples < 64) {
+            grid_sum += grid_ticks;
+            wall_sum += wall_ticks; lut_sum += lut_ticks; chair_sum += prof_pass_chair;
+            render_sum += render_ticks;
+            vblank_sum += (uint16_t)(vb_now - vb_prev);
+            if (++samples == 64) {
+                grid_avg = (uint16_t)((grid_sum + 32) / 64);
+                chair_avg = (uint16_t)((chair_sum + 32) / 64);
+                wall_avg = (uint16_t)((wall_sum + 32) / 64);
+                lut_avg = (uint16_t)((lut_sum + 32) / 64);
+                render_avg = (uint16_t)((render_sum + 32) / 64);
+                vb_avg = (uint16_t)((vblank_sum * 100 + 32) / 64);
+            }
+        }
+        vb_prev = vb_now;
+    }
+}
+
 int m_main(void) {
     /* Release the secondary SH-2. The crt0 (mars_start.s:271-273) intends
      * to do this after the init JSR but uses a stale r0 — the write
@@ -2582,10 +2707,12 @@ int m_main(void) {
      * Writing 0 to COMM4 changes the upper half of the 32-bit word
      * the secondary is polling for "S_OK" (0x535F4F4B) → cmp/eq fails →
      * secondary exits the wait and jumps to s_main. */
+    if (diag_cfg[DIAG_SH2ZAM_SUITE] >= 1 && diag_cfg[DIAG_SH2ZAM_SUITE] <= 30) sh2zam_benchmark(diag_cfg[DIAG_SH2ZAM_SUITE]);
     MARS_SYS_COMM4 = 0;
 
     Hw32xInit(MARS_VDP_MODE_256, 0);
     Hw32xDelay(1);    /* wait for first vblank — palette is writable now */
+    if (diag_cfg[DIAG_GAMEPLAY_BENCH] >= 1 && diag_cfg[DIAG_GAMEPLAY_BENCH] <= 9) gameplay_benchmark();
 
     /* The zoom-into-the-glass is the console's intended behavior, not a
      * diagnostic — SMS32X defaults ON. The TESTING row still toggles it
@@ -3152,7 +3279,7 @@ int m_main(void) {
     if (items[cur].kind == IT_PROC) {
         g_custom_current = -1;
         g_procgen_seed = (uint32_t)frame * 1000003u + (uint32_t)player.x;
-        if (diag_cfg[14]) g_procgen_seed = 0x1234567u;   /* benchmark: fixed map */
+        if (diag_cfg[DIAG_BENCH_POSE]) g_procgen_seed = 0x1234567u;   /* benchmark: fixed map */
         /* Attract's zero-input path makes frame and player.x constants, so
          * every power-on would demo the same first level. The free-running
          * timer's low bits at this instant are the one thing the hardware
@@ -3192,14 +3319,14 @@ int m_main(void) {
             } else
                 pad = raycast_attract_pad();
         }
-        /* diag_cfg[14]: benchmark. Pinning the RENDER pose was not enough --
+        /* diag_cfg[DIAG_BENCH_POSE]: benchmark. Pinning the RENDER pose was not enough --
          * the autopilot kept walking the real player underneath it, so the
          * level advanced and the scene differed between builds (wall cover
          * drifted 9% -> 13% and H moved 33ms, which reads exactly like a
          * regression). Freeze the world here, AFTER the menu has launched a
          * level and the walk-in crawl has finished, so the benchmark is a
          * real in-level scene that is identical in every build. */
-        if (diag_cfg[14] && g_crawl == 0) pad = 0;
+        if (diag_cfg[DIAG_BENCH_POSE] && g_crawl == 0) pad = 0;
 
         menu_update(pad);
         raycast_glass_sample();   /* game-on-glass: drink the COMM broadcast */

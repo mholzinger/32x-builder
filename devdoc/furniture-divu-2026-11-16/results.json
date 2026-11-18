@@ -1,0 +1,134 @@
+[
+  {
+    "capture": "devdoc/furniture-divu-2026-11-16/20261116_224712-fdiv-chair-0-a.png",
+    "fixture": "chair",
+    "mode": 0,
+    "repeat": "a",
+    "grid_ticks": 689,
+    "render_ticks": 25322,
+    "vblank100": 1000,
+    "primary_model_vertices": 72,
+    "primary_furniture_ticks": 870
+  },
+  {
+    "capture": "devdoc/furniture-divu-2026-11-16/20261116_224736-fdiv-chair-2-a.png",
+    "fixture": "chair",
+    "mode": 2,
+    "repeat": "a",
+    "grid_ticks": 688,
+    "render_ticks": 25315,
+    "vblank100": 1000,
+    "primary_model_vertices": 72,
+    "primary_furniture_ticks": 865
+  },
+  {
+    "capture": "devdoc/furniture-divu-2026-11-16/20261116_224800-fdiv-chair-1-a.png",
+    "fixture": "chair",
+    "mode": 1,
+    "repeat": "a",
+    "grid_ticks": 688,
+    "render_ticks": 25381,
+    "vblank100": 1000,
+    "primary_model_vertices": 72,
+    "primary_furniture_ticks": 930
+  },
+  {
+    "capture": "devdoc/furniture-divu-2026-11-16/20261116_224824-fdiv-chair-0-b.png",
+    "fixture": "chair",
+    "mode": 0,
+    "repeat": "b",
+    "grid_ticks": 690,
+    "render_ticks": 25359,
+    "vblank100": 1000,
+    "primary_model_vertices": 72,
+    "primary_furniture_ticks": 868
+  },
+  {
+    "capture": "devdoc/furniture-divu-2026-11-16/20261116_224848-fdiv-desk-0-a.png",
+    "fixture": "desk",
+    "mode": 0,
+    "repeat": "a",
+    "grid_ticks": 688,
+    "render_ticks": 24992,
+    "vblank100": 1000,
+    "primary_model_vertices": 24,
+    "primary_furniture_ticks": 936
+  },
+  {
+    "capture": "devdoc/furniture-divu-2026-11-16/20261116_224912-fdiv-desk-2-a.png",
+    "fixture": "desk",
+    "mode": 2,
+    "repeat": "a",
+    "grid_ticks": 687,
+    "render_ticks": 24968,
+    "vblank100": 1000,
+    "primary_model_vertices": 24,
+    "primary_furniture_ticks": 934
+  },
+  {
+    "capture": "devdoc/furniture-divu-2026-11-16/20261116_224936-fdiv-desk-1-a.png",
+    "fixture": "desk",
+    "mode": 1,
+    "repeat": "a",
+    "grid_ticks": 688,
+    "render_ticks": 25003,
+    "vblank100": 1000,
+    "primary_model_vertices": 24,
+    "primary_furniture_ticks": 962
+  },
+  {
+    "capture": "devdoc/furniture-divu-2026-11-16/20261116_225000-fdiv-desk-0-b.png",
+    "fixture": "desk",
+    "mode": 0,
+    "repeat": "b",
+    "grid_ticks": 688,
+    "render_ticks": 24984,
+    "vblank100": 1000,
+    "primary_model_vertices": 24,
+    "primary_furniture_ticks": 937
+  },
+  {
+    "capture": "devdoc/furniture-divu-2026-11-16/20261116_225024-fdiv-pvm-0-a.png",
+    "fixture": "pvm",
+    "mode": 0,
+    "repeat": "a",
+    "grid_ticks": 689,
+    "render_ticks": 25320,
+    "vblank100": 1000,
+    "primary_model_vertices": 48,
+    "primary_furniture_ticks": 1429
+  },
+  {
+    "capture": "devdoc/furniture-divu-2026-11-16/20261116_225048-fdiv-pvm-2-a.png",
+    "fixture": "pvm",
+    "mode": 2,
+    "repeat": "a",
+    "grid_ticks": 686,
+    "render_ticks": 25281,
+    "vblank100": 1000,
+    "primary_model_vertices": 48,
+    "primary_furniture_ticks": 1424
+  },
+  {
+    "capture": "devdoc/furniture-divu-2026-11-16/20261116_225112-fdiv-pvm-1-a.png",
+    "fixture": "pvm",
+    "mode": 1,
+    "repeat": "a",
+    "grid_ticks": 687,
+    "render_ticks": 25326,
+    "vblank100": 1000,
+    "primary_model_vertices": 48,
+    "primary_furniture_ticks": 1468
+  },
+  {
+    "capture": "devdoc/furniture-divu-2026-11-16/20261116_225136-fdiv-pvm-0-b.png",
+    "fixture": "pvm",
+    "mode": 0,
+    "repeat": "b",
+    "grid_ticks": 687,
+    "render_ticks": 25287,
+    "vblank100": 1000,
+    "primary_model_vertices": 48,
+    "primary_furniture_ticks": 1430
+  }
+]

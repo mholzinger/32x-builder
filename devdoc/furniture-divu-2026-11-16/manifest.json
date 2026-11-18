@@ -1,0 +1,56 @@
+[
+  {
+    "file": "fdiv-chair-0.32x",
+    "scene": 6,
+    "mode": 0,
+    "sha256": "bcaa8dfbd94a0c906afd782c505a306a61fb74a8f35d7db1046e91106bc47d62"
+  },
+  {
+    "file": "fdiv-chair-1.32x",
+    "scene": 6,
+    "mode": 1,
+    "sha256": "ec46a7b376a2e00ea296afe2d077ef5942c39d2c1be9e9c63bf1eb794b0fc627"
+  },
+  {
+    "file": "fdiv-chair-2.32x",
+    "scene": 6,
+    "mode": 2,
+    "sha256": "bc6220ba6dc1e83dcd74d79568c666169a02d4c968bef0cc811a7be6d2ad0b7c"
+  },
+  {
+    "file": "fdiv-desk-0.32x",
+    "scene": 7,
+    "mode": 0,
+    "sha256": "9f565b3902ae1bb40a24943018edba84ed661b6a8132c08fce5bcd056f415b0d"
+  },
+  {
+    "file": "fdiv-desk-1.32x",
+    "scene": 7,
+    "mode": 1,
+    "sha256": "fa71b47c136ac76d16b51da0bf385b6ddfdf145d3c6dd388e499bd9b3e50ed09"
+  },
+  {
+    "file": "fdiv-desk-2.32x",
+    "scene": 7,
+    "mode": 2,
+    "sha256": "8c387fafaa13f9b94dc10a1260ec1ca37b16c681f74fe70c97f4e343fd050662"
+  },
+  {
+    "file": "fdiv-pvm-0.32x",
+    "scene": 8,
+    "mode": 0,
+    "sha256": "a7e19039fd6a9b27957481fc642d0120312b3cc4c848c95928d93188e61ad58c"
+  },
+  {
+    "file": "fdiv-pvm-1.32x",
+    "scene": 8,
+    "mode": 1,
+    "sha256": "fd9ed51d48a5523711fecc54490e5c30ddf50e0573ca11c04ed87cbc3168528d"
+  },
+  {
+    "file": "fdiv-pvm-2.32x",
+    "scene": 8,
+    "mode": 2,
+    "sha256": "0a708549e6799d391903be62018c11164f0da7101c27baca2053589769248e55"
+  }
+]

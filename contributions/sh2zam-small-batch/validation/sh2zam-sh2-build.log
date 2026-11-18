@@ -1,0 +1,15 @@
+[ 28%] Building C object saturn/CMakeFiles/sh2zam.dir/src/sh2zam_trig.c.obj
+[ 28%] Building C object saturn/CMakeFiles/sh2zam.dir/src/sh2zam_angles.c.obj
+[ 28%] Building C object saturn/CMakeFiles/sh2zam.dir/src/sh2zam_transform.c.obj
+[ 28%] Building C object saturn/CMakeFiles/sh2zam.dir/src/sh2zam.c.obj
+[ 42%] Building C object saturn/CMakeFiles/sh2zam.dir/src/sh2zam_reuse.c.obj
+[ 42%] Building C object saturn/CMakeFiles/sh2zam.dir/src/sh2zam_prepared.c.obj
+[ 50%] Building C object saturn/CMakeFiles/sh2zam.dir/src/sh2zam_batch_sh2.c.obj
+[ 57%] Building C object saturn/CMakeFiles/sh2zam.dir/src/sh2zam_geometry.c.obj
+[ 64%] Building C object saturn/CMakeFiles/sh2zam.dir/src/sh2zam_rotation_batch.c.obj
+[ 71%] Building C object saturn/CMakeFiles/sh2zam.dir/src/sh2zam_spatial.c.obj
+[ 78%] Building C object saturn/CMakeFiles/sh2zam.dir/src/sh2zam_view.c.obj
+[ 85%] Building C object saturn/CMakeFiles/sh2zam.dir/src/sh2zam_divu.c.obj
+[ 92%] Building C object saturn/CMakeFiles/sh2zam.dir/src/sh2zam_box.c.obj
+[100%] Linking C static library libsh2zam.a
+[100%] Built target sh2zam

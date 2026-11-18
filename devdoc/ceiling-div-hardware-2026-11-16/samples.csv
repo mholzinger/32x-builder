@@ -1,0 +1,9 @@
+scene,hardware_divider,frames,ceiling_ticks_mean,render_ticks_mean,delivered_vblanks_mean_x100,capture
+corridor,0,64,979,19811,825,20261116_191648-gameplay-vbl-s1-a0-64f.png
+corridor,1,64,769,19524,811,20261116_191707-gameplay-vbl-s1-a1-64f.png
+room,0,64,2701,19044,800,20261116_191726-gameplay-vbl-s2-a0-64f.png
+room,1,64,2503,18828,800,20261116_191745-gameplay-vbl-s2-a1-64f.png
+crawl,0,64,2394,27394,1100,20261116_192003-gameplay-vbl-s3-a0-complete.png
+crawl,1,64,2155,27152,1100,20261116_192039-gameplay-vbl-s3-a1-complete.png
+partitions,0,64,1105,37208,1400,20261116_192115-gameplay-vbl-s4-a0-complete.png
+partitions,1,64,712,36749,1400,20261116_192151-gameplay-vbl-s4-a1-complete.png

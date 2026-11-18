@@ -2,7 +2,9 @@
 #include "raycast.h"
 #include "shared.h"
 #include "sound.h"
+#include "diag_cfg.h"
 #include "box3d.h"
+#include "shared_geometry_lab.h"
 
 /* FRT runs at Phi/128 ~= 179.8 kHz, so one tick is ~5.56 us; 6 ~= 33 us. */
 #define BUS_IDLE_FRT_TICKS 6
@@ -21,6 +23,7 @@ static inline uint16_t secondary_frt_read(void) {
  * increments every iteration so the primary's debug indicator can tell
  * "secondary alive" from "secondary hung". */
 void s_main(void) {
+    if(diag_cfg[DIAG_SH2ZAM_SUITE]>=25&&diag_cfg[DIAG_SH2ZAM_SUITE]<=26) shared_geometry_lab_slave(diag_cfg[DIAG_SH2ZAM_SUITE]);
     /* Initialize ambient looping audio once at secondary startup. PWM
      * hardware is configured here, DMA channel 1 streams the buffer
      * into MARS_PWM_MONO, and the DMA-complete IRQ (see mars_start.s
@@ -76,13 +79,12 @@ void s_main(void) {
                 /* Fallback only: the safe slot above handles the normal case,
                  * so this exists for stretches with no TAIL dispatch at all
                  * (menus, fades, the intro). Rate-limited so it cannot become
-                 * the common path again. diag_cfg[11] disables it for
+                 * the common path again. diag_cfg[DIAG_NO_FALLBACK_DECODE] disables it for
                  * attribution runs; audio starves with that set. */
-                extern const volatile uint8_t diag_cfg[24];
                 static uint16_t last_dec = 0;
                 uint16_t nowd = secondary_frt_read();
-                if (!diag_cfg[11]) {
-                    if (!diag_cfg[12]) amb_audio_idle();          /* legacy path */
+                if (!diag_cfg[DIAG_NO_FALLBACK_DECODE]) {
+                    if (!diag_cfg[DIAG_SAFE_SLOT_DECODE]) amb_audio_idle();          /* legacy path */
                     else if ((uint16_t)(nowd - last_dec) > 6000) { /* starvation only */
                         last_dec = nowd; amb_audio_idle();
                     }
@@ -134,7 +136,7 @@ void s_main(void) {
             int split = (int)SHARED_UC->split_col;
             uint16_t t0 = secondary_frt_read();
             {
-                /* CONTENTION PROBE (diag_cfg[8], diagnostic, never ships set).
+                /* CONTENTION PROBE (diag_cfg[DIAG_CONTENTION_PROBE], diagnostic, never ships set).
                  * The cross-CPU tax measured on MiSTer (21% of parallel
                  * render, SERIAL A/B) has no attribution: FB port, SDRAM
                  * line fills, or both. So instead of rendering this half,
@@ -145,8 +147,7 @@ void s_main(void) {
                  * stores, 3 = SDRAM line fills. The secondary's half goes
                  * stale and audio stalls for the duration: diagnostic only,
                  * read the numbers, never judge the picture. */
-                extern const volatile uint8_t diag_cfg[24];
-                uint8_t probe = diag_cfg[8];
+                uint8_t probe = diag_cfg[DIAG_CONTENTION_PROBE];
                 if (probe) {
                     const uint16_t WINDOW = 12000;   /* ~67ms at Phi/128 */
                     if (probe == 2) {
@@ -188,29 +189,33 @@ void s_main(void) {
                  * never pays: three amb_pump() checkpoints and a cache purge.
                  * They do not shrink when render work shrinks, so as the
                  * resolution levers cut the render they come to dominate S --
-                 * and the frame is bounded by max(H,S). diag_cfg[16] skips
+                 * and the frame is bounded by max(H,S). diag_cfg[DIAG_SKIP_SEC_PUMP] skips
                  * the pumps, [17] the purge, to price them. Measurement only:
                  * audio chops with [16] and the map ghosts with [17]. */
-                extern const volatile uint8_t diag_cfg[24];
                 uint16_t ov0 = secondary_frt_read(), ovsum = 0;
                 raycast_clear_half(split, SCREEN_W);
                 ov0 = secondary_frt_read();
-                if (!diag_cfg[16]) amb_pump();
+                if (!diag_cfg[DIAG_SKIP_SEC_PUMP]) amb_pump();
                 ovsum += (uint16_t)(secondary_frt_read() - ov0);
-                raycast_draw_ceiling_grid(split, SCREEN_W);
+                raycast_draw_ceiling_grid(split, g_vp_x1);
                 ov0 = secondary_frt_read();
-                if (!diag_cfg[16]) amb_pump();
+                if (!diag_cfg[DIAG_SKIP_SEC_PUMP]) amb_pump();
                 ovsum += (uint16_t)(secondary_frt_read() - ov0);
-                raycast_draw_carpet(split, SCREEN_W);
+                raycast_draw_carpet(split, g_vp_x1);
                 ov0 = secondary_frt_read();
-                if (!diag_cfg[16]) amb_pump();
+                if (!diag_cfg[DIAG_SKIP_SEC_PUMP]) amb_pump();
                 ovsum += (uint16_t)(secondary_frt_read() - ov0);
                 ov0 = secondary_frt_read();
-                if (!diag_cfg[17]) raycast_purge_cell_light();
+                if (!diag_cfg[DIAG_SKIP_SEC_PURGE]) raycast_purge_cell_light();
                 ovsum += (uint16_t)(secondary_frt_read() - ov0);
                 SHARED_UC->sec_half_overhead = ovsum;
+                SHARED_UC->sec_half_n++;
+                if (ovsum > 360) {            /* >2ms = a real buffer fill */
+                    SHARED_UC->sec_fill_n++;
+                    SHARED_UC->sec_fill_sum += ovsum;
+                }
             }
-            raycast_draw_walls(split, SCREEN_W);
+            raycast_draw_walls(split, g_vp_x1);
             SHARED_UC->secondary_render_ticks = (uint16_t)(secondary_frt_read() - t0);
             break;
         }
@@ -225,14 +230,14 @@ void s_main(void) {
             amb_pump();   /* audio checkpoint — see CMD_HALF */
             raycast_purge_lowceil_cache();
             raycast_purge_sprite_cache();
-            raycast_draw_tail(split, SCREEN_W);
+            raycast_draw_tail(split, g_vp_x1);
             amb_pump();
             /* Sprites AFTER the tail so the slab's z-stamp occludes them. Uses
              * the DECOUPLED sprite_split (set by the primary before it raised
              * CMD_TAIL) so a near screen-filling standup is shared, not dumped
              * on one cpu — disjoint [sprite_split, W) from the primary's half. */
             int sprite_split = (int)SHARED_UC->sprite_split;
-            raycast_draw_sprites(sprite_split, SCREEN_W);
+            raycast_draw_sprites(sprite_split, g_vp_x1);
             SHARED_UC->secondary_tail_ticks =
                 (uint16_t)(secondary_frt_read() - tail_t0);
             break;
@@ -260,8 +265,7 @@ void s_main(void) {
          * the longest gap before the next dispatch (the primary still has its
          * own tail, the flip and the next frame's logic to do). Decoding here
          * needs no prediction of when the next command lands. */
-        {   extern const volatile uint8_t diag_cfg[24];
-            if (diag_cfg[12] && cmd == MARS_CMD_TAIL) amb_audio_idle();
+        {            if (diag_cfg[DIAG_SAFE_SLOT_DECODE] && cmd == MARS_CMD_TAIL) amb_audio_idle();
         }
     }
 }

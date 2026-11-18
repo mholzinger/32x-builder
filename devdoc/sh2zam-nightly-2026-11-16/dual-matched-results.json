@@ -1,0 +1,130 @@
+[
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261117_000411-sh2zam-contrib-25-a-dual-matched.png",
+    "page": 25,
+    "repeat": "a",
+    "count": 72,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "DUPLICATE": {
+        "avg_ticks_floor": 144,
+        "min_ticks": 143,
+        "max_ticks": 147
+      },
+      "SHARED-UC": {
+        "avg_ticks_floor": 167,
+        "min_ticks": 166,
+        "max_ticks": 169
+      },
+      "SHARED-INV": {
+        "avg_ticks_floor": 144,
+        "min_ticks": 143,
+        "max_ticks": 146
+      },
+      "STALE-PROBE": {
+        "avg_ticks_floor": 135,
+        "min_ticks": 134,
+        "max_ticks": 136
+      }
+    },
+    "expected_stale_failures": 71
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261117_000423-sh2zam-contrib-26-a-dual-matched.png",
+    "page": 26,
+    "repeat": "a",
+    "count": 64,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "DUPLICATE": {
+        "avg_ticks_floor": 121,
+        "min_ticks": 119,
+        "max_ticks": 123
+      },
+      "SHARED-UC": {
+        "avg_ticks_floor": 143,
+        "min_ticks": 142,
+        "max_ticks": 150
+      },
+      "SHARED-INV": {
+        "avg_ticks_floor": 123,
+        "min_ticks": 122,
+        "max_ticks": 130
+      },
+      "STALE-PROBE": {
+        "avg_ticks_floor": 115,
+        "min_ticks": 114,
+        "max_ticks": 120
+      }
+    },
+    "expected_stale_failures": 71
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261117_000435-sh2zam-contrib-25-b-dual-matched.png",
+    "page": 25,
+    "repeat": "b",
+    "count": 72,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "DUPLICATE": {
+        "avg_ticks_floor": 144,
+        "min_ticks": 143,
+        "max_ticks": 147
+      },
+      "SHARED-UC": {
+        "avg_ticks_floor": 167,
+        "min_ticks": 166,
+        "max_ticks": 169
+      },
+      "SHARED-INV": {
+        "avg_ticks_floor": 145,
+        "min_ticks": 144,
+        "max_ticks": 146
+      },
+      "STALE-PROBE": {
+        "avg_ticks_floor": 135,
+        "min_ticks": 135,
+        "max_ticks": 136
+      }
+    },
+    "expected_stale_failures": 71
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261117_000447-sh2zam-contrib-26-b-dual-matched.png",
+    "page": 26,
+    "repeat": "b",
+    "count": 64,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 1,
+    "kernels": {
+      "DUPLICATE": {
+        "avg_ticks_floor": 121,
+        "min_ticks": 118,
+        "max_ticks": 124
+      },
+      "SHARED-UC": {
+        "avg_ticks_floor": 144,
+        "min_ticks": 142,
+        "max_ticks": 151
+      },
+      "SHARED-INV": {
+        "avg_ticks_floor": 123,
+        "min_ticks": 122,
+        "max_ticks": 130
+      },
+      "STALE-PROBE": {
+        "avg_ticks_floor": 115,
+        "min_ticks": 114,
+        "max_ticks": 120
+      }
+    },
+    "expected_stale_failures": 71
+  }
+]

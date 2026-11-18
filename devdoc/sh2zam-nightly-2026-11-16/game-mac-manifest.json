@@ -1,0 +1,50 @@
+[
+  {
+    "file": "fmac-chair-0.32x",
+    "mode": 0,
+    "facing": 37,
+    "sha256": "37a10551b392036810903da242157149b3fdc7241cc179f753e7d0c53ee86b33"
+  },
+  {
+    "file": "fmac-chair-3.32x",
+    "mode": 3,
+    "facing": 37,
+    "sha256": "dbe3f4f933708d3162c8e574b7725b91760a12f62486cbca08130061e1fae3db"
+  },
+  {
+    "file": "fmac-desk-0.32x",
+    "mode": 0,
+    "facing": 37,
+    "sha256": "6d668437a5a20ce60af9b00eca71785f8b9af9e2a5f5f32f1f1b79fc862c5508"
+  },
+  {
+    "file": "fmac-desk-3.32x",
+    "mode": 3,
+    "facing": 37,
+    "sha256": "50109d3f3a0680e4201ab9e384466f6648d180d1b94093c6e528323038aaacd9"
+  },
+  {
+    "file": "fmac-pvm-0.32x",
+    "mode": 0,
+    "facing": 37,
+    "sha256": "6151cea7e150fe88ceeba3516e1365361c0bcf91fe1cc4cc413c6f2187b6afd1"
+  },
+  {
+    "file": "fmac-pvm-3.32x",
+    "mode": 3,
+    "facing": 37,
+    "sha256": "e388ed34f24eb61e05bd3157e10b0b4a8a99ed23a0bed43f4c6e941197e54f17"
+  },
+  {
+    "file": "fmac-deskset-0.32x",
+    "mode": 0,
+    "facing": 37,
+    "sha256": "85357ba7216a7c80ba3b0a15516ab02196df1fa71c6871e1ba4779adb73a0132"
+  },
+  {
+    "file": "fmac-deskset-3.32x",
+    "mode": 3,
+    "facing": 37,
+    "sha256": "caaf4de68f7f3021ba637f74f3b998b1f8da6698713ecf27aa44f018f486db9b"
+  }
+]

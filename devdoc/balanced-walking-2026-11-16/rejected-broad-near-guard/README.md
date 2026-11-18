@@ -1,0 +1,1 @@
+First prototype protected walls within two cells and partials within 2.5. It improved the partition render mean only 38,716 -> 38,633 ticks. The final design tightens protection to contact distance (one cell), with an actual-hit fallback and native door signs. These first-prototype images are retained as the original HALF visual reference; they are not the final timing build.

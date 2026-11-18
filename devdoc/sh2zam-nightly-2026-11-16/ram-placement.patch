@@ -1,0 +1,12 @@
+--- a/third_party/SH2ZAM/src/sh2zam_batch_sh2.c
++++ b/third_party/SH2ZAM/src/sh2zam_batch_sh2.c
+@@ -100,7 +100,8 @@
+ /* Keep each complete loop separately visible in disassembly. The dot-row
+  * helpers always inline: there are no calls or C int64_t operations inside
+  * either vertex loop. Only one call is made per validated nonempty range. */
+-static __attribute__((noinline)) void
++/* 32X experiment: copied by this port's .ramtext boot image. */
++static __attribute__((noinline,section(".ramtext"))) void
+ sh2zi_batch_mac_kernel(sh2z_vec3_t *out,const sh2z_mat34_t *matrix,
+     const sh2z_vec3_t *in,size_t count) {
+     for(size_t i=0;i<count;i++) {

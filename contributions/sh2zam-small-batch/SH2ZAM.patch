@@ -1,0 +1,452 @@
+diff --git a/saturn/CMakeLists.txt b/saturn/CMakeLists.txt
+index 9fbca1f..3bc304a 100644
+--- a/saturn/CMakeLists.txt
++++ b/saturn/CMakeLists.txt
+@@ -16,7 +16,7 @@ if(SH2Z_SANITIZE AND NOT CMAKE_CROSSCOMPILING)
+   add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+   add_link_options(-fsanitize=address,undefined)
+ endif()
+-set(SH2Z_SOURCES src/sh2zam.c src/sh2zam_trig.c src/sh2zam_angles.c src/sh2zam_transform.c src/sh2zam_prepared.c src/sh2zam_reuse.c src/sh2zam_batch_sh2.c src/sh2zam_geometry.c src/sh2zam_rotation_batch.c src/sh2zam_spatial.c src/sh2zam_view.c src/sh2zam_divu.c)
++set(SH2Z_SOURCES src/sh2zam.c src/sh2zam_trig.c src/sh2zam_angles.c src/sh2zam_transform.c src/sh2zam_prepared.c src/sh2zam_reuse.c src/sh2zam_batch_sh2.c src/sh2zam_geometry.c src/sh2zam_rotation_batch.c src/sh2zam_spatial.c src/sh2zam_view.c src/sh2zam_divu.c src/sh2zam_box.c)
+ add_library(sh2zam STATIC ${SH2Z_SOURCES})
+ add_library(SH2ZAM::sh2zam ALIAS sh2zam)
+ target_include_directories(sh2zam PUBLIC
+@@ -65,7 +65,7 @@ if(SH2Z_BUILD_TESTS AND NOT CMAKE_CROSSCOMPILING)
+   add_executable(sh2zam_batch_native_tests tests/test_batch_native.c)
+   target_link_libraries(sh2zam_batch_native_tests PRIVATE sh2zam)
+   add_test(NAME native_batch_host_models COMMAND sh2zam_batch_native_tests)
+-  foreach(family rotation_batch spatial view divu edges)
++  foreach(family rotation_batch spatial view divu edges box divu16)
+     add_executable(sh2zam_${family}_tests tests/test_${family}.c)
+     target_link_libraries(sh2zam_${family}_tests PRIVATE sh2zam m)
+     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+@@ -140,3 +140,12 @@ configure_package_config_file(cmake/SH2ZAMConfig.cmake.in ${CMAKE_CURRENT_BINARY
+ write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/SH2ZAMConfigVersion.cmake VERSION ${PROJECT_VERSION} COMPATIBILITY SameMinorVersion)
+ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/SH2ZAMConfig.cmake ${CMAKE_CURRENT_BINARY_DIR}/SH2ZAMConfigVersion.cmake DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/SH2ZAM)
+ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../LICENSE ${CMAKE_CURRENT_SOURCE_DIR}/../NOTICE.md DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/SH2ZAM)
++
++if(SH2Z_BUILD_TESTS AND NOT CMAKE_CROSSCOMPILING)
++  add_executable(sh2zam_small_batch benchmarks/small-batch/host.c benchmarks/small-batch/small_batch.c)
++  target_link_libraries(sh2zam_small_batch PRIVATE sh2zam)
++  if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
++    target_compile_options(sh2zam_small_batch PRIVATE -Wall -Wextra -Wconversion -Wshadow -Werror -Wpedantic)
++  endif()
++  add_test(NAME small_batch_fixture_exact COMMAND sh2zam_small_batch)
++endif()
+diff --git a/saturn/benchmarks/small-batch/README.md b/saturn/benchmarks/small-batch/README.md
+new file mode 100644
+index 0000000..edaff41
+--- /dev/null
++++ b/saturn/benchmarks/small-batch/README.md
+@@ -0,0 +1,70 @@
++# Small batches and box endpoint reuse
++
++This is a correctness and target-timing fixture, not a desktop speed ranking.
++The synthetic repeated AABBs contain no game assets. Counts are 8, 24 (three
++boxes / desk-sized), 28 (intro-sized), 48 (six boxes), 72 (nine boxes /
++chair-sized), 128 and 256 vertices. The last four vertices in the 28 case
++use the scalar tail. Repeated identical dimensions deliberately favor generic
++coordinate reuse at the two larger counts; these are not representative scene
++frequency measurements. Corner order uses binary X/Y/Z bits, so the upstream
++`blocks8` pattern is intentionally not selected.
++
++Build from the repository root:
++
++```sh
++cmake -S . -B build -DSH2Z_STRICT=ON -DCMAKE_BUILD_TYPE=Release
++cmake --build build -j
++ctest --test-dir build --output-on-failure
++./build/saturn/sh2zam_small_batch
++```
++
++`small_batch.c/.h` are platform-independent; the host executable emits fixture
++hashes, never host performance claims. A target frontend provides a timer,
++keeps the workspace naturally aligned and measures `sb_run`. It must check
++`sb_correct` outside timing and retain/report the output hash. State is caller
++owned; the fixed-capacity host workspace is 27,776 bytes on arm64 and varies
++with ABI. It is benchmark infrastructure, not library allocation.
++
++| Path | Work included in each timed call |
++|---|---|
++| GENERAL | Full-range scalar batch |
++| BATCH | Matrix gate and ordinary fused batch |
++| COLD-PREP | Position scan, plan initialization, prepared execution |
++| WARM-PREP | Plan initialization and prepared execution; immutable mesh metadata cached |
++| EXEC-ONLY | Prepared execution only; a lower bound when the matrix changes every frame |
++| MAC-PREP / DMUL-PREP | Plan initialization and explicit candidate execution |
++| REUSE | Matrix update, all contribution table rebuilds and execution |
++| BOX8 | Bounds/alias checks, endpoint products and execution, scalar partial tail |
++
++`sb_init` performs immutable-mesh preparation before timing. Report that startup
++cost separately if mesh construction is part of the workload. REUSE must report
++`reuse_plan.enabled`: upstream's count >=128 gate means the smaller cases use
++prepared fallback, even though they have repeated coordinates. Availability
++queries must run on the executing CPU; MAC requires SR.S clear. No silent
++algorithm dispatch or saturation-mode changes are introduced.
++
++The added box API shares 18 endpoint products rather than 72 per box. The
++full-range result remains floor-once, translated, saturated Q16.16. It is
++experimental: output stores, wide arithmetic, checks and setup can dominate.
++It is not an animated arbitrary mesh transform, and tapered/wedge geometry
++must use an ordinary vertex path.
++
++The Q16 DIVU wrapper is explicitly selected. It preserves scalar `sh2z_div`
++zero behavior, including 0/0=0, without changing the existing raw64 API.
++Hardware ownership, interrupt preservation and OVFIE rules remain those in
++`divu_experimental.h`. `sb_check_divu` checks 320 edge/random operand pairs and
++one simulated interrupt save/use/restore sequence. It does not qualify a real
++interrupt handler or physical SH7604 silicon.
++
++A 32X frontend and MiSTer evidence are maintained with the integration package
++in 32x-builder. That frontend parks CPU2 in BIOS, reuses title scratch, warms
++each path eight times and measures 64 calls using the primary FRT at Phi/128.
++All candidates are in the same ROM; variants change only diagnostic byte 31.
++Each individual call must finish before the 16-bit timer wraps (~365 ms).
++Timer-read/call overhead remains in results. Report min/max and repeat passes.
++The divider page measures 32 operations per call with identical independent
++integer work; DIV1, blocking Q16 DIVU, split Q16 DIVU and raw64 DIVU all check
++the same hash. Split timing exposes overlap opportunity, not a guarantee.
++
++MiSTer is an FPGA core, not a physical Saturn/32X SH7604. Do not promote these
++numbers to silicon timings, whole-game FPS, or a general SH2ZAM speedup.
+diff --git a/saturn/benchmarks/small-batch/host.c b/saturn/benchmarks/small-batch/host.c
+new file mode 100644
+index 0000000..fa02a34
+--- /dev/null
++++ b/saturn/benchmarks/small-batch/host.c
+@@ -0,0 +1,15 @@
++/* Correctness/fixture manifest only. Host speed is not SH-2 performance. MIT. */
++#include "small_batch.h"
++#include <stdio.h>
++static sb_workspace w;
++int main(void) {
++    const unsigned counts[]={8,24,28,48,72,128,256};
++    for(unsigned c=0;c<7;c++) {
++        if(!sb_init(&w,counts[c]))return 1;
++        for(unsigned k=0;k<SB_KERNELS;k++)if(!sb_run(&w,k)||!sb_correct(&w))return 2;
++        printf("count=%u hash=%08x reuse=%u blocks8=%u workspace=%zu\n",
++            counts[c],(unsigned)sb_hash(w.reference,w.count),w.reuse_plan.enabled?1u:0u,
++            w.reuse.blocks8?1u:0u,sizeof w);
++    }
++    return sb_check_divu()?3:0;
++}
+diff --git a/saturn/benchmarks/small-batch/small_batch.c b/saturn/benchmarks/small-batch/small_batch.c
+new file mode 100644
+index 0000000..4995e50
+--- /dev/null
++++ b/saturn/benchmarks/small-batch/small_batch.c
+@@ -0,0 +1,83 @@
++/* MIT; all per-matrix setup is inside sb_run except EXEC-ONLY. */
++#include "small_batch.h"
++const char *const sb_names[SB_KERNELS]={"GENERAL","BATCH","COLD-PREP","WARM-PREP",
++    "EXEC-ONLY","MAC-PREP","DMUL-PREP","REUSE","BOX8"};
++bool sb_init(sb_workspace *w,size_t count) {
++    if(!w||!count||count>SB_MAX)return false;
++    w->count=count;
++    w->matrix=(sh2z_mat34_t){{{56756,-8192,31744,12345},
++        {16384,61517,-8192,-8193},{-30000,15000,56756,200000}}};
++    for(size_t b=0;b<(count+7)/8;b++) {
++        /* Repeated dimensions keep a deliberately reuse-friendly fixture.
++         * Batches <128 still exercise the current generic cost fallback. */
++        sh2z_aabb_t box={{-131073,-65537,-98305},{131071,196607,65535}};
++        w->boxes[b]=box;
++        for(unsigned i=0;i<8&&b*8+i<count;i++)w->in[b*8+i]=(sh2z_vec3_t){
++            i&1?box.max.x:box.min.x,i&2?box.max.y:box.min.y,i&4?box.max.z:box.min.z};
++    }
++    return sh2z_mat34_transform_points_general(w->reference,&w->matrix,w->in,count)&&
++        sh2z_mesh_view_init(&w->view,w->in,count)&&
++        sh2z_transform_plan_init(&w->plan,&w->view,&w->matrix)&&
++        sh2z_reuse_mesh_init(&w->reuse,w->in,count,w->indices,SB_MAX,
++            w->x_keys,SB_MAX,w->yz_keys,SB_MAX)&&
++        sh2z_reuse_plan_init(&w->reuse_plan,&w->reuse,&w->matrix,
++            w->x_terms,SB_MAX,w->yz_terms,SB_MAX);
++}
++bool sb_run(sb_workspace *w,unsigned kernel) {
++    switch(kernel) {
++    case 0:return sh2z_mat34_transform_points_general(w->out,&w->matrix,w->in,w->count);
++    case 1:return sh2z_mat34_transform_points(w->out,&w->matrix,w->in,w->count);
++    case 2:if(!sh2z_mesh_view_init(&w->view,w->in,w->count))return false;
++        /* fall through */
++    case 3:if(!sh2z_transform_plan_init(&w->plan,&w->view,&w->matrix))return false;
++        /* fall through */
++    case 4:return sh2z_transform_plan_execute(w->out,&w->plan);
++    case 5:return sh2z_transform_plan_init(&w->plan,&w->view,&w->matrix)&&
++        sh2z_transform_plan_execute_mac(w->out,&w->plan,0,w->count);
++    case 6:return sh2z_transform_plan_init(&w->plan,&w->view,&w->matrix)&&
++        sh2z_transform_plan_execute_dmuls(w->out,&w->plan,0,w->count);
++    case 7:return sh2z_reuse_plan_update_matrix(&w->reuse_plan,&w->matrix)&&
++        sh2z_reuse_plan_execute(w->out,&w->reuse_plan);
++    case 8: {
++        size_t b;
++        for(b=0;b<w->count/8;b++)
++            if(!sh2z_mat34_transform_box8(w->out+b*8,&w->matrix,w->boxes+b))return false;
++        return sh2z_mat34_transform_points_general(w->out+b*8,&w->matrix,w->in+b*8,w->count-b*8);
++    }
++    default:return false;
++    }
++}
++uint32_t sb_hash(const sh2z_vec3_t *p,size_t count) {
++    uint32_t h=2166136261u;
++    for(size_t i=0;i<count;i++) {
++        h=(h^(uint32_t)p[i].x)*16777619u;
++        h=(h^(uint32_t)p[i].y)*16777619u;
++        h=(h^(uint32_t)p[i].z)*16777619u;
++    }
++    return h;
++}
++bool sb_correct(const sb_workspace *w) {
++    for(size_t i=0;i<w->count;i++)if(w->out[i].x!=w->reference[i].x||
++        w->out[i].y!=w->reference[i].y||w->out[i].z!=w->reference[i].z)return false;
++    return true;
++}
++unsigned sb_check_divu(void) {
++    const int32_t e[]={INT32_MIN,INT32_MIN+1,-65536,-1,0,1,65536,INT32_MAX};
++    unsigned failures=0;uint32_t seed=7169;
++    for(unsigned i=0;i<320;i++) {
++        int32_t a,b;
++        if(i<64){a=e[i/8];b=e[i%8];}
++        else {seed=seed*1664525u+1013904223u;a=(int32_t)seed;
++            seed=seed*1664525u+1013904223u;b=(int32_t)seed;}
++        int32_t ref=sh2z_div(a,b);
++        sh2z_divu_t t;sh2z_divu_start16(&t,a,b);
++        if(sh2z_divu_finish(&t,0)!=ref)failures++;
++        if(sh2z_divu_div16(a,b,0)!=ref)failures++;
++    }
++    sh2z_divu_t outer,inner;sh2z_divu_state_t saved;
++    sh2z_divu_start16(&outer,1234567,98765);sh2z_divu_save(&saved);
++    sh2z_divu_start16(&inner,-7654321,123456);(void)sh2z_divu_finish(&inner,0);
++    sh2z_divu_restore(&saved);
++    if(sh2z_divu_finish(&outer,0)!=sh2z_div(1234567,98765))failures++;
++    return failures;
++}
+diff --git a/saturn/benchmarks/small-batch/small_batch.h b/saturn/benchmarks/small-batch/small_batch.h
+new file mode 100644
+index 0000000..6bd801a
+--- /dev/null
++++ b/saturn/benchmarks/small-batch/small_batch.h
+@@ -0,0 +1,31 @@
++/* MIT; synthetic furniture-sized fixtures, no asset data. */
++#ifndef SH2Z_SMALL_BATCH_H
++#define SH2Z_SMALL_BATCH_H
++#include <sh2zam/batch_experimental.h>
++#include <sh2zam/reuse_experimental.h>
++#include <sh2zam/box_experimental.h>
++#include <sh2zam/divu_experimental.h>
++#define SB_MAX 256
++#define SB_KERNELS 9
++typedef struct {
++    sh2z_vec3_t in[SB_MAX],out[SB_MAX],reference[SB_MAX];
++    sh2z_aabb_t boxes[SB_MAX/8];
++    sh2z_mat34_t matrix;
++    sh2z_mesh_view_t view;
++    sh2z_transform_plan_t plan;
++    sh2z_reuse_mesh_t reuse;
++    sh2z_reuse_plan_t reuse_plan;
++    sh2z_reuse_index_t indices[SB_MAX];
++    sh2z_fx_t x_keys[SB_MAX];
++    sh2z_reuse_yz_t yz_keys[SB_MAX];
++    sh2z_reuse_term_t x_terms[SB_MAX],yz_terms[SB_MAX];
++    size_t count;
++} sb_workspace;
++extern const char *const sb_names[SB_KERNELS];
++bool sb_init(sb_workspace *w,size_t count);
++bool sb_run(sb_workspace *w,unsigned kernel);
++uint32_t sb_hash(const sh2z_vec3_t *p,size_t count);
++bool sb_correct(const sb_workspace *w);
++/* Returns number of failures; logical save/restore sequence, not ISR testing. */
++unsigned sb_check_divu(void);
++#endif
+diff --git a/saturn/include/sh2zam/box_experimental.h b/saturn/include/sh2zam/box_experimental.h
+new file mode 100644
+index 0000000..3e9b5e5
+--- /dev/null
++++ b/saturn/include/sh2zam/box_experimental.h
+@@ -0,0 +1,23 @@
++/* Exact eight-corner transforms. MIT; SH2ZAM Contributors. */
++#ifndef SH2ZAM_BOX_EXPERIMENTAL_H
++#define SH2ZAM_BOX_EXPERIMENTAL_H
++#include "sh2zam.h"
++#ifdef __cplusplus
++extern "C" {
++#endif
++/** Transform all corners of an ordered Q16.16 AABB. Corner index bits select
++ * max X (bit 0), max Y (bit 1), max Z (bit 2); clear bits select min.
++ * Exactly matches transform_points_general: floor the full dot once, add
++ * translation, saturate. Supports all int32 values, including degenerate boxes.
++ * Reuses endpoint products when each basis row's magnitude sum fits uint32;
++ * otherwise uses the full-range scalar fallback. No allocation or MMIO.
++ * All pointers require natural alignment. out has eight elements and must be
++ * disjoint from matrix and box. Null, overlap or reversed bounds return false
++ * before any write. Inputs may overlap each other (both are read-only).
++ * Experimental: fewer products do not guarantee lower SH-2 elapsed time. */
++bool sh2z_mat34_transform_box8(sh2z_vec3_t *out,
++    const sh2z_mat34_t *matrix,const sh2z_aabb_t *box);
++#ifdef __cplusplus
++}
++#endif
++#endif
+diff --git a/saturn/include/sh2zam/divu_experimental.h b/saturn/include/sh2zam/divu_experimental.h
+index 5f10434..9a56c8c 100644
+--- a/saturn/include/sh2zam/divu_experimental.h
++++ b/saturn/include/sh2zam/divu_experimental.h
+@@ -147,6 +147,20 @@ static inline void sh2z_divu_restore(const sh2z_divu_state_t *s) {
+ #endif
+ }
+ 
++/** Explicit Q16.16 division with the scalar sh2z_div result rules, including
++ *  0/0 == 0. overflow is true for zero divisors or the conservative raw-DIVU
++ *  bound (including exact INT32_MIN). Same ownership/OVFIE rules as start64.
++ *  No implicit default dispatch: callers opt into MMIO by using this API. */
++static inline void sh2z_divu_start16(sh2z_divu_t *t,sh2z_fx_t a,sh2z_fx_t b) {
++    if(a==0&&b==0) {
++        t->quotient=0;t->in_software=1;t->overflow=1;return;
++    }
++    /* Signed high word of a * 65536, without signed shifts or libgcc. */
++    const int32_t hi=(int32_t)((uint32_t)a>>16)-(a<0?65536:0);
++    sh2z_divu_start64(t,hi,(uint32_t)a<<16,b);
++}
++sh2z_fx_t sh2z_divu_div16(sh2z_fx_t a,sh2z_fx_t b,bool *overflow);
++
+ /** Blocking signed 64/32 division with the result rule above. overflow may
+  *  be null. On SH-2 this uses the divider between its own start and finish. */
+ int32_t sh2z_divu_div64(int64_t n,int32_t divisor,bool *overflow);
+diff --git a/saturn/src/sh2zam_box.c b/saturn/src/sh2zam_box.c
+new file mode 100644
+index 0000000..f8ffdf0
+--- /dev/null
++++ b/saturn/src/sh2zam_box.c
+@@ -0,0 +1,43 @@
++/* MIT; SH2ZAM Contributors. */
++#include "sh2zam/box_experimental.h"
++#include "sh2zam_internal.h"
++#include "sh2zam_prepared_internal.h"
++
++bool sh2z_mat34_transform_box8(sh2z_vec3_t *out,
++    const sh2z_mat34_t *matrix,const sh2z_aabb_t *box) {
++    if(!out||!matrix||!box)return false;
++    if(sh2zi_prepared_overlap(out,8*sizeof(*out),matrix,sizeof(*matrix))||
++       sh2zi_prepared_overlap(out,8*sizeof(*out),box,sizeof(*box)))return false;
++    if(box->min.x>box->max.x||box->min.y>box->max.y||box->min.z>box->max.z)return false;
++    bool bounded=true;
++    for(unsigned r=0;r<3;r++) {
++        uint32_t a=sh2zi_magnitude(matrix->m[r][0]);
++        uint32_t b=sh2zi_magnitude(matrix->m[r][1]);
++        uint32_t c=sh2zi_magnitude(matrix->m[r][2]);
++        if(a>UINT32_MAX-b||a+b>UINT32_MAX-c)bounded=false;
++    }
++    if(!bounded) {
++        for(unsigned i=0;i<8;i++) {
++            sh2z_vec3_t v={i&1?box->max.x:box->min.x,
++                i&2?box->max.y:box->min.y,i&4?box->max.z:box->min.z};
++            out[i]=sh2z_mat34_transform_point(matrix,v);
++        }
++        return true;
++    }
++    /* The gate bounds every partial sum by 2^63-2^31, for ANY input.
++     * Translation is added after flooring, with ample int64 headroom. */
++    for(unsigned r=0;r<3;r++) {
++        const int32_t *m=matrix->m[r];
++        const int64_t x0=sh2zi_product(m[0],box->min.x),x1=sh2zi_product(m[0],box->max.x);
++        const int64_t y0=sh2zi_product(m[1],box->min.y),y1=sh2zi_product(m[1],box->max.y);
++        const int64_t z[2]={sh2zi_product(m[2],box->min.z),sh2zi_product(m[2],box->max.z)};
++        const int64_t xy[4]={x0+y0,x1+y0,x0+y1,x1+y1};
++        for(unsigned i=0;i<8;i++) {
++            const int32_t value=sh2zi_clamp(sh2zi_floor16(xy[i&3]+z[i>>2])+m[3]);
++            if(r==0)out[i].x=value;
++            else if(r==1)out[i].y=value;
++            else out[i].z=value;
++        }
++    }
++    return true;
++}
+diff --git a/saturn/src/sh2zam_divu.c b/saturn/src/sh2zam_divu.c
+index aa7b177..48cfd3e 100644
+--- a/saturn/src/sh2zam_divu.c
++++ b/saturn/src/sh2zam_divu.c
+@@ -7,3 +7,9 @@ int32_t sh2z_divu_div64(int64_t n,int32_t divisor,bool *overflow) {
+     sh2z_divu_start64(&t,(int32_t)(uint32_t)(raw>>32),(uint32_t)raw,divisor);
+     return sh2z_divu_finish(&t,overflow);
+ }
++
++sh2z_fx_t sh2z_divu_div16(sh2z_fx_t a,sh2z_fx_t b,bool *overflow) {
++    sh2z_divu_t t;
++    sh2z_divu_start16(&t,a,b);
++    return sh2z_divu_finish(&t,overflow);
++}
+diff --git a/saturn/tests/test_box.c b/saturn/tests/test_box.c
+new file mode 100644
+index 0000000..d4e3e94
+--- /dev/null
++++ b/saturn/tests/test_box.c
+@@ -0,0 +1,43 @@
++/* Independent full-range oracle, including cancellation. MIT. */
++#include <sh2zam/box_experimental.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++/* __int128 is a host-test requirement, never used in the library. */
++__extension__ typedef __int128 wide;
++#define CHECK(x) do { if(!(x)){fprintf(stderr,"line %d\n",__LINE__);exit(1);} } while(0)
++static uint32_t rng=12345;
++static int32_t next(void){rng^=rng<<13;rng^=rng>>17;rng^=rng<<5;return (int32_t)rng;}
++static int32_t oracle(const int32_t *m,sh2z_vec3_t v) {
++    wide n=(wide)m[0]*v.x+(wide)m[1]*v.y+(wide)m[2]*v.z;
++    wide q=n/65536;if(n<0&&n%65536)q--;
++    q+=m[3];return q>INT32_MAX?INT32_MAX:q<INT32_MIN?INT32_MIN:(int32_t)q;
++}
++int main(void) {
++    sh2z_vec3_t out[8],saved[8];
++    const int32_t edges[]={INT32_MIN,INT32_MIN+1,-65537,-1,0,1,65535,INT32_MAX};
++    for(unsigned t=0;t<20000;t++) {
++        sh2z_mat34_t m;
++        for(unsigned r=0;r<3;r++)for(unsigned c=0;c<4;c++)
++            m.m[r][c]=t<512?edges[(t+r*3+c)%8]:t&1?next():next()/4096;
++        sh2z_vec3_t a={next(),next(),next()},b={next(),next(),next()};
++        sh2z_aabb_t box={{a.x<b.x?a.x:b.x,a.y<b.y?a.y:b.y,a.z<b.z?a.z:b.z},
++                        {a.x>b.x?a.x:b.x,a.y>b.y?a.y:b.y,a.z>b.z?a.z:b.z}};
++        if(t%7==0)box.max=box.min;
++        CHECK(sh2z_mat34_transform_box8(out,&m,&box));
++        for(unsigned i=0;i<8;i++) {
++            sh2z_vec3_t v={i&1?box.max.x:box.min.x,i&2?box.max.y:box.min.y,i&4?box.max.z:box.min.z};
++            CHECK(out[i].x==oracle(m.m[0],v)&&out[i].y==oracle(m.m[1],v)&&out[i].z==oracle(m.m[2],v));
++        }
++    }
++    sh2z_mat34_t m=sh2z_mat34_identity();sh2z_aabb_t box={{1,0,0},{0,0,0}};
++    memcpy(saved,out,sizeof out);
++    CHECK(!sh2z_mat34_transform_box8(out,&m,&box));CHECK(!memcmp(saved,out,sizeof out));
++    box.min.x=0;
++    CHECK(!sh2z_mat34_transform_box8(NULL,&m,&box));
++    CHECK(!sh2z_mat34_transform_box8(out,NULL,&box));
++    CHECK(!sh2z_mat34_transform_box8(out,&m,NULL));
++    CHECK(!sh2z_mat34_transform_box8((sh2z_vec3_t *)&m,&m,&box));
++    CHECK(!sh2z_mat34_transform_box8((sh2z_vec3_t *)&box,&m,&box));
++    puts("160000 box corners match independent wide oracle");return 0;
++}
+diff --git a/saturn/tests/test_divu16.c b/saturn/tests/test_divu16.c
+new file mode 100644
+index 0000000..86ca8a2
+--- /dev/null
++++ b/saturn/tests/test_divu16.c
+@@ -0,0 +1,22 @@
++/* MIT; independent Q16 oracle with explicit zero and saturation cases. */
++#include <sh2zam/divu_experimental.h>
++#include <stdio.h>
++#include <stdlib.h>
++#define CHECK(x) do { if(!(x)){fprintf(stderr,"line %d\n",__LINE__);exit(1);} } while(0)
++static uint32_t rng=7169;
++static int32_t next(void){rng^=rng<<13;rng^=rng>>17;rng^=rng<<5;return (int32_t)rng;}
++static void check(int32_t a,int32_t b) {
++    int64_t q=b?((int64_t)a*65536)/b:a<0?INT32_MIN:a>0?INT32_MAX:0;
++    int32_t expected=q>INT32_MAX?INT32_MAX:q<INT32_MIN?INT32_MIN:(int32_t)q;
++    bool overflow=false;sh2z_divu_t t;sh2z_divu_start16(&t,a,b);
++    CHECK(sh2z_divu_finish(&t,&overflow)==expected);
++    CHECK(overflow==(b==0||q>=INT64_C(2147483648)||q<=-INT64_C(2147483648)));
++    CHECK(sh2z_divu_div16(a,b,NULL)==expected);
++    CHECK(sh2z_div(a,b)==expected);
++}
++int main(void) {
++    const int32_t e[]={INT32_MIN,INT32_MIN+1,-65536,-1,0,1,65536,INT32_MAX};
++    for(unsigned i=0;i<8;i++)for(unsigned j=0;j<8;j++)check(e[i],e[j]);
++    for(unsigned i=0;i<100000;i++){int32_t a=next(),b=next();check(a,b);}
++    puts("100064 Q16 divisions match independent oracle");return 0;
++}

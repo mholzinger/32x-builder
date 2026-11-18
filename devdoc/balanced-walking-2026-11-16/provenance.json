@@ -1,0 +1,27 @@
+{
+  "hardware": "mister.office.local",
+  "core": "S32X_20260603.rbf",
+  "compiler": "SH-2 GCC 15.2.0 O2/LTO",
+  "timed_build_sha256": "a3d3cbabf3b879cb49f2fb0d82fc87dc51e0feee5b9a4e3b8a0371b58d89b8e7",
+  "normal_build_sha256": "ac7608db4acd1c6c352a3e1662ee2677c7b0de4479ef44eb750fcf269745408f",
+  "normal_build_diff": "one default-mode initializer byte, FULL(0) -> BALANCED(7)",
+  "warmup_frames": 8,
+  "sample_frames": 64,
+  "settle_seconds": 35,
+  "flags": {
+    "9": 1,
+    "10": 1,
+    "13": "1 FULL / 8 BALANCED",
+    "14": 2,
+    "18": 1,
+    "27": "scene 1..4",
+    "28": 1,
+    "30": 1
+  },
+  "walking_paths": true,
+  "world_pose_frozen": true,
+  "pixel_test": "All four scenes: differences restricted to intended x%4==3 columns outside benchmark text; complete framebuffer page selected. Standing BALANCED matches FULL outside benchmark text.",
+  "deployed_sha256": "ac7608db4acd1c6c352a3e1662ee2677c7b0de4479ef44eb750fcf269745408f",
+  "hardware_smoke_check": "Normal build loaded with matching SHA256; benchmark flags off and regular frame pacing enabled.",
+  "comparison_image_note": "Fixed-camera native MiSTer crops, nearest-neighbor scaling; previous HALF reference comes from the first prototype. Timing comparisons use only final v2 FULL/BALANCED pairs."
+}

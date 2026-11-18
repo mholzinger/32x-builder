@@ -1,0 +1,30 @@
+[
+  {
+    "scene": 1,
+    "unexpected_column_differences": 0,
+    "changed_pixels": 2680,
+    "reference_page": 0,
+    "candidate_page": 0
+  },
+  {
+    "scene": 2,
+    "unexpected_column_differences": 0,
+    "changed_pixels": 50,
+    "reference_page": 0,
+    "candidate_page": 0
+  },
+  {
+    "scene": 3,
+    "unexpected_column_differences": 0,
+    "changed_pixels": 683,
+    "reference_page": 131072,
+    "candidate_page": 131072
+  },
+  {
+    "scene": 4,
+    "unexpected_column_differences": 0,
+    "changed_pixels": 745,
+    "reference_page": 131072,
+    "candidate_page": 0
+  }
+]

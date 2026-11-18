@@ -1,6 +1,12 @@
 #include "mars.h"
 #include "shared.h"
 #include "sound.h"
+#include "diag_cfg.h"
+/* The host mixer oracle overrides only address translation. Normal builds
+ * retain the 32X cache-through view of these cross-CPU control scalars. */
+#ifndef SOUND_UC_ADDR
+#define SOUND_UC_ADDR(p) ((uintptr_t)(p) | 0x20000000)
+#endif
 #include "raycast.h"   /* RAYCAST_PEEK_CLAIM: the peek's hero_scratch span */
 #include "amb_neon.h"
 #include "amb_hello_adp.h"
@@ -81,7 +87,7 @@ static volatile uint8_t amb_buf_needs_fill;   /* bit i = buf i needs fill */
  * Primary flips it on via amb_set_active(); the secondary reads it through
  * the cache-through alias for coherency. */
 static uint8_t amb_active_storage = 0;
-#define AMB_ACTIVE (*(volatile uint8_t *)((uintptr_t)&amb_active_storage | 0x20000000))
+#define AMB_ACTIVE (*(volatile uint8_t *)(SOUND_UC_ADDR(&amb_active_storage)))
 
 void amb_set_active(int on) { AMB_ACTIVE = (uint8_t)(on ? 1 : 0); }
 
@@ -93,7 +99,7 @@ void amb_set_active(int on) { AMB_ACTIVE = (uint8_t)(on ? 1 : 0); }
  * fine for a diagnostic knob. */
 static uint16_t amb_buf_len_storage = AMB_SAMPLES_PER_BUF;
 #define AMB_BUF_LEN \
-    (*(volatile uint16_t *)((uintptr_t)&amb_buf_len_storage | 0x20000000))
+    (*(volatile uint16_t *)(SOUND_UC_ADDR(&amb_buf_len_storage)))
 
 /* Underrun counter — incremented by amb_dma_handler when it swaps into
  * a buffer the pump never got to refill (i.e. DMA is about to replay
@@ -102,7 +108,7 @@ static uint16_t amb_buf_len_storage = AMB_SAMPLES_PER_BUF;
  * title the pump idles by design and every swap would false-positive. */
 static uint16_t amb_underruns_storage = 0;
 #define AMB_UNDERRUNS \
-    (*(volatile uint16_t *)((uintptr_t)&amb_underruns_storage | 0x20000000))
+    (*(volatile uint16_t *)(SOUND_UC_ADDR(&amb_underruns_storage)))
 
 void     amb_toggle_buf_len(void) {
     AMB_BUF_LEN = (AMB_BUF_LEN == AMB_SAMPLES_PER_BUF)
@@ -403,7 +409,7 @@ static int      death_was_active = 0;
  * that matches Ares on hardware is found, bake it as the default step
  * and drop the knob. Cache-through alias so the two CPUs stay coherent. */
 static uint32_t hello_step_storage = HELLO_STEP_FX;
-#define HELLO_STEP (*(volatile uint32_t *)((uintptr_t)&hello_step_storage | 0x20000000))
+#define HELLO_STEP (*(volatile uint32_t *)(SOUND_UC_ADDR(&hello_step_storage)))
 #define HELLO_STEP_PCT_STEP ((HELLO_STEP_FX + 50) / 100)   /* ~1% per menu press */
 #define HELLO_STEP_MIN      ((HELLO_STEP_FX * 90)  / 100)  /* 90%  floor */
 #define HELLO_STEP_MAX      ((HELLO_STEP_FX * 150) / 100)  /* 150% ceiling */
@@ -596,6 +602,13 @@ void amb_pump(void) {
      * runs dry the mixer below freezes the hello mid-word and resumes
      * when idle decode catches up: a radio dropout, not a frame drop. */
 
+    /* With every PWM voice inactive/out of earshot, the reference loop
+     * emits SAMPLE_CENTER and advances no voice cursor. Keep the per-fill
+     * event latches and PRNG above, and the DMA request handshake below. */
+    if (diag_cfg[DIAG_QUIET_PWM] && !walking && !hd && !neon_active &&
+        !slide_active && !crt_active && hello_amp == 0) {
+        for (int i = 0; i < len; ++i) amb_pwm_buf[buf_idx][i] = SAMPLE_CENTER;
+    } else {
     for (int i = 0; i < len; i++) {
         /* The bed is the YM2612 (drip-fed patch, m_main.c) — the PWM mix
          * carries only the events on top: neon bong, hello, steps. */
@@ -714,6 +727,8 @@ void amb_pump(void) {
         amb_pwm_buf[buf_idx][i] = (uint16_t)s;
 
     }
+
+    } /* general mixer */
 
     /* Clear only OUR bit, against a FRESH read — not the `needs` value
      * snapshotted before the fill. The DMA IRQ can set the other

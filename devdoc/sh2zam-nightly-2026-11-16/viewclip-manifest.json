@@ -1,0 +1,50 @@
+[
+  {
+    "page": 17,
+    "model": 0,
+    "clipping": false,
+    "sha256": "a672543893f0450e979a30177bfb95077484cff0567cbe19faf87c3af37d22f1"
+  },
+  {
+    "page": 18,
+    "model": 1,
+    "clipping": false,
+    "sha256": "53bc63d40e0115dababc02da40d3dec025ee4950455e84fe0590c0ae69279728"
+  },
+  {
+    "page": 19,
+    "model": 2,
+    "clipping": false,
+    "sha256": "3db3cc53b9d7aea7c213b9488886b94294af2ffa58dd90244bdb55397b200eae"
+  },
+  {
+    "page": 20,
+    "model": 3,
+    "clipping": false,
+    "sha256": "545a61e57148bd555337253496d86c4f3a9f168e267a47307159ea195120ef93"
+  },
+  {
+    "page": 21,
+    "model": 0,
+    "clipping": true,
+    "sha256": "54b9ef4d4771af0bfb0b07ce797e83d6963309cfd32d5822923e4d2479717489"
+  },
+  {
+    "page": 22,
+    "model": 1,
+    "clipping": true,
+    "sha256": "527e3e47527de17b59dba7c471090f33e373849035569b4b2b4737da39fefb55"
+  },
+  {
+    "page": 23,
+    "model": 2,
+    "clipping": true,
+    "sha256": "b2e9ac13fb52d6aeb6b670b02e182ffef8479a0d92b55498467778d7585ee27f"
+  },
+  {
+    "page": 24,
+    "model": 3,
+    "clipping": true,
+    "sha256": "390ec14932409cf67d85c72ad80a33297ec4e9df3ec0ee6be7c7b538c642dc36"
+  }
+]

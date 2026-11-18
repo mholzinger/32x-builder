@@ -1,0 +1,5 @@
+120 frames, 3360 vertices: oracle exact; 1552 changed components, max delta 1/65536; near-plane classifications unchanged
+ld: warning: reducing alignment of section __DATA,__common from 0x8000 to 0x4000 because it exceeds segment maximum alignment
+ld: warning: reducing alignment of section __DATA,__common from 0x8000 to 0x4000 because it exceeds segment maximum alignment
+2048 mixer fixtures: samples and state emitted (mode 0)
+2048 mixer fixtures: samples and state emitted (mode 1)

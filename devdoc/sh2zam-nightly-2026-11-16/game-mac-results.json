@@ -1,0 +1,178 @@
+[
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_234716-fmac-pvm-0-b.png",
+    "fixture": "pvm",
+    "mode": 0,
+    "repeat": "b",
+    "grid_ticks": 687,
+    "render_ticks": 26355,
+    "vblank100": 1080,
+    "primary_model_vertices": 48,
+    "primary_furniture_ticks": 1488
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_234227-fmac-chair-3-a.png",
+    "fixture": "chair",
+    "mode": 3,
+    "repeat": "a",
+    "grid_ticks": 686,
+    "render_ticks": 26572,
+    "vblank100": 1081,
+    "primary_model_vertices": 72,
+    "primary_furniture_ticks": 1279
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_234628-fmac-desk-0-b.png",
+    "fixture": "desk",
+    "mode": 0,
+    "repeat": "b",
+    "grid_ticks": 688,
+    "render_ticks": 25769,
+    "vblank100": 1006,
+    "primary_model_vertices": 24,
+    "primary_furniture_ticks": 1119
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_234427-fmac-deskset-0-a.png",
+    "fixture": "deskset",
+    "mode": 0,
+    "repeat": "a",
+    "grid_ticks": 686,
+    "render_ticks": 27073,
+    "vblank100": 1083,
+    "primary_model_vertices": 64,
+    "primary_furniture_ticks": 2407
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_234403-fmac-pvm-3-a.png",
+    "fixture": "pvm",
+    "mode": 3,
+    "repeat": "a",
+    "grid_ticks": 686,
+    "render_ticks": 26371,
+    "vblank100": 1081,
+    "primary_model_vertices": 48,
+    "primary_furniture_ticks": 1526
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_234540-fmac-chair-0-b.png",
+    "fixture": "chair",
+    "mode": 0,
+    "repeat": "b",
+    "grid_ticks": 687,
+    "render_ticks": 26570,
+    "vblank100": 1081,
+    "primary_model_vertices": 72,
+    "primary_furniture_ticks": 1242
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_234604-fmac-desk-3-b.png",
+    "fixture": "desk",
+    "mode": 3,
+    "repeat": "b",
+    "grid_ticks": 687,
+    "render_ticks": 25828,
+    "vblank100": 1011,
+    "primary_model_vertices": 24,
+    "primary_furniture_ticks": 1159
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_234516-fmac-chair-3-b.png",
+    "fixture": "chair",
+    "mode": 3,
+    "repeat": "b",
+    "grid_ticks": 686,
+    "render_ticks": 26588,
+    "vblank100": 1081,
+    "primary_model_vertices": 72,
+    "primary_furniture_ticks": 1278
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_234451-fmac-deskset-3-a.png",
+    "fixture": "deskset",
+    "mode": 3,
+    "repeat": "a",
+    "grid_ticks": 687,
+    "render_ticks": 27141,
+    "vblank100": 1083,
+    "primary_model_vertices": 64,
+    "primary_furniture_ticks": 2457
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_234251-fmac-desk-0-a.png",
+    "fixture": "desk",
+    "mode": 0,
+    "repeat": "a",
+    "grid_ticks": 686,
+    "render_ticks": 25803,
+    "vblank100": 1005,
+    "primary_model_vertices": 24,
+    "primary_furniture_ticks": 1121
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_234740-fmac-deskset-3-b.png",
+    "fixture": "deskset",
+    "mode": 3,
+    "repeat": "b",
+    "grid_ticks": 688,
+    "render_ticks": 27159,
+    "vblank100": 1083,
+    "primary_model_vertices": 64,
+    "primary_furniture_ticks": 2429
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_234804-fmac-deskset-0-b.png",
+    "fixture": "deskset",
+    "mode": 0,
+    "repeat": "b",
+    "grid_ticks": 688,
+    "render_ticks": 27039,
+    "vblank100": 1081,
+    "primary_model_vertices": 64,
+    "primary_furniture_ticks": 2409
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_234315-fmac-desk-3-a.png",
+    "fixture": "desk",
+    "mode": 3,
+    "repeat": "a",
+    "grid_ticks": 686,
+    "render_ticks": 25832,
+    "vblank100": 1011,
+    "primary_model_vertices": 24,
+    "primary_furniture_ticks": 1159
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_234652-fmac-pvm-3-b.png",
+    "fixture": "pvm",
+    "mode": 3,
+    "repeat": "b",
+    "grid_ticks": 686,
+    "render_ticks": 26370,
+    "vblank100": 1081,
+    "primary_model_vertices": 48,
+    "primary_furniture_ticks": 1526
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_234339-fmac-pvm-0-a.png",
+    "fixture": "pvm",
+    "mode": 0,
+    "repeat": "a",
+    "grid_ticks": 686,
+    "render_ticks": 26364,
+    "vblank100": 1081,
+    "primary_model_vertices": 48,
+    "primary_furniture_ticks": 1485
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_234203-fmac-chair-0-a.png",
+    "fixture": "chair",
+    "mode": 0,
+    "repeat": "a",
+    "grid_ticks": 686,
+    "render_ticks": 26536,
+    "vblank100": 1081,
+    "primary_model_vertices": 72,
+    "primary_furniture_ticks": 1243
+  }
+]

@@ -1,0 +1,9 @@
+{
+  "build_sha256": "0f94238dc811bb62958b5a8debcbc138e92a0c53063b1e93eb5aa68cb35f0e64",
+  "experiment_byte": 29,
+  "sample_frames": 64,
+  "warmup_frames": 8,
+  "resolution": "FULL",
+  "split": 160,
+  "ceiling_hardware_divider": true
+}

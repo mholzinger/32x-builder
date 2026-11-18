@@ -1,0 +1,458 @@
+[
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_232227-sh2zam-contrib-17-a-viewclip.png",
+    "page": 17,
+    "repeat": "a",
+    "count": 72,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 0,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 456,
+        "min_ticks": 455,
+        "max_ticks": 457
+      },
+      "VIEW-C": {
+        "avg_ticks_floor": 635,
+        "min_ticks": 634,
+        "max_ticks": 636
+      },
+      "VIEW-HW": {
+        "avg_ticks_floor": 192,
+        "min_ticks": 191,
+        "max_ticks": 193
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 120,
+        "min_ticks": 120,
+        "max_ticks": 121
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_232237-sh2zam-contrib-18-a-viewclip.png",
+    "page": 18,
+    "repeat": "a",
+    "count": 24,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 0,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 148,
+        "min_ticks": 148,
+        "max_ticks": 150
+      },
+      "VIEW-C": {
+        "avg_ticks_floor": 248,
+        "min_ticks": 247,
+        "max_ticks": 249
+      },
+      "VIEW-HW": {
+        "avg_ticks_floor": 101,
+        "min_ticks": 99,
+        "max_ticks": 102
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 40,
+        "min_ticks": 40,
+        "max_ticks": 42
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_232247-sh2zam-contrib-19-a-viewclip.png",
+    "page": 19,
+    "repeat": "a",
+    "count": 48,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 0,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 304,
+        "min_ticks": 304,
+        "max_ticks": 306
+      },
+      "VIEW-C": {
+        "avg_ticks_floor": 429,
+        "min_ticks": 428,
+        "max_ticks": 430
+      },
+      "VIEW-HW": {
+        "avg_ticks_floor": 150,
+        "min_ticks": 149,
+        "max_ticks": 151
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 83,
+        "min_ticks": 83,
+        "max_ticks": 84
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/provisional/20261116_232257-sh2zam-contrib-20-a-viewclip.png",
+    "page": 20,
+    "repeat": "a",
+    "count": 64,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 0,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 403,
+        "min_ticks": 403,
+        "max_ticks": 405
+      },
+      "VIEW-C": {
+        "avg_ticks_floor": 558,
+        "min_ticks": 558,
+        "max_ticks": 560
+      },
+      "VIEW-HW": {
+        "avg_ticks_floor": 178,
+        "min_ticks": 177,
+        "max_ticks": 179
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 108,
+        "min_ticks": 108,
+        "max_ticks": 109
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_232307-sh2zam-contrib-21-a-viewclip.png",
+    "page": 21,
+    "repeat": "a",
+    "count": 72,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 0,
+    "kernels": {
+      "DROP": {
+        "avg_ticks_floor": 198,
+        "min_ticks": 197,
+        "max_ticks": 199
+      },
+      "CLIP-C": {
+        "avg_ticks_floor": 767,
+        "min_ticks": 766,
+        "max_ticks": 769
+      },
+      "CLIP-HW": {
+        "avg_ticks_floor": 639,
+        "min_ticks": 638,
+        "max_ticks": 640
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_232318-sh2zam-contrib-22-a-viewclip.png",
+    "page": 22,
+    "repeat": "a",
+    "count": 24,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 0,
+    "kernels": {
+      "DROP": {
+        "avg_ticks_floor": 45,
+        "min_ticks": 45,
+        "max_ticks": 46
+      },
+      "CLIP-C": {
+        "avg_ticks_floor": 712,
+        "min_ticks": 711,
+        "max_ticks": 714
+      },
+      "CLIP-HW": {
+        "avg_ticks_floor": 347,
+        "min_ticks": 346,
+        "max_ticks": 348
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_232328-sh2zam-contrib-23-a-viewclip.png",
+    "page": 23,
+    "repeat": "a",
+    "count": 48,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 0,
+    "kernels": {
+      "DROP": {
+        "avg_ticks_floor": 100,
+        "min_ticks": 100,
+        "max_ticks": 102
+      },
+      "CLIP-C": {
+        "avg_ticks_floor": 1082,
+        "min_ticks": 1080,
+        "max_ticks": 1084
+      },
+      "CLIP-HW": {
+        "avg_ticks_floor": 584,
+        "min_ticks": 583,
+        "max_ticks": 586
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/provisional/20261116_232338-sh2zam-contrib-24-a-viewclip.png",
+    "page": 24,
+    "repeat": "a",
+    "count": 64,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 0,
+    "kernels": {
+      "DROP": {
+        "avg_ticks_floor": 127,
+        "min_ticks": 127,
+        "max_ticks": 129
+      },
+      "CLIP-C": {
+        "avg_ticks_floor": 1356,
+        "min_ticks": 1354,
+        "max_ticks": 1358
+      },
+      "CLIP-HW": {
+        "avg_ticks_floor": 736,
+        "min_ticks": 736,
+        "max_ticks": 738
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_232348-sh2zam-contrib-17-b-viewclip.png",
+    "page": 17,
+    "repeat": "b",
+    "count": 72,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 0,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 455,
+        "min_ticks": 455,
+        "max_ticks": 457
+      },
+      "VIEW-C": {
+        "avg_ticks_floor": 635,
+        "min_ticks": 634,
+        "max_ticks": 636
+      },
+      "VIEW-HW": {
+        "avg_ticks_floor": 192,
+        "min_ticks": 191,
+        "max_ticks": 193
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 120,
+        "min_ticks": 119,
+        "max_ticks": 121
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_232358-sh2zam-contrib-18-b-viewclip.png",
+    "page": 18,
+    "repeat": "b",
+    "count": 24,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 0,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 148,
+        "min_ticks": 148,
+        "max_ticks": 150
+      },
+      "VIEW-C": {
+        "avg_ticks_floor": 248,
+        "min_ticks": 247,
+        "max_ticks": 249
+      },
+      "VIEW-HW": {
+        "avg_ticks_floor": 101,
+        "min_ticks": 100,
+        "max_ticks": 102
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 41,
+        "min_ticks": 40,
+        "max_ticks": 42
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_232408-sh2zam-contrib-19-b-viewclip.png",
+    "page": 19,
+    "repeat": "b",
+    "count": 48,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 0,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 304,
+        "min_ticks": 304,
+        "max_ticks": 306
+      },
+      "VIEW-C": {
+        "avg_ticks_floor": 429,
+        "min_ticks": 428,
+        "max_ticks": 430
+      },
+      "VIEW-HW": {
+        "avg_ticks_floor": 150,
+        "min_ticks": 149,
+        "max_ticks": 151
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 83,
+        "min_ticks": 83,
+        "max_ticks": 84
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/provisional/20261116_232418-sh2zam-contrib-20-b-viewclip.png",
+    "page": 20,
+    "repeat": "b",
+    "count": 64,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 0,
+    "kernels": {
+      "ENGINE": {
+        "avg_ticks_floor": 404,
+        "min_ticks": 403,
+        "max_ticks": 405
+      },
+      "VIEW-C": {
+        "avg_ticks_floor": 558,
+        "min_ticks": 558,
+        "max_ticks": 560
+      },
+      "VIEW-HW": {
+        "avg_ticks_floor": 178,
+        "min_ticks": 177,
+        "max_ticks": 179
+      },
+      "EXEC-ONLY": {
+        "avg_ticks_floor": 108,
+        "min_ticks": 108,
+        "max_ticks": 110
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_232428-sh2zam-contrib-21-b-viewclip.png",
+    "page": 21,
+    "repeat": "b",
+    "count": 72,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 0,
+    "kernels": {
+      "DROP": {
+        "avg_ticks_floor": 198,
+        "min_ticks": 197,
+        "max_ticks": 199
+      },
+      "CLIP-C": {
+        "avg_ticks_floor": 767,
+        "min_ticks": 766,
+        "max_ticks": 768
+      },
+      "CLIP-HW": {
+        "avg_ticks_floor": 639,
+        "min_ticks": 638,
+        "max_ticks": 640
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_232438-sh2zam-contrib-22-b-viewclip.png",
+    "page": 22,
+    "repeat": "b",
+    "count": 24,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 0,
+    "kernels": {
+      "DROP": {
+        "avg_ticks_floor": 45,
+        "min_ticks": 45,
+        "max_ticks": 46
+      },
+      "CLIP-C": {
+        "avg_ticks_floor": 712,
+        "min_ticks": 710,
+        "max_ticks": 714
+      },
+      "CLIP-HW": {
+        "avg_ticks_floor": 347,
+        "min_ticks": 346,
+        "max_ticks": 349
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/20261116_232448-sh2zam-contrib-23-b-viewclip.png",
+    "page": 23,
+    "repeat": "b",
+    "count": 48,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 0,
+    "kernels": {
+      "DROP": {
+        "avg_ticks_floor": 100,
+        "min_ticks": 100,
+        "max_ticks": 102
+      },
+      "CLIP-C": {
+        "avg_ticks_floor": 1082,
+        "min_ticks": 1080,
+        "max_ticks": 1085
+      },
+      "CLIP-HW": {
+        "avg_ticks_floor": 584,
+        "min_ticks": 583,
+        "max_ticks": 586
+      }
+    }
+  },
+  {
+    "capture": "devdoc/sh2zam-nightly-2026-11-16/provisional/20261116_232458-sh2zam-contrib-24-b-viewclip.png",
+    "page": 24,
+    "repeat": "b",
+    "count": 64,
+    "failures": 0,
+    "reuse": 0,
+    "mac": 0,
+    "kernels": {
+      "DROP": {
+        "avg_ticks_floor": 127,
+        "min_ticks": 127,
+        "max_ticks": 129
+      },
+      "CLIP-C": {
+        "avg_ticks_floor": 1356,
+        "min_ticks": 1355,
+        "max_ticks": 1358
+      },
+      "CLIP-HW": {
+        "avg_ticks_floor": 736,
+        "min_ticks": 736,
+        "max_ticks": 738
+      }
+    }
+  }
+]

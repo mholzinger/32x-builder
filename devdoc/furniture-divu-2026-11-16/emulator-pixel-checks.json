@@ -1,0 +1,47 @@
+[
+  {
+    "fixture": "chair",
+    "bank_offset": "0x20000",
+    "rows": [
+      70,
+      223
+    ],
+    "pixels": 49280,
+    "sha256": "35f218aa8b139c75447bd85f228115f2a36e81fe6051c9d3cd3bbace26b3f435",
+    "matching_modes": [
+      0,
+      1,
+      2
+    ]
+  },
+  {
+    "fixture": "desk",
+    "bank_offset": "0x20000",
+    "rows": [
+      70,
+      223
+    ],
+    "pixels": 49280,
+    "sha256": "316e84a0fb7adc5c1d5205c78b293658b1052a06bccff508a66e93fd1be12dba",
+    "matching_modes": [
+      0,
+      1,
+      2
+    ]
+  },
+  {
+    "fixture": "pvm",
+    "bank_offset": "0x20000",
+    "rows": [
+      70,
+      223
+    ],
+    "pixels": 49280,
+    "sha256": "cc795d2a726c0a1b19a4615f7a92a9588849f845db491b83958dd379ccf8fd7b",
+    "matching_modes": [
+      0,
+      1,
+      2
+    ]
+  }
+]

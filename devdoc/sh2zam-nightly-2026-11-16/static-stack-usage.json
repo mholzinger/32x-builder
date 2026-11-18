@@ -1,0 +1,701 @@
+{
+  "rom_sha256": "b098902afc2e881ad8dcb36cec592e8e1cefb0accbf8130be27a450b0d96b17f",
+  "measured_ram_rom_sha256": "b098902afc2e881ad8dcb36cec592e8e1cefb0accbf8130be27a450b0d96b17f",
+  "functions": [
+    {
+      "function": "sh_src/raycast.c:5994:21:draw_standups",
+      "bytes": 4680,
+      "kind": "dynamic,bounded"
+    },
+    {
+      "function": "sh_src/m_main.c:2701:5:m_main",
+      "bytes": 1368,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:3693:13:corr_fill_quad.constprop",
+      "bytes": 960,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:2013:13:sms_game_screen",
+      "bytes": 704,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:8714:14:raycast_draw_walls",
+      "bytes": 688,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/reuse_lab.c:10:6:rl_init.constprop",
+      "bytes": 528,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/box3d.c:447:6:box3d_render_band",
+      "bytes": 404,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/sh2zam_bench.c:34:6:sh2zam_benchmark",
+      "bytes": 392,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/box3d.c:495:13:render_frame",
+      "bytes": 368,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:2258:13:asset_viewer_screen",
+      "bytes": 328,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_view.c:260:17:clip_near.part.0.constprop",
+      "bytes": 292,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:5681:13:draw_chair_shadow.constprop",
+      "bytes": 284,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/view_lab.c:33:6:vl_engine.constprop",
+      "bytes": 244,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:2238:6:raycast_init",
+      "bytes": 240,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:6973:21:draw_lights",
+      "bytes": 224,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:4908:13:draw_panel_face.constprop",
+      "bytes": 220,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:5401:13:tex_tri_lut.constprop",
+      "bytes": 208,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:5327:13:tex_tri.constprop",
+      "bytes": 204,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_view.c:103:13:batch_portable.constprop",
+      "bytes": 204,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/sound.c:480:6:amb_pump.part.0",
+      "bytes": 200,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:5776:13:draw_boxmodel_shadow.constprop",
+      "bytes": 192,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/procgen.c:747:6:procgen_run",
+      "bytes": 188,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_reuse.c:120:6:sh2z_reuse_plan_init",
+      "bytes": 188,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:8094:6:raycast_draw_tail",
+      "bytes": 180,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_reuse.c:20:6:sh2z_reuse_mesh_init",
+      "bytes": 176,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:8416:1:draw_door_column.constprop",
+      "bytes": 160,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:151:13:pad_test_draw.constprop",
+      "bytes": 156,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:8114:14:raycast_draw_carpet",
+      "bytes": 148,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:337:13:prof_sample_and_draw.constprop",
+      "bytes": 144,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:7175:14:raycast_draw_ceiling_grid",
+      "bytes": 144,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/menu.c:459:6:menu_render.part.0.constprop",
+      "bytes": 136,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/box3d.c:624:6:box3d_play",
+      "bytes": 128,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/view_lab.c:20:6:vl_setup_view.constprop",
+      "bytes": 128,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:1905:6:raycast_pal_apply",
+      "bytes": 120,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/clip_lab.c:8:6:cl_run.part.0.constprop",
+      "bytes": 120,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:6926:21:ceil_quad_fill.constprop",
+      "bytes": 116,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/furniture_lab_screen.c:10:6:furniture_lab_benchmark",
+      "bytes": 104,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/view_lab.c:55:6:vl_init.constprop",
+      "bytes": 104,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:3935:6:player_update",
+      "bytes": 100,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:688:13:automap_draw.constprop",
+      "bytes": 100,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/procgen.c:308:12:desk_park_scan",
+      "bytes": 96,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:4821:13:boxmodel_order",
+      "bytes": 96,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:10781:6:raycast_render",
+      "bytes": 96,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:3085:10:raycast_attract_pad",
+      "bytes": 92,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:1112:13:menu_flip_out",
+      "bytes": 92,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_transform.c:283:6:sh2z_mat34_transform_points",
+      "bytes": 88,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:990:6:pedge_build_cells.part.0",
+      "bytes": 88,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:2705:13:exit_place_common",
+      "bytes": 84,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:2428:6:raycast_place_outlets",
+      "bytes": 80,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:791:13:pos_draw.constprop",
+      "bytes": 80,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_prepared.c:46:6:sh2z_transform_plan_init",
+      "bytes": 80,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_reuse.c:157:6:sh2z_reuse_plan_update_matrix",
+      "bytes": 80,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_reuse.c:237:6:sh2z_reuse_plan_execute_range.part.0.constprop",
+      "bytes": 72,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/procgen.c:442:12:build_dark_room",
+      "bytes": 68,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:2578:6:raycast_load_custom",
+      "bytes": 68,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:4535:13:chair_tri_fill.constprop",
+      "bytes": 68,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/furniture_lab.c:19:13:engine.isra",
+      "bytes": 68,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:1576:12:sms_fs_gather_epoch",
+      "bytes": 64,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_transform.c:145:13:sh2z_mat34_transform_point",
+      "bytes": 64,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_prepared.c:84:6:sh2z_transform_plan_execute_range.constprop",
+      "bytes": 64,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_reuse.c:177:13:output_valid.constprop",
+      "bytes": 64,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/s_main.c:24:6:s_main",
+      "bytes": 64,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/menu.c:439:13:draw_row.constprop",
+      "bytes": 60,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/furniture_lab.c:30:6:fl_init.part.0",
+      "bytes": 60,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_view.c:100:27:project",
+      "bytes": 60,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/sound.c:325:6:amb_audio_idle.part.0",
+      "bytes": 60,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:5653:12:light_field_dir.constprop",
+      "bytes": 56,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:1360:13:sms_pack_level",
+      "bytes": 56,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:3360:12:standup_blocker",
+      "bytes": 48,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_reuse.c:92:13:build_tables",
+      "bytes": 48,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:883:6:raycast_stamp_partition_edges",
+      "bytes": 44,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:10686:14:raycast_clear_half",
+      "bytes": 44,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:1390:6:ceil_h_add_run_h.part.0",
+      "bytes": 44,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:3523:6:raycast_exit_pullup.part.0",
+      "bytes": 44,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:5903:13:build_standup_vmap",
+      "bytes": 40,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_transform.c:260:6:sh2z_mat34_transform_points_general",
+      "bytes": 40,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:1880:13:sms_art_draw_clip.constprop",
+      "bytes": 36,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:3223:6:raycast_shimmer",
+      "bytes": 32,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/sh2zam_bench.c:12:17:div_run",
+      "bytes": 32,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:3418:12:position_clear",
+      "bytes": 28,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:600:13:am_line.constprop",
+      "bytes": 28,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:1635:12:sms_fs_gather",
+      "bytes": 28,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:906:6:swapBuffers",
+      "bytes": 28,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:2495:13:portal_to_procgen",
+      "bytes": 28,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/clip_lab.c:24:10:cl_hash.constprop",
+      "bytes": 28,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/font.c:123:6:font_draw_string.constprop",
+      "bytes": 28,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:195:13:metrics_mode_check",
+      "bytes": 28,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:6755:13:mv_line.constprop",
+      "bytes": 28,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:4768:13:boxmodel_footprint_bm.part.0.constprop.isra",
+      "bytes": 28,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/reuse_lab.c:6:13:bind_mesh.constprop",
+      "bytes": 28,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:650:6:standups_clear",
+      "bytes": 24,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:1895:13:pal_effective",
+      "bytes": 24,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/furniture_lab.c:45:6:fl_run",
+      "bytes": 24,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/menu.c:175:6:menu_update",
+      "bytes": 24,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_batch_sh2.c:116:1:sh2zi_batch_dmuls_kernel",
+      "bytes": 24,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:3269:6:raycast_paint_wallpaper_index.constprop",
+      "bytes": 20,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_view.c:140:27:project_divu",
+      "bytes": 20,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:2315:13:tg_scan_glass.part.0",
+      "bytes": 20,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:3050:16:att_angle_to",
+      "bytes": 16,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:1004:13:fade_step",
+      "bytes": 16,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/furniture_lab.c:89:10:fl_raw_positions",
+      "bytes": 16,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:645:6:cur_map_name",
+      "bytes": 16,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/menu.c:126:13:menu_genesis_blank",
+      "bytes": 16,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_batch_sh2.c:105:1:sh2zi_batch_mac_kernel",
+      "bytes": 16,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/menu.c:400:13:fmt_int",
+      "bytes": 12,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:3067:12:att_steer.constprop",
+      "bytes": 12,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:1968:6:raycast_set_brightness",
+      "bytes": 12,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:621:13:am_pt",
+      "bytes": 12,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:1242:13:sms_audio_duck",
+      "bytes": 12,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:1251:13:sms_audio_restore",
+      "bytes": 12,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:2587:13:portal_to_custom",
+      "bytes": 12,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:182:6:hud_genesis_blank",
+      "bytes": 12,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_batch_sh2.c:148:6:sh2z_transform_plan_execute_mac.constprop",
+      "bytes": 12,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_batch_sh2.c:161:6:sh2z_transform_plan_execute_dmuls.constprop",
+      "bytes": 12,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/mars.c:371:6:HwMdPuts",
+      "bytes": 8,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_prepared.c:10:6:sh2z_mesh_view_init",
+      "bytes": 8,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:2957:12:att_step_open",
+      "bytes": 4,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:3172:6:raycast_load_lobby",
+      "bytes": 4,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:3904:6:raycast_arrival_drop.constprop",
+      "bytes": 4,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/sound.c:163:6:amb_dma_handler",
+      "bytes": 4,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_view.c:17:13:view_valid",
+      "bytes": 4,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/procgen.c:619:12:cells_open",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/procgen.c:628:12:far_from_partitions",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:963:6:pedge_clear",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:2465:12:partition_clear_of_others",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:2809:5:raycast_exit_hole_check",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/raycast.c:3680:6:raycast_corridor_orient",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/box3d.c:552:6:box3d_flip",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:311:20:prof_init",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/m_main.c:1546:12:sms_fs_apply_word",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/mars.c:258:6:HwMdSmsGameMap",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/sin_table.h:37:23:sin_fx",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/furniture_lab.c:83:10:fl_hash",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/mars.c:26:6:Hw32xInit.constprop",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/sound.c:295:12:hello_dist_amp",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_prepared.c:29:13:row_is_bounded",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "third_party/SH2ZAM/src/sh2zam_view.c:65:13:batch_args_ok.constprop",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/sound.c:480:6:amb_pump",
+      "bytes": 0,
+      "kind": "static"
+    },
+    {
+      "function": "sh_src/view_lab.c:75:10:vl_hash",
+      "bytes": 0,
+      "kind": "static"
+    }
+  ]
+}

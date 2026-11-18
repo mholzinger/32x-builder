@@ -97,6 +97,12 @@ SHCPPS  = $(wildcard sh_src/*.cpp)
 SHOBJS  = $(SHSS:.s=.o)
 SHOBJS += $(SHCS:.c=.o)
 SHOBJS += sh_src/custom_maps.o
+
+# Pinned SH2ZAM math subset; C11 applies only to these translation units.
+SH2ZDIR = third_party/SH2ZAM
+SH2ZOBJS = $(addprefix $(SH2ZDIR)/src/,sh2zam.o sh2zam_trig.o sh2zam_transform.o sh2zam_prepared.o sh2zam_batch_sh2.o sh2zam_reuse.o sh2zam_view.o sh2zam_divu.o sh2zam_box.o)
+SHOBJS += $(SH2ZOBJS) third_party/SH2ZAM/benchmarks/small-batch/small_batch.o
+SHINCS += -I$(SH2ZDIR)/include
 SHOBJS += $(SHCPPS:.cpp=.o)
 
 # Speex narrowband decoder strip (third-party, sh_src/speex/): UNLINKED.
@@ -263,6 +269,13 @@ sh_src/%.o: sh_src/%.s
 	@echo "SHAS $<"
 	@$(SHAS) $(SHASFLAGS) $< -o $@
 
+$(SH2ZDIR)/benchmarks/small-batch/%.o: $(SH2ZDIR)/benchmarks/small-batch/%.c
+	@$(SHCC) $(SHCCFLAGS) -std=c11 $(SHEXTRA) $(SHINCS) -MMD -MP -c $< -o $@
+
+$(SH2ZDIR)/src/%.o: $(SH2ZDIR)/src/%.c
+	@echo "SH2Z $<"
+	@$(SHCC) $(SHCCFLAGS) -std=c11 $(SHEXTRA) $(SHINCS) -DSH2Z_REQUIRE_SH2=1 -MMD -MP -c $< -o $@
+
 sh_src/%.o: sh_src/%.c
 	@echo "SHCC $<"
 	@$(SHCC) $(SHCCFLAGS) $(SHEXTRA) $(SHINCS) -MMD -MP -c $< -o $@
@@ -388,3 +401,51 @@ clean:
 	rm -f sh_src/sprite_defs.h
 	rm -f sh_src/version.h sh_src/version.h.tmp
 	rm -f $(PROFILE_STAMP)
+
+.PHONY: box-transform-test
+box-transform-test:
+	@$(CC) -std=c11 -Wall -Wextra -Werror -Ish_src -I$(SH2ZDIR)/include -o /tmp/box-transform-test tools/test_box_transform.c sh_src/box_transform.c $(SH2ZOBJS:.o=.c)
+	@/tmp/box-transform-test
+
+# Compare the real mixer with the shortcut off/on, including cursor state.
+SOUND_TEST_SOURCES = sh_src/amb_neon.c sh_src/amb_hello_adp.c sh_src/amb_death_tape.c \
+                     sh_src/amb_shuffle.c sh_src/amb_sliding.c sh_src/amb_step.c \
+                     sh_src/amb_crt_on.c sh_src/amb_crt_off.c
+.PHONY: sound-mix-test
+sound-mix-test:
+	@$(CC) -std=c11 -O2 -DQUIET_TEST_MODE=0 tools/test_sound_mix.c $(SOUND_TEST_SOURCES) -o /tmp/sound-mix-old
+	@$(CC) -std=c11 -O2 -DQUIET_TEST_MODE=1 tools/test_sound_mix.c $(SOUND_TEST_SOURCES) -o /tmp/sound-mix-new
+	@/tmp/sound-mix-old > /tmp/sound-mix-old.bin
+	@/tmp/sound-mix-new > /tmp/sound-mix-new.bin
+	@cmp /tmp/sound-mix-old.bin /tmp/sound-mix-new.bin
+
+# Actual-model SH2ZAM integration oracles; no emulated FPS claims.
+NIGHTLY_HOST_FLAGS = -std=c11 -O2 -Wall -Wextra -Werror -Wno-misleading-indentation -Ish_src -I$(SH2ZDIR)/include
+NIGHTLY_HOST_CORE = sh_src/furniture_lab.c $(SH2ZOBJS:.o=.c)
+.PHONY: furniture-lab-test view-lab-test clip-lab-test reuse-lab-test
+furniture-lab-test:
+	@$(CC) $(NIGHTLY_HOST_FLAGS) tools/test_furniture_lab.c $(NIGHTLY_HOST_CORE) -o /tmp/furniture-lab-test
+	@/tmp/furniture-lab-test
+view-lab-test:
+	@$(CC) $(NIGHTLY_HOST_FLAGS) tools/test_view_lab.c sh_src/view_lab.c $(NIGHTLY_HOST_CORE) -o /tmp/view-lab-test
+	@/tmp/view-lab-test
+clip-lab-test:
+	@$(CC) $(NIGHTLY_HOST_FLAGS) tools/test_clip_lab.c sh_src/clip_lab.c sh_src/view_lab.c $(NIGHTLY_HOST_CORE) -o /tmp/clip-lab-test
+	@/tmp/clip-lab-test
+reuse-lab-test:
+	@$(CC) $(NIGHTLY_HOST_FLAGS) tools/test_reuse_lab.c sh_src/reuse_lab.c $(NIGHTLY_HOST_CORE) -o /tmp/reuse-lab-test
+	@/tmp/reuse-lab-test
+
+experiments/sh2zam-nightly/mesh_positions.h: experiments/sh2zam-nightly/generate_meshes.c sh_src/chair3d.h sh_src/desk3d.h sh_src/pvm3d.h sh_src/desk_pvm3d.h tools/generate_furniture_meshes.py
+	@CC="$(CC)" python3 tools/generate_furniture_meshes.py
+sh_src/furniture_lab.o: experiments/sh2zam-nightly/mesh_positions.h
+furniture-lab-test view-lab-test clip-lab-test reuse-lab-test: experiments/sh2zam-nightly/mesh_positions.h
+
+# Rebuild only when this explicit experimental switch changes. The normal
+# renderer allocates no MAC output scratch or immutable pose metadata.
+FURNITURE_MAC_EXPERIMENT ?= 0
+.PHONY: FORCE_FURNITURE_MAC_CONFIG
+FORCE_FURNITURE_MAC_CONFIG:
+sh_src/furniture_mac_config.h: FORCE_FURNITURE_MAC_CONFIG tools/configure_furniture_mac.py
+	@python3 tools/configure_furniture_mac.py --enabled $(FURNITURE_MAC_EXPERIMENT)
+sh_src/raycast.o: sh_src/furniture_mac_config.h

@@ -1,0 +1,19 @@
+{
+  "hardware": "mister.office.local",
+  "core": "S32X_20260603.rbf",
+  "compiler": "SH-2 GCC 15.2.0",
+  "timing_build_sha256": "a409adfd18c6a3d93888b68f62b50b08a2b4717f18d66a9ab961e3aaf6c63b30",
+  "flags": {
+    "9": 1,
+    "10": 1,
+    "13": 1,
+    "18": 1,
+    "27": "scene 1..4",
+    "28": "arm 0/1"
+  },
+  "warmup_frames": 8,
+  "sample_frames": 64,
+  "notes": "Native 320x240 MiSTer captures; timestamps are EST on 2026-11-16. First 18-second captures for scenes 3/4 were incomplete and discarded. Repeat captures waited 35 seconds.",
+  "normal_build_sha256": "54bcdb833df1a48ab4f04248d033d8a5d0433f7bfa77003884f779dd40189c0e",
+  "normal_build_path": "rom/backrooms-ceiling-div.32x"
+}

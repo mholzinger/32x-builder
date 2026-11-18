@@ -1,0 +1,7 @@
+ares-headless: Mega 32X (NTSC-U), ROM nightly-normal-default.32x, SH-2 recompiler, running 400 frames
+[96m[unusual] [0m[SH2] write(0xffff8446, 0x00)
+[96m[unusual] [0m[SH2] write(0xffff8447, 0x00)
+[96m[unusual] [0m[SH2] illegal slot instruction: 0xaffe
+[96m[unusual] [0m[Cartridge::Banked::writeIO] lower=0
+ares-headless: ran 400 frames of emulated time
+screenshot: frame 399 -> /tmp/nightly-default-boot.png

@@ -3,11 +3,13 @@
 #include "shared.h"      /* MARS_CMD_BOX / MARS_CMD_NONE                */
 #include "font.h"        /* on-screen frame-time overlay               */
 #include "box3d.h"
+#include "diag_cfg.h"
+#include "box_transform.h"
 #include "box_model.h"
 #include "box_label.h"
 
 /* Per-frame render-time overlay (primary total + secondary band, in FRT
- * ticks at Phi/32 ~= 1.39us/tick; 60fps ~= 12000). Optimize against
+ * ticks at Phi/128 ~= 5.56us/tick; 60fps ~= 3000). Optimize against
  * numbers, not vibes. Set to 0 to hide. */
 #define BOX_PROFILE 1
 
@@ -123,6 +125,8 @@ static box_drawlist_t box_dl
 
 /* Primary-only geometry scratch. */
 static fx_t    wverts[BOX_NVERTS][3] __attribute__((section(".hero_overlay_lo")));
+static sh2z_vec3_t transform_scratch[BOX_NVERTS] __attribute__((section(".hero_overlay_lo")));
+static sh2z_vec3_t transform_out[BOX_NVERTS] __attribute__((section(".hero_overlay_lo")));
 static cvert_t cverts[BOX_NVERTS]    __attribute__((section(".hero_overlay_lo")));
 
 /* Per-logical-pixel coverage mask for near-to-far overdraw skip. Faces are
@@ -140,7 +144,7 @@ static inline uint16_t frt_read(void) {
     return ((uint16_t)hi << 8) | lo;
 }
 /* Primary-band breakdown: time spent clearing vs filling. */
-static volatile uint16_t g_clear_ticks, g_fill_ticks;
+static volatile uint16_t g_clear_ticks, g_fill_ticks, g_transform_ticks, g_transform_frame;
 #endif
 
 /* --- Fixed-point sqrt ---------------------------------------------- */
@@ -208,6 +212,14 @@ static void build_frame(int f) {
     const int32_t *cu = box_cam_up[f];
     const int32_t *cb = box_cam_back[f];
     const int32_t *cp = box_cam_pos[f];
+    /* diag_cfg[DIAG_BOX_TRANSFORM]: 0 original, 1 prepared, 2 MAC, 3 DMULS. Same ROM/layout.
+     * Include copying, bounds and plan setup in the measured interval. */
+#if BOX_PROFILE
+    uint16_t started = frt_read();
+#endif
+    int prepared = diag_cfg[DIAG_BOX_TRANSFORM] >= 1 && diag_cfg[DIAG_BOX_TRANSFORM] <= 3 && box_transform_prepared(
+        transform_out, transform_scratch, box_verts[f], BOX_NVERTS,
+        cr, cu, cb, cp, diag_cfg[DIAG_BOX_TRANSFORM] - 1);
     for (int i = 0; i < BOX_NVERTS; i++) {
         /* Vertices are pre-morphed per frame by export_box.py (flaps +
          * trap door already baked in) — just read them. */
@@ -215,11 +227,21 @@ static void build_frame(int f) {
         fx_t wy = box_verts[f][i][1];
         fx_t wz = box_verts[f][i][2];
         wverts[i][0] = wx; wverts[i][1] = wy; wverts[i][2] = wz;
+        if (prepared) {
+            cverts[i].cx = transform_out[i].x;
+            cverts[i].cy = transform_out[i].y;
+            cverts[i].depth = transform_out[i].z;
+            continue;
+        }
         fx_t rx = wx - cp[0], ry = wy - cp[1], rz = wz - cp[2];
         cverts[i].cx    =  FX_MUL(rx, cr[0]) + FX_MUL(ry, cr[1]) + FX_MUL(rz, cr[2]);
         cverts[i].cy    =  FX_MUL(rx, cu[0]) + FX_MUL(ry, cu[1]) + FX_MUL(rz, cu[2]);
         cverts[i].depth = -(FX_MUL(rx, cb[0]) + FX_MUL(ry, cb[1]) + FX_MUL(rz, cb[2]));
     }
+#if BOX_PROFILE
+    g_transform_ticks = (uint16_t)(frt_read() - started);
+    g_transform_frame = (uint16_t)f;
+#endif
 }
 
 static int face_level(int fi, int f) {
@@ -518,6 +540,11 @@ static void draw_perf(uint8_t *fb, uint16_t m, uint16_t s, uint16_t vbl) {
     b3[7] = ' '; b3[8] = 'F'; b3[9] = 'P'; b3[10] = 'S'; b3[11] = ':';
     put5(b3 + 12, fps); b3[17] = 0;
     font_draw_string(fb, 4, 22, b3, BOX_TEXT_IDX);
+    char b4[20] = "X:00000 B:0 P:00000";
+    put5(b4 + 2, g_transform_ticks);
+    b4[10] = diag_cfg[DIAG_BOX_TRANSFORM] <= 3 ? '0' + diag_cfg[DIAG_BOX_TRANSFORM] : '0';
+    put5(b4 + 14, g_transform_frame);
+    font_draw_string(fb, 4, 31, b4, BOX_TEXT_IDX);
 }
 #endif
 
@@ -595,32 +622,40 @@ void box3d_play_fall(void) {
 }
 
 void box3d_play(void) {
+    /* Gameplay prof_init runs AFTER the intro; honor the boot flag here too. */
+    if (diag_cfg[DIAG_METRICS_AT_BOOT]) g_metrics_on = 1;
 #if BOX_PROFILE
     SH2_FRT_TIER = 0x01; SH2_FRT_TCR = 0x02; SH2_FRT_FTCSR = 0;  /* Phi/128 */
 #endif
     build_wear_lut();        /* CPU precompute (was in load_palette) */
     uint16_t prev_pad = 0xFFFF;
-    uint32_t prev_comm = MARS_SYS_COMM12;   /* vblank tick at last flip */
+    uint16_t prev_comm = (uint16_t)(MARS_SYS_COMM12 >> 16);   /* vblank tick at last flip */
     uint16_t last_vbl = 0;                  /* vblanks the prev frame took */
     /* Intro only (flaps open + dive to the box mouth). The trap-door fall
      * tail (BOX_INTRO_FRAMES..BOX_NFRAMES) plays later, on menu commit. */
-    for (int f = 0; f < BOX_INTRO_FRAMES; f++) {
+    /* Diagnostic-only fixed-pose loop for hardware A/B captures. Same ROM,
+     * camera, pixels and palette; START still exits. Values 1..120 select
+     * baked pose 0..119; normal releases leave byte 26 zero. */
+    int bench_pose = diag_cfg[DIAG_BOX_BENCH_POSE];
+    if (bench_pose > BOX_NFRAMES) bench_pose = 0;
+    for (unsigned f = 0; bench_pose || f < BOX_INTRO_FRAMES; f++) {
+        int pose = bench_pose ? bench_pose - 1 : (int)f;
 #if BOX_PROFILE
         uint16_t t0 = frt_read();
-        render_frame(f);
+        render_frame(pose);
         uint16_t mdelta = (uint16_t)(frt_read() - t0);   /* pure render time */
         if (g_metrics_on)
             draw_perf((uint8_t *)((uintptr_t)&MARS_FRAMEBUFFER + 0x200),
                       mdelta, SHARED_UC->secondary_render_ticks, last_vbl);
 #else
-        render_frame(f);
+        render_frame(pose);
 #endif
         /* Frame 0 swaps in the box palette during this flip's vblank,
          * after the box is already on the hidden page — clean hand-off. */
         if (f == 0) box3d_flip_load_palette();
         else        box3d_flip();
         /* Vblanks consumed by this frame (render+flip) — emulator-safe FPS. */
-        uint32_t now_comm = MARS_SYS_COMM12;
+        uint16_t now_comm = (uint16_t)(MARS_SYS_COMM12 >> 16);
         last_vbl = (uint16_t)(now_comm - prev_comm);
         prev_comm = now_comm;
         HwMdReadPad(0);

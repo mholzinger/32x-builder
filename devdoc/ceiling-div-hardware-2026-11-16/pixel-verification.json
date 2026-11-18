@@ -1,0 +1,45 @@
+{
+  "source_sha256": "a6b30d07ea6f13490be5be892c8d7b6f9cad0fb8d290036e14564d8509d73875",
+  "world_pixel_comparison": [
+    {
+      "scene": 1,
+      "framebuffer_page": 0,
+      "checked_pixels": 66240,
+      "excluded_text_rows": [
+        32,
+        48
+      ],
+      "differences": 0
+    },
+    {
+      "scene": 2,
+      "framebuffer_page": 0,
+      "checked_pixels": 66240,
+      "excluded_text_rows": [
+        32,
+        48
+      ],
+      "differences": 0
+    },
+    {
+      "scene": 3,
+      "framebuffer_page": 0,
+      "checked_pixels": 66240,
+      "excluded_text_rows": [
+        32,
+        48
+      ],
+      "differences": 0
+    },
+    {
+      "scene": 4,
+      "framebuffer_page": 0,
+      "checked_pixels": 66240,
+      "excluded_text_rows": [
+        32,
+        48
+      ],
+      "differences": 0
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+[
+  {
+    "file": "native-final.32x",
+    "sha256": "2e175401ff6499178d65417dc8967a6c8958f99a867971be692a79d73f4982f6"
+  },
+  {
+    "file": "viewclip-initial.32x",
+    "sha256": "ca84c907f0efdadaaeb131532472fea54d450d014a11358318eef079a82e4aeb"
+  },
+  {
+    "file": "game-mac-rom.32x",
+    "sha256": "b706571c6cdc01ca8a50449533c5beff1ca48e75a873a34eb3a19e5983b6d6ea"
+  },
+  {
+    "file": "game-mac-ram.32x",
+    "sha256": "b098902afc2e881ad8dcb36cec592e8e1cefb0accbf8130be27a450b0d96b17f"
+  },
+  {
+    "file": "dual-matched.32x",
+    "sha256": "e208f934c4a73a15c9aef07708ee2af6a0c0803feff28195156bd0da626d6086"
+  }
+]

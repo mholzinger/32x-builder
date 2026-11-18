@@ -1,0 +1,63 @@
+--- a/sh_src/raycast.c
++++ b/sh_src/raycast.c
+@@ -3,6 +3,7 @@
+ #include "shared.h"
+ #include "menu.h"
+ #include "sh2_asm.h"
++#include <sh2zam/divu_experimental.h>
+ #include "sin_table.h"
+ #include "wall_tex.h"
+ #include "wall_tex_hi.h"
+@@ -38,6 +39,7 @@
+  *   [27] direct gameplay benchmark: 1 corridor, 2 room, 3 crawl, 4 pit,
+  *        5 testbed spawn, 6 chair, 7 desk, 8 PVM testbed fixtures. Authored maps, frozen world clock, no menu.
+  *   [28] ceiling grid scale: 0 software reference, 1 hardware divider.
++ *   [29] furniture reciprocal: 0 existing asm, 1 SH2ZAM blocking, 2 split.
+  *   [30] exact quiet PWM-buffer fill when all PWM voices are inactive.
+  *   [31] standalone SH2ZAM math: 1..7 batch sizes, 8 divider; CPU2 parked.
+  * volatile so each gate is a real ROM read, not a folded constant. All
+@@ -5088,8 +5090,21 @@
+             /* One reciprocal, then multiplies: screenX, floor row, and the
+              * height offset all divide by depth — three HW divides per vertex
+              * (56 verts x 2 CPUs) was the chair's dominant cost. */
+-            fx_t inv_d = fx_div_hw(FX_ONE, depth);            /* 1/depth, 16.16 */
+-            fx_t lat = FX_MUL(inv_det, FX_MUL(dirY, ddx) - FX_MUL(dirX, ddy));
++            fx_t inv_d, lat;
++            unsigned div_mode = diag_cfg[29];
++            if (div_mode == 2) {
++                /* Exclusive per-CPU divider use: only fixed-point multiplies
++                 * between start/finish. Both depths have passed NEARC, so
++                 * the quotient fits. Existing ISRs do not use DIVU. */
++                sh2z_divu_t pending;
++                sh2z_divu_start16(&pending, FX_ONE, depth);
++                lat = FX_MUL(inv_det, FX_MUL(dirY, ddx) - FX_MUL(dirX, ddy));
++                inv_d = sh2z_divu_finish(&pending, 0);
++            } else {
++                inv_d = div_mode == 1 ? sh2z_divu_div16(FX_ONE, depth, 0)
++                                      : fx_div_hw(FX_ONE, depth);
++                lat = FX_MUL(inv_det, FX_MUL(dirY, ddx) - FX_MUL(dirX, ddy));
++            }
+             csx[v] = (SCREEN_W >> 1)
+                    + (int)(((int32_t)(SCREEN_W >> 1) * FX_MUL(lat, inv_d)) >> FX_SHIFT);
+             int floor_y = horizon_y + (int)(((int64_t)focal * inv_d) >> FX_SHIFT);
+@@ -5143,8 +5158,18 @@
+                 fx_t dxc = (cx + rxc) - px, dyc = (cy + rzc) - py;
+                 fx_t dc = FX_MUL(inv_det, -FX_MUL(planeY, dxc) + FX_MUL(planeX, dyc));
+                 if (dc >= NEARC) {
+-                    fx_t idc = fx_div_hw(FX_ONE, dc);
+-                    fx_t latc = FX_MUL(inv_det, FX_MUL(dirY, dxc) - FX_MUL(dirX, dyc));
++                    fx_t idc, latc;
++                    unsigned div_mode = diag_cfg[29];
++                    if (div_mode == 2) {
++                        sh2z_divu_t pending;
++                        sh2z_divu_start16(&pending, FX_ONE, dc);
++                        latc = FX_MUL(inv_det, FX_MUL(dirY, dxc) - FX_MUL(dirX, dyc));
++                        idc = sh2z_divu_finish(&pending, 0);
++                    } else {
++                        idc = div_mode == 1 ? sh2z_divu_div16(FX_ONE, dc, 0)
++                                           : fx_div_hw(FX_ONE, dc);
++                        latc = FX_MUL(inv_det, FX_MUL(dirY, dxc) - FX_MUL(dirX, dyc));
++                    }
+                     faces[nf].ccx = (int16_t)((SCREEN_W >> 1)
+                         + (int)(((int32_t)(SCREEN_W >> 1) * FX_MUL(latc, idc)) >> FX_SHIFT));
+                     int fyc = horizon_y + (int)(((int64_t)focal * idc) >> FX_SHIFT);
